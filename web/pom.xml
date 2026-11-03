@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.chatledger</groupId>
+    <artifactId>chat-ledger</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>web</artifactId>
+  <name>web</name>
+  <description>
+    Board UI, simulators, CSV export, authentication, and session management.
+    Thymeleaf + HTMX; depends on all other modules.
+  </description>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.chatledger</groupId>
+      <artifactId>ledger-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.chatledger</groupId>
+      <artifactId>extraction</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.chatledger</groupId>
+      <artifactId>ingestion</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.chatledger</groupId>
+      <artifactId>matching</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.chatledger</groupId>
+      <artifactId>suspicion</artifactId>
+    </dependency>
+
+    <!--
+      spring-boot-starter-web is deprecated in Boot 4.1.1 in favour of
+      spring-boot-starter-webmvc (Spring MVC) or spring-boot-starter-webflux.
+      We use the explicit MVC starter here.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-thymeleaf</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    <!--
+      thymeleaf-extras-springsecurity6 is still the correct artifact ID
+      in Boot 4.1.1 (version 3.1.5.RELEASE, managed by the Boot BOM).
+    -->
+    <dependency>
+      <groupId>org.thymeleaf.extras</groupId>
+      <artifactId>thymeleaf-extras-springsecurity6</artifactId>
+    </dependency>
+
+    <!-- Test -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      spring-boot-starter-webmvc-test provides @AutoConfigureMockMvc (which moved to
+      org.springframework.boot.webmvc.test.autoconfigure in Boot 4.x) and the
+      MockMvc autoconfiguration that was bundled in spring-boot-test-autoconfigure
+      in Boot 3.x.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Testcontainers 2.x renamed all module artifacts.
+      Old (1.x): org.testcontainers:postgresql / junit-jupiter
+      New (2.x): org.testcontainers:testcontainers-postgresql / testcontainers-junit-jupiter
+      Versions are managed by the testcontainers-bom 2.0.5 imported in the root POM.
+    -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- The runnable JAR lives in the web module -->
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>

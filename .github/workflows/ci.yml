@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # Run the vulnerability check daily at 03:00 UTC on the default branch.
+    - cron: "0 3 * * *"
+
+# Least-privilege token: read source only. No write permissions granted.
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+          cache: "maven"
+
+      # ── Build and run unit tests ─────────────────────────────────────
+      # Surefire runs every *Test.java and *Tests.java class.
+      # Secrets are never present in CI; the test profile disables the DB.
+      - name: Build and run tests
+        run: mvn --batch-mode --no-transfer-progress verify
+        env:
+          # Placeholder values so Spring context loads under the test profile.
+          # No real database is started for unit tests.
+          DB_URL: jdbc:postgresql://localhost:5432/chatledger_ci
+          DB_USER: ci_user
+          DB_PASSWORD: ci_password
+          APP_SECRET: ci-secret-not-for-production
+
+  vulnerability-check:
+    name: OWASP dependency vulnerability check
+    # Run on pull requests targeting main and on the daily schedule.
+    # Skipped on plain pushes to keep the push feedback loop fast.
+    if: >
+      github.event_name == 'pull_request' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    needs: build-and-test
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+          cache: "maven"
+
+      # ── NVD data cache ───────────────────────────────────────────────
+      # The dependency-check plugin downloads NVD CVE data on first run
+      # (~200 MB). Caching it avoids re-downloading the full feed on every
+      # PR. The key includes run_id so the cache is always saved with
+      # fresh data; restore-keys: nvd- picks up the most recent prior run.
+      - name: Cache NVD data
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-${{ github.run_id }}
+          restore-keys: nvd-
+
+      # ── OWASP dependency check ───────────────────────────────────────
+      # NVD_API_KEY speeds up the NVD feed download and avoids rate-limiting.
+      # Store the key as a repository secret named NVD_API_KEY.
+      # Fails the build if any dependency has a CVSS score >= 7.
+      - name: Run OWASP dependency check
+        run: mvn --batch-mode --no-transfer-progress -P security-check verify -DskipTests
+        env:
+          DB_URL: jdbc:postgresql://localhost:5432/chatledger_ci
+          DB_USER: ci_user
+          DB_PASSWORD: ci_password
+          APP_SECRET: ci-secret-not-for-production
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+      - name: Upload OWASP dependency check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: target/dependency-check-report.html
+          if-no-files-found: ignore

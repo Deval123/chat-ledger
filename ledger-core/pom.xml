@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.chatledger</groupId>
+    <artifactId>chat-ledger</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>ledger-core</artifactId>
+  <name>ledger-core</name>
+  <description>
+    Double-entry ledger: accounts, immutable entries, balance invariant, reversals.
+    No web dependency; can be reused outside a web context.
+  </description>
+
+  <dependencies>
+    <!-- No Spring Boot web starter – intentional per tech steering -->
+
+    <!-- jqwik for property-based tests -->
+    <dependency>
+      <groupId>net.jqwik</groupId>
+      <artifactId>jqwik</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>
