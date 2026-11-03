@@ -1,0 +1,32 @@
+# ── chat-ledger local development stack ───────────────────────────────────────
+# All credentials are read from the .env file (never hard-coded here).
+# Copy .env.example to .env and fill in the placeholders before running.
+#
+# Usage:
+#   docker compose up -d       # start PostgreSQL
+#   docker compose down -v     # stop and remove the volume
+#
+# The application is run separately with:
+#   mvn -pl web spring-boot:run   (or your IDE)
+
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      # Bind to loopback only so the port is not reachable from other hosts.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- ── Coordinates ─────────────────────────────────────────────── -->
+  <groupId>dev.chatledger</groupId>
+  <artifactId>chat-ledger</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>chat-ledger</name>
+  <description>Match WhatsApp orders to mobile-money payments with a double-entry ledger.</description>
+
+  <modules>
+    <module>ledger-core</module>
+    <module>extraction</module>
+    <module>ingestion</module>
+    <module>matching</module>
+    <module>suspicion</module>
+    <module>web</module>
+  </modules>
+
+  <!-- ── BOM: Spring Boot drives transitive versions ──────────────── -->
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.3.5</version>
+    <relativePath/>
+  </parent>
+
+  <!-- ── Global properties ─────────────────────────────────────────── -->
+  <properties>
+    <java.version>21</java.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+    <!-- dependency versions (all pinned) -->
+    <assertj.version>3.26.3</assertj.version>
+    <jqwik.version>1.9.1</jqwik.version>
+    <testcontainers.version>1.20.3</testcontainers.version>
+    <flyway.version>10.20.1</flyway.version>
+    <postgresql.driver.version>42.7.4</postgresql.driver.version>
+
+    <!-- plugin versions -->
+    <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+    <maven-surefire-plugin.version>3.5.1</maven-surefire-plugin.version>
+    <owasp-dependency-check.version>10.0.4</owasp-dependency-check.version>
+  </properties>
+
+  <!-- ── Dependency management (pinned) ────────────────────────────── -->
+  <dependencyManagement>
+    <dependencies>
+      <!-- Internal modules -->
+      <dependency>
+        <groupId>dev.chatledger</groupId>
+        <artifactId>ledger-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.chatledger</groupId>
+        <artifactId>extraction</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.chatledger</groupId>
+        <artifactId>ingestion</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.chatledger</groupId>
+        <artifactId>matching</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.chatledger</groupId>
+        <artifactId>suspicion</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <!-- Testcontainers BOM -->
+      <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>testcontainers-bom</artifactId>
+        <version>${testcontainers.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+
+      <!-- jqwik (property-based testing) -->
+      <dependency>
+        <groupId>net.jqwik</groupId>
+        <artifactId>jqwik</artifactId>
+        <version>${jqwik.version}</version>
+        <scope>test</scope>
+      </dependency>
+
+      <!-- PostgreSQL JDBC driver -->
+      <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+        <version>${postgresql.driver.version}</version>
+      </dependency>
+
+      <!-- AssertJ (spring-boot-starter-test already brings it, but pin it) -->
+      <dependency>
+        <groupId>org.assertj</groupId>
+        <artifactId>assertj-core</artifactId>
+        <version>${assertj.version}</version>
+        <scope>test</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <!-- ── Dependencies shared by every module ───────────────────────── -->
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <!-- ── Build plugins ─────────────────────────────────────────────── -->
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>${maven-compiler-plugin.version}</version>
+          <configuration>
+            <release>21</release>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${maven-surefire-plugin.version}</version>
+          <configuration>
+            <!-- Required so jqwik engine and JUnit 5 both run -->
+            <useModulePath>false</useModulePath>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.owasp</groupId>
+          <artifactId>dependency-check-maven</artifactId>
+          <version>${owasp-dependency-check.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+
+  <!-- ── OWASP vulnerability check profile ────────────────────────── -->
+  <!-- Run with: mvn -P security-check verify -->
+  <profiles>
+    <profile>
+      <id>security-check</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.owasp</groupId>
+            <artifactId>dependency-check-maven</artifactId>
+            <executions>
+              <execution>
+                <goals>
+                  <goal>aggregate</goal>
+                </goals>
+                <phase>verify</phase>
+              </execution>
+            </executions>
+            <configuration>
+              <!-- Fail the build if any dependency has a CVSS score >= 7 -->
+              <failBuildOnCVSS>7</failBuildOnCVSS>
+              <suppressionFiles>
+                <suppressionFile>dependency-check-suppressions.xml</suppressionFile>
+              </suppressionFiles>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>
