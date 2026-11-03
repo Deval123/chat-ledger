@@ -40,9 +40,14 @@
       <artifactId>suspicion</artifactId>
     </dependency>
 
+    <!--
+      spring-boot-starter-web is deprecated in Boot 4.1.1 in favour of
+      spring-boot-starter-webmvc (Spring MVC) or spring-boot-starter-webflux.
+      We use the explicit MVC starter here.
+    -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-web</artifactId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -72,6 +77,10 @@
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-database-postgresql</artifactId>
     </dependency>
+    <!--
+      thymeleaf-extras-springsecurity6 is still the correct artifact ID
+      in Boot 4.1.1 (version 3.1.5.RELEASE, managed by the Boot BOM).
+    -->
     <dependency>
       <groupId>org.thymeleaf.extras</groupId>
       <artifactId>thymeleaf-extras-springsecurity6</artifactId>
@@ -88,14 +97,31 @@
       <artifactId>spring-security-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!--
+      spring-boot-starter-webmvc-test provides @AutoConfigureMockMvc (which moved to
+      org.springframework.boot.webmvc.test.autoconfigure in Boot 4.x) and the
+      MockMvc autoconfiguration that was bundled in spring-boot-test-autoconfigure
+      in Boot 3.x.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Testcontainers 2.x renamed all module artifacts.
+      Old (1.x): org.testcontainers:postgresql / junit-jupiter
+      New (2.x): org.testcontainers:testcontainers-postgresql / testcontainers-junit-jupiter
+      Versions are managed by the testcontainers-bom 2.0.5 imported in the root POM.
+    -->
     <dependency>
       <groupId>org.testcontainers</groupId>
-      <artifactId>postgresql</artifactId>
+      <artifactId>testcontainers-postgresql</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
-      <artifactId>junit-jupiter</artifactId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

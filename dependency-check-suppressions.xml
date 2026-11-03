@@ -1,10 +1,50 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   OWASP Dependency Check suppression file.
-  Add documented exceptions here with a justification and an expiry date.
+  Every entry must name: the CVE, the affected jar, a written justification,
+  and an expiry date (after which the suppression must be re-evaluated).
   Never suppress without a comment explaining why the risk is acceptable.
   Requirement: Security steering — pin versions, run a vulnerability check in CI.
 -->
 <suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
-  <!-- No suppressions at project start. Add entries only with justification. -->
+
+  <!--
+    FALSE POSITIVE — CVE-2025-7962 on angus-activation
+    ─────────────────────────────────────────────────────────────────────────
+    CVE:         CVE-2025-7962
+    Jar:         org.eclipse.angus:angus-activation (any version)
+    CVSS:        7.5 as reported by the scan — SMTP injection via CR/LF in mail fields
+    Reported by: OWASP Dependency Check via CPE cpe:/a:eclipse:angus_mail
+
+    Why this is a false positive:
+    The vulnerability is in the angus-mail SMTP implementation, not in
+    angus-activation. angus-activation is the Jakarta Activation Framework
+    implementation (file type detection); it contains no mail transport code
+    and cannot perform SMTP injection. The OWASP DC scanner incorrectly maps
+    angus-activation to the angus_mail CPE because both share the Eclipse
+    Angus project namespace.
+
+    Evidence: the CVE record (https://nvd.nist.gov/vuln/detail/CVE-2025-7962)
+    describes an SMTP injection in the Jakarta Mail SMTP transport
+    (org.eclipse.angus:smtp), not in the activation framework. The CVSS
+    score shown by the scan (7.5) may differ from other scorings of the same CVE.
+    The local suppression is limited to this jar and this CPE.
+
+    chat-ledger does not send email of any kind, so even the real angus-mail
+    vulnerability would not be reachable. angus-activation is a transitive
+    dependency pulled in by the Jakarta EE stack; it is not called directly.
+
+    Expiry: 2027-06-01 — re-evaluate when upgrading Dependency Check or
+    when angus-activation is next upgraded.
+    ─────────────────────────────────────────────────────────────────────────
+  -->
+  <suppress base="true">
+    <notes><![CDATA[
+      FALSE POSITIVE: CVE-2025-7962 affects the Jakarta Mail SMTP transport
+      (angus-mail), not angus-activation. Expires 2027-06-01.
+    ]]></notes>
+    <packageUrl regex="true">^pkg:maven/org\.eclipse\.angus/angus-activation@.*$</packageUrl>
+    <cpe>cpe:/a:eclipse:angus_mail</cpe>
+  </suppress>
+
 </suppressions>

@@ -2,8 +2,8 @@ package dev.chatledger.web;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -12,8 +12,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Smoke test for the web module: starts a partial Spring context (no real DB
- * needed here) and verifies the health endpoint responds.
+ * Smoke test for the web module: starts the Spring context without a real
+ * database and verifies the health endpoint responds with HTTP 200.
+ *
+ * <p>In Spring Boot 4.x the @AutoConfigureMockMvc annotation moved to
+ * org.springframework.boot.webmvc.test.autoconfigure (in the
+ * spring-boot-starter-webmvc-test dependency). DataSource, JPA, and
+ * Flyway auto-configurations are excluded via application-test.properties
+ * so this test runs in CI without a running PostgreSQL instance.
+ *
+ * <p>Note: @SpringBootTest no longer has an excludeAutoConfiguration attribute
+ * in Boot 4.x. Exclusions are handled via spring.autoconfigure.exclude in the
+ * test profile properties file, which is the recommended approach.
  *
  * <p>Requirement: 9 (health check for deployment).
  */

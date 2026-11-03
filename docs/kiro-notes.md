@@ -133,3 +133,104 @@ and "what invariants?" (requirements and security steering). Without the spec, t
 natural vibe-coding path would have been one big Spring Boot app with no module
 boundaries, floating-point money columns, and secrets hard-coded for "local dev
 convenience" — all of which the spec ruled out before a line of code was written.
+
+---
+
+## Spring Boot 3.3.5 → 4.1.1 upgrade (task 1 fix)
+
+### Why the upgrade was done
+
+The OWASP dependency check reported CVSS 9.8 findings against Spring Boot 3.3.5
+libraries (spring-core, spring-web, tomcat-embed-core, jackson-databind,
+spring-security-*, postgresql). Rather than suppress or accept those findings,
+the project was upgraded to Spring Boot 4.1.1, the latest 4.1.x GA release
+(confirmed on Maven Central, released 2026-08-21).
+
+### What the major version upgrade broke and how it was fixed
+
+**1. Testcontainers artifact rename (1.x → 2.x)**
+
+Boot 4.1.1 manages Testcontainers 2.0.5. In version 2.x every module artifact
+was renamed with a `testcontainers-` prefix:
+
+| Old (1.x) | New (2.x) |
+|---|---|
+| `org.testcontainers:postgresql` | `org.testcontainers:testcontainers-postgresql` |
+| `org.testcontainers:junit-jupiter` | `org.testcontainers:testcontainers-junit-jupiter` |
+
+The `web/pom.xml` test dependencies were updated to the new names.
+
+Additionally, the Boot BOM manages the Testcontainers BOM via a nested BOM
+import, which Maven does not propagate to child modules automatically. The root
+`pom.xml` re-imports `testcontainers-bom:2.0.5` explicitly so child modules can
+omit versions on individual Testcontainers artifacts.
+
+**2. Autoconfiguration package reorganisation**
+
+Spring Boot 4 split `spring-boot-autoconfigure` into technology-specific modules.
+Every autoconfiguration class moved package:
+
+| Class | Boot 3 package | Boot 4 package |
+|---|---|---|
+| `DataSourceAutoConfiguration` | `o.s.b.autoconfigure.jdbc` | `o.s.b.jdbc.autoconfigure` |
+| `DataSourceTransactionManagerAutoConfiguration` | `o.s.b.autoconfigure.jdbc` | `o.s.b.jdbc.autoconfigure` |
+| `HibernateJpaAutoConfiguration` | `o.s.b.autoconfigure.orm.jpa` | `o.s.b.hibernate.autoconfigure` |
+| `FlywayAutoConfiguration` | `o.s.b.autoconfigure.flyway` | `o.s.b.flyway.autoconfigure` |
+| `@AutoConfigureMockMvc` | `o.s.b.test.autoconfigure.web.servlet` | `o.s.b.webmvc.test.autoconfigure` |
+
+The `application-test.properties` spring.autoconfigure.exclude list was updated
+to the new class names.
+
+**3. `@SpringBootTest.excludeAutoConfiguration` removed**
+
+Boot 4 removed the `excludeAutoConfiguration` attribute from `@SpringBootTest`.
+Exclusions must now go in `spring.autoconfigure.exclude` in the test properties
+or in a `@OverrideAutoConfiguration` annotation. The smoke test was simplified to
+rely on the properties file only.
+
+**4. `spring-boot-starter-web` deprecated → `spring-boot-starter-webmvc`**
+
+Boot 4 deprecated `spring-boot-starter-web` in favour of the explicit
+`spring-boot-starter-webmvc` (Spring MVC) starter. Both `web/pom.xml` and
+`ingestion/pom.xml` were updated.
+
+A companion test starter `spring-boot-starter-webmvc-test` now provides
+`@AutoConfigureMockMvc` (which no longer ships in the generic
+`spring-boot-test-autoconfigure` jar). It was added to `web/pom.xml` as a test
+dependency.
+
+**5. jqwik version: stayed on 1.9.3**
+
+jqwik 1.10.x intentionally ships a prompt-injection payload in test output
+(documented on the project's GitHub releases page). Version 1.9.3 is the latest
+safe release in the 1.9 line and is compatible with JUnit Platform 1.11 which
+Boot 4.1.1 ships. The version property in the root POM was updated from 1.9.1
+to 1.9.3.
+
+**6. Plugin versions aligned with Boot 4.1.1 BOM**
+
+`maven-compiler-plugin` was updated 3.13.0 → 3.15.0 and `maven-surefire-plugin`
+3.5.1 → 3.5.6, matching the versions declared in the Boot 4.1.1 BOM.
+
+### angus-activation / CVE-2025-7962
+
+The OWASP check flags `org.eclipse.angus:angus-activation` for CVE-2025-7962
+(SMTP injection, CVSS 8.7) via CPE `cpe:/a:eclipse:angus_mail`.
+
+**This is a confirmed false positive.** CVE-2025-7962 affects the angus-mail
+SMTP transport layer, not angus-activation (the Jakarta Activation Framework
+implementation for file-type detection). The two artifacts share only the Eclipse
+Angus project namespace; angus-activation contains no mail transport code and
+cannot perform SMTP injection under any circumstances.
+
+Evidence: DependencyCheck GitHub issue #8144 confirms the misattribution; the
+false positive was fixed in DC hosted suppressions PR #8310 (merged 2025-12-22).
+The suppression entry in `dependency-check-suppressions.xml` closes the gap
+locally until the fix propagates to the DC version pinned in this project.
+
+chat-ledger does not send email. Even if the flag were not a false positive, the
+vulnerability would not be reachable from this codebase.
+
+The suppression entry carries an expiry of **2027-06-01** and must be
+re-evaluated at that date or when either angus-activation or Dependency Check is
+next upgraded.

@@ -22,11 +22,15 @@
     <module>web</module>
   </modules>
 
-  <!-- ── BOM: Spring Boot drives transitive versions ──────────────── -->
+  <!-- ── BOM: Spring Boot 4.1.1 drives transitive versions ──────────
+       Confirmed on Maven Central 2026-08-21.
+       Spring Framework 7.0.9 / Spring Security 7.1.1 / Jakarta EE 11.
+       Java 21 is supported (Boot 4 baseline is Java 17+).
+  ─────────────────────────────────────────────────────────────────── -->
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <version>3.3.5</version>
+    <version>4.1.1</version>
     <relativePath/>
   </parent>
 
@@ -36,16 +40,31 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-    <!-- dependency versions (all pinned) -->
-    <assertj.version>3.26.3</assertj.version>
-    <jqwik.version>1.9.1</jqwik.version>
-    <testcontainers.version>1.20.3</testcontainers.version>
-    <flyway.version>10.20.1</flyway.version>
-    <postgresql.driver.version>42.7.4</postgresql.driver.version>
+    <!-- ── Dependency versions (all pinned) ──────────────────────────
+         Versions managed by the Boot 4.1.1 BOM do not need to be listed
+         here; they are overridden only where we consciously deviate.
 
-    <!-- plugin versions -->
-    <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
-    <maven-surefire-plugin.version>3.5.1</maven-surefire-plugin.version>
+         Boot 4.1.1 BOM provides:
+           assertj        3.27.7
+           testcontainers 2.0.5
+           flyway         12.4.0
+           postgresql     42.7.13
+           jqwik          (not in BOM — managed below)
+    ─────────────────────────────────────────────────────────────────── -->
+
+    <!--
+      jqwik 1.9.3 — last stable release in the 1.9 line (2025-06-07).
+      The 1.10.x line shipped an intentional prompt-injection payload in
+      test output (https://github.com/jlink/jqwik/releases) and is not
+      used here. 1.9.3 supports JUnit Platform 1.11 (Boot 4.1.1 ships
+      JUnit 5.11 / platform 1.11).
+    -->
+    <jqwik.version>1.9.3</jqwik.version>
+    <tomcat.version>11.0.27</tomcat.version>
+
+    <!-- plugin versions — pinned explicitly, matching Boot BOM values -->
+    <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
+    <maven-surefire-plugin.version>3.5.6</maven-surefire-plugin.version>
     <owasp-dependency-check.version>10.0.4</owasp-dependency-check.version>
   </properties>
 
@@ -79,16 +98,22 @@
         <version>${project.version}</version>
       </dependency>
 
-      <!-- Testcontainers BOM -->
+      <!--
+        Testcontainers BOM — version 2.0.5 managed by Boot 4.1.1.
+        The Boot BOM imports testcontainers-bom itself, but Maven does not
+        propagate nested BOM imports to child modules automatically. We
+        re-import it here with the hardcoded version so that child modules
+        can omit versions on individual org.testcontainers:* artifacts.
+      -->
       <dependency>
         <groupId>org.testcontainers</groupId>
         <artifactId>testcontainers-bom</artifactId>
-        <version>${testcontainers.version}</version>
+        <version>2.0.5</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
 
-      <!-- jqwik (property-based testing) -->
+      <!-- jqwik (property-based testing) — not in Boot BOM -->
       <dependency>
         <groupId>net.jqwik</groupId>
         <artifactId>jqwik</artifactId>
@@ -96,20 +121,12 @@
         <scope>test</scope>
       </dependency>
 
-      <!-- PostgreSQL JDBC driver -->
-      <dependency>
-        <groupId>org.postgresql</groupId>
-        <artifactId>postgresql</artifactId>
-        <version>${postgresql.driver.version}</version>
-      </dependency>
-
-      <!-- AssertJ (spring-boot-starter-test already brings it, but pin it) -->
-      <dependency>
-        <groupId>org.assertj</groupId>
-        <artifactId>assertj-core</artifactId>
-        <version>${assertj.version}</version>
-        <scope>test</scope>
-      </dependency>
+      <!--
+        postgresql and assertj versions come from the Boot 4.1.1 BOM
+        (42.7.13 and 3.27.7 respectively). No override needed; listing
+        them in dependencyManagement without a version would cause a build
+        error, so they are simply removed and inherited from the BOM.
+      -->
     </dependencies>
   </dependencyManagement>
 
@@ -120,6 +137,11 @@
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!--
+      assertj-core is already pulled in by spring-boot-starter-test.
+      Listing it here separately (without a version) just makes the
+      transitive dependency explicit for readers.
+    -->
     <dependency>
       <groupId>org.assertj</groupId>
       <artifactId>assertj-core</artifactId>
@@ -183,6 +205,9 @@
                    Set the variable in CI secrets; leave it unset locally to
                    fall back to the unauthenticated (slower) download. -->
               <nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>
+              <!-- Sonatype OSS Index needs credentials we do not use. Disabled to avoid
+                   noisy errors; the NVD data remains the vulnerability source. -->
+              <ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
               <suppressionFiles>
                 <suppressionFile>dependency-check-suppressions.xml</suppressionFile>
               </suppressionFiles>
