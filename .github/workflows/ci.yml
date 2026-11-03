@@ -63,6 +63,18 @@ jobs:
           distribution: "temurin"
           cache: "maven"
 
+      # ── NVD data cache ───────────────────────────────────────────────
+      # The dependency-check plugin downloads NVD CVE data on first run
+      # (~200 MB). Caching it avoids re-downloading the full feed on every
+      # PR. The key includes run_id so the cache is always saved with
+      # fresh data; restore-keys: nvd- picks up the most recent prior run.
+      - name: Cache NVD data
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-${{ github.run_id }}
+          restore-keys: nvd-
+
       # ── OWASP dependency check ───────────────────────────────────────
       # NVD_API_KEY speeds up the NVD feed download and avoids rate-limiting.
       # Store the key as a repository secret named NVD_API_KEY.

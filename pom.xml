@@ -178,6 +178,11 @@
             <configuration>
               <!-- Fail the build if any dependency has a CVSS score >= 7 -->
               <failBuildOnCVSS>7</failBuildOnCVSS>
+              <!-- API key read from the NVD_API_KEY environment variable.
+                   Speeds up the NVD feed download and avoids rate-limiting.
+                   Set the variable in CI secrets; leave it unset locally to
+                   fall back to the unauthenticated (slower) download. -->
+              <nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>
               <suppressionFiles>
                 <suppressionFile>dependency-check-suppressions.xml</suppressionFile>
               </suppressionFiles>
