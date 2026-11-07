@@ -99,7 +99,7 @@ class LedgerPostgresIT {
     void unbalanced_is_refused_by_the_database() {
         UUID txn = UUID.randomUUID();
         assertThatThrownBy(() -> {
-            try (Connection c = DB.appDataSource().getConnection()) {
+            try (Connection c = tenantConnection(tenantA)) {
                 c.setAutoCommit(false);
                 insertTxn(c, txn, tenantA, null);
                 insertEntry(c, txn, receivableA.id(), 100, 0);
@@ -118,7 +118,7 @@ class LedgerPostgresIT {
     void single_entry_is_refused_by_the_database() {
         UUID txn = UUID.randomUUID();
         assertThatThrownBy(() -> {
-            try (Connection c = DB.appDataSource().getConnection()) {
+            try (Connection c = tenantConnection(tenantA)) {
                 c.setAutoCommit(false);
                 insertTxn(c, txn, tenantA, null);
                 insertEntry(c, txn, receivableA.id(), 100, 0);
@@ -133,7 +133,7 @@ class LedgerPostgresIT {
     void header_without_entries_is_refused_by_the_database() {
         UUID txn = UUID.randomUUID();
         assertThatThrownBy(() -> {
-            try (Connection c = DB.appDataSource().getConnection()) {
+            try (Connection c = tenantConnection(tenantA)) {
                 c.setAutoCommit(false);
                 insertTxn(c, txn, tenantA, null);
                 c.commit();
@@ -146,7 +146,7 @@ class LedgerPostgresIT {
     @DisplayName("balance check is deferred: entries may arrive one by one inside a transaction")
     void balanced_plain_sql_is_accepted() throws SQLException {
         UUID txn = UUID.randomUUID();
-        try (Connection c = DB.appDataSource().getConnection()) {
+        try (Connection c = tenantConnection(tenantA)) {
             c.setAutoCommit(false);
             insertTxn(c, txn, tenantA, null);
             insertEntry(c, txn, receivableA.id(), 100, 0);   // not balanced yet, and that is fine
@@ -163,7 +163,7 @@ class LedgerPostgresIT {
     void cross_tenant_entry_is_refused_by_the_database() {
         UUID txn = UUID.randomUUID();
         assertThatThrownBy(() -> {
-            try (Connection c = DB.appDataSource().getConnection()) {
+            try (Connection c = tenantConnection(tenantA)) {
                 c.setAutoCommit(false);
                 insertTxn(c, txn, tenantA, null);
                 insertEntry(c, txn, receivableB.id(), 100, 0);   // tenant B's account in tenant A's txn
@@ -259,7 +259,7 @@ class LedgerPostgresIT {
 
         UUID rawTxn = UUID.randomUUID();
         assertThatThrownBy(() -> {
-            try (Connection c = DB.appDataSource().getConnection()) {
+            try (Connection c = tenantConnection(tenantA)) {
                 c.setAutoCommit(false);
                 insertTxn(c, rawTxn, tenantA, original.id());
             }
@@ -276,7 +276,7 @@ class LedgerPostgresIT {
         service.post(original);
 
         assertThatThrownBy(() -> {
-            try (Connection c = DB.appDataSource().getConnection()) {
+            try (Connection c = tenantConnection(tenantB)) {
                 c.setAutoCommit(false);
                 insertTxn(c, UUID.randomUUID(), tenantB, original.id());   // tenant B "reverses" tenant A's txn
             }
@@ -324,6 +324,20 @@ class LedgerPostgresIT {
     }
 
     // ── Helpers (plain SQL, bypassing the domain on purpose) ────────────────
+
+    /**
+     * An application-role connection in a transaction with the tenant set, as
+     * TenantScope does. The caller commits. Row-level security needs the tenant.
+     */
+    private Connection tenantConnection(UUID tenant) throws SQLException {
+        Connection c = DB.appDataSource().getConnection();
+        c.setAutoCommit(false);
+        try (PreparedStatement ps = c.prepareStatement("SELECT set_config('app.tenant_id', ?, true)")) {
+            ps.setString(1, tenant.toString());
+            ps.execute();
+        }
+        return c;
+    }
 
     private void insertTxn(Connection c, UUID id, UUID tenant, UUID reverses) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(

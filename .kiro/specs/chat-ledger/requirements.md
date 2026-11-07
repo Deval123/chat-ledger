@@ -130,7 +130,7 @@ Acceptance criteria:
 3. WHERE a machine endpoint receives messages, THE system SHALL require an HMAC signature.
 4. THE system SHALL keep secrets out of the repository and out of logs.
 5. THE system SHALL escape all rendered user text and use CSRF protection on forms.
-6. THE system SHALL let a tenant export and delete its data.
+6. THE system SHALL let a tenant export its data, and SHALL let a tenant delete its personal data: customers, customer and sender names, hashed phone numbers, and the raw text of chat messages and confirmations. Deleting personal data SHALL NOT delete or change any ledger transaction or entry. The ledger holds only account identifiers, amounts, dates and opaque references, and no personal data, so it is kept for the tenant's records (requirement 4.2).
 
 ## Requirement 10: Language and money
 

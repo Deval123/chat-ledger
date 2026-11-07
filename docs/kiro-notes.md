@@ -419,3 +419,86 @@ the reversal unique constraint) fails exactly the matching tests.
 - My first database mutation run printed nothing: `-pl web` could not resolve
   the new test-jar without `-am`. I noticed only because the output was empty.
   Always check that a negative check actually ran.
+
+---
+
+## Task 3, checkpoint 1 - tenant integrity, row-level security, isolation guards (3.1 to 3.3)
+
+Authentication, sessions, CSRF, headers and limits (3.4 to 3.10) are not built yet; this section is
+only about the first checkpoint.
+
+### What the spec and the design review caught
+
+- **The commit-time assumption was tested first, as asked, and holds.** The design relied on a
+  deferred constraint trigger still seeing the transaction-local tenant setting at `COMMIT`.
+  `CommitTimeTenantSettingIT` proves it on PostgreSQL 16.4 with a scratch schema, and a control
+  case (blank the setting just before commit, the trigger then sees zero rows) shows RLS really
+  applies inside the trigger, so the first test is not passing by accident. It had no effect on
+  the plan because it passed, but the plan depended on it.
+- **V009's tenant trigger would have failed open under RLS.** Found by reading V009 against the
+  RLS rules, before any code. Another tenant's account is invisible to the trigger, which then
+  stepped aside, and foreign-key checks bypass RLS, so a cross-tenant ledger entry would have
+  committed. V011 replaces the function so that "cannot see it" is a violation.
+- **Foreign keys cross tenants.** PostgreSQL documents that foreign-key and unique checks bypass
+  row security. Today a `match` could link tenant A's order to tenant B's payment. V010 replaces
+  the single-column keys with composite ones that include `tenant_id`.
+- **Requirement 9.6 conflicted with 4.2.** Resolved by you: deleting personal data, ledger kept.
+  Requirement 9.6 was rewritten, and the retention rule is recorded in `design.md` as an
+  assumption to check against local accounting law.
+- **The existing tests broke in useful ways.** Under RLS every raw-SQL helper needed a tenant, and
+  every tenant fixture needed a `slug`. That is the policies doing their job.
+
+### What changed from the design while building
+
+- The isolation guard is a pure function over a catalog snapshot (`IsolationGuard`), not a single
+  test. That lets the same rules run on the real database and, in `IsolationGuardTest`, on
+  invented catalogs built to fail, so a green result means something.
+- The registry covers every table in `public`, not only tables with a `tenant_id` column. A table
+  must be registered or listed as holding no tenant data (only `flyway_schema_history`).
+- The per-table behaviour test runs as a probe role that holds full DML privileges and is a member
+  of `chatledger_app`. The real application role lacks most privileges, so testing with it alone
+  would pass because of missing privileges and prove nothing about the policies.
+- `tenant` has a read-only policy, `ledger_entry` follows `ledger_txn`, and `audit_log` is
+  insert-and-select only for the application role.
+- `JdbcLedgerRepository` now runs every call in a `TenantScope`, and `balances()` inlines its SQL
+  literal so the build can check nothing is string-built.
+- `LedgerDatabase` credentials are random per run (part of the throwaway-password debt; the
+  remaining test classes are handled in 3.6).
+
+### Mutation checks (what the guards actually catch)
+
+| Mutation | Caught by |
+|---|---|
+| RLS not enabled on `flag`; `orders` policy `USING (true)` | catalog guard, per-table behaviour test, no-tenant test |
+| V009's fail-open trigger restored | `an_entry_on_another_tenants_account_is_refused_because_it_is_invisible` only |
+| Single-column foreign key on `order_line` | catalog guard (foreign-key rule), `TenancyIntegrityIT` |
+| A new tenant table with no registry entry | catalog guard, naming the table |
+
+The fail-open case matters: the generic per-table harness did **not** catch it, because the entry's
+own policy happens to block that particular insert. Only the dedicated test, which puts tenant A's
+transaction together with tenant B's account, does. The generic harness is necessary but not
+sufficient; hazards found by reading still need their own tests.
+
+### Defenses weakened or traded off so far (from the design's register)
+
+1. The tenant setting can be set by any SQL the application role runs, so RLS protects against our
+   own bugs and not against SQL injection. Compensation: prepared statements only (a build check),
+   least privilege, application scoping as the primary control.
+2. The owner bypasses RLS (`ENABLE`, not `FORCE`). `RowLevelSecurityIT` documents it. Compensation:
+   the application role is not owner, superuser or `BYPASSRLS`, holds no `TRUNCATE`, `REFERENCES`
+   or `TRIGGER`, and the owner is used by Flyway only.
+12. Test credentials: partly paid down (`LedgerDatabase`); the rest in 3.6.
+13. The task 2.3 triggers can still be dropped by the owner.
+
+Limits of the new checks, so nobody over-trusts them: the "no string-built SQL" check is a
+heuristic scan of `prepareStatement` arguments, not a parser; the controller scan cannot see inside
+an untyped `Map` request body; repositories are found by the `*Repository` class name.
+
+### One honest remark
+
+What worked: writing the riskiest assumption as a test first, with a control, and then running the
+mutations before trusting the green. What did not: several tests passed or failed for the wrong
+reason on the first try (the repository scan picked up a test fake, fixtures lacked a `slug`, a
+generics ambiguity in my own assertions), and the one real hole, the fail-open trigger, slipped past
+the clever generic harness. The lesson is the one from task 2: a guard you have not seen fail is a
+guess.

@@ -9,6 +9,7 @@ import dev.chatledger.ledger.LedgerException;
 import dev.chatledger.ledger.LedgerRepository;
 import dev.chatledger.ledger.LedgerTransaction;
 import dev.chatledger.ledger.Side;
+import dev.chatledger.tenancy.TenantScope;
 import org.postgresql.util.PSQLException;
 
 import javax.sql.DataSource;
@@ -17,6 +18,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -30,12 +32,14 @@ import java.util.UUID;
  *
  * <p>It is meant to run on a DataSource that connects as the application role
  * (INSERT and SELECT only, not the owner). It never issues UPDATE or DELETE.
- * Every query names the tenant; reads join through {@code ledger_txn.tenant_id}
- * so another tenant's rows are never returned.
+ * Every call runs inside a {@link TenantScope}: one transaction in which the
+ * tenant is set first, so row-level security applies. Every query also names
+ * the tenant, and reads join through {@code ledger_txn.tenant_id}, so another
+ * tenant's rows are never returned even if one layer were missing.
  *
  * <p>A transaction is written in one database transaction. The balance check is
- * a deferred constraint trigger, so an unbalanced write fails at {@code commit()}
- * and nothing is persisted.
+ * a deferred constraint trigger, so an unbalanced write fails when the scope
+ * commits and nothing is persisted.
  */
 public final class JdbcLedgerRepository implements LedgerRepository {
 
@@ -44,23 +48,31 @@ public final class JdbcLedgerRepository implements LedgerRepository {
     private static final String CHECK_VIOLATION = "23514";
     private static final String UQ_REVERSAL = "uq_ledger_txn_reverses";
 
-    private final DataSource dataSource;
+    private final TenantScope scope;
 
     public JdbcLedgerRepository(DataSource dataSource) {
-        this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
+        this(new TenantScope(dataSource));
+    }
+
+    public JdbcLedgerRepository(TenantScope scope) {
+        this.scope = Objects.requireNonNull(scope, "scope");
     }
 
     @Override
     public void createAccount(Account account) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "INSERT INTO account(id, tenant_id, code, name, type) VALUES (?, ?, ?, ?, ?)")) {
-            ps.setObject(1, account.id());
-            ps.setObject(2, account.tenantId());
-            ps.setString(3, account.code());
-            ps.setString(4, account.name());
-            ps.setString(5, account.type().name());
-            ps.executeUpdate();
+        try {
+            scope.call(account.tenantId(), c -> {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "INSERT INTO account(id, tenant_id, code, name, type) VALUES (?, ?, ?, ?, ?)")) {
+                    ps.setObject(1, account.id());
+                    ps.setObject(2, account.tenantId());
+                    ps.setString(3, account.code());
+                    ps.setString(4, account.name());
+                    ps.setString(5, account.type().name());
+                    ps.executeUpdate();
+                }
+                return null;
+            });
         } catch (SQLException e) {
             throw translate("Could not create account " + account.id(), e);
         }
@@ -68,20 +80,23 @@ public final class JdbcLedgerRepository implements LedgerRepository {
 
     @Override
     public Optional<Account> findAccount(UUID tenantId, UUID accountId) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT id, tenant_id, code, name, type FROM account WHERE tenant_id = ? AND id = ?")) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, accountId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return Optional.empty();
+        try {
+            return scope.call(tenantId, c -> {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT id, tenant_id, code, name, type FROM account WHERE tenant_id = ? AND id = ?")) {
+                    ps.setObject(1, tenantId);
+                    ps.setObject(2, accountId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next()) {
+                            return Optional.<Account>empty();
+                        }
+                        return Optional.of(new Account(
+                                rs.getObject("id", UUID.class), rs.getObject("tenant_id", UUID.class),
+                                rs.getString("code"), rs.getString("name"),
+                                AccountType.valueOf(rs.getString("type"))));
+                    }
                 }
-                return Optional.of(new Account(
-                        rs.getObject("id", UUID.class), rs.getObject("tenant_id", UUID.class),
-                        rs.getString("code"), rs.getString("name"),
-                        AccountType.valueOf(rs.getString("type"))));
-            }
+            });
         } catch (SQLException e) {
             throw new IllegalStateException("Could not read account " + accountId, e);
         }
@@ -89,18 +104,14 @@ public final class JdbcLedgerRepository implements LedgerRepository {
 
     @Override
     public void append(LedgerTransaction txn) {
-        try (Connection c = dataSource.getConnection()) {
-            c.setAutoCommit(false);
-            try {
+        try {
+            scope.call(txn.tenantId(), c -> {
                 insertHeader(c, txn);
                 insertEntries(c, txn);
-                c.commit();   // deferred balance trigger fires here
-            } catch (SQLException e) {
-                rollbackQuietly(c);
-                throw translate(txn, e);
-            }
+                return null;   // the scope commits; the deferred balance trigger fires there
+            });
         } catch (SQLException e) {
-            throw new IllegalStateException("Could not open a connection", e);
+            throw translate(txn, e);
         }
     }
 
@@ -137,62 +148,70 @@ public final class JdbcLedgerRepository implements LedgerRepository {
 
     @Override
     public Optional<LedgerTransaction> findTransaction(UUID tenantId, UUID txnId) {
-        try (Connection c = dataSource.getConnection()) {
-            String kind;
-            String refType;
-            UUID refId;
-            UUID reverses;
-            java.time.Instant createdAt;
-            try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT kind, ref_type, ref_id, reverses_txn_id, created_at "
-                            + "FROM ledger_txn WHERE tenant_id = ? AND id = ?")) {
-                ps.setObject(1, tenantId);
-                ps.setObject(2, txnId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (!rs.next()) {
-                        return Optional.empty();
-                    }
-                    kind = rs.getString("kind");
-                    refType = rs.getString("ref_type");
-                    refId = rs.getObject("ref_id", UUID.class);
-                    reverses = rs.getObject("reverses_txn_id", UUID.class);
-                    createdAt = rs.getObject("created_at", OffsetDateTime.class).toInstant();
-                }
-            }
-            List<LedgerEntry> entries = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT e.id, e.account_id, e.debit_minor, e.credit_minor "
-                            + "FROM ledger_entry e JOIN ledger_txn t ON t.id = e.txn_id "
-                            + "WHERE t.tenant_id = ? AND e.txn_id = ?")) {
-                ps.setObject(1, tenantId);
-                ps.setObject(2, txnId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        long debit = rs.getLong("debit_minor");
-                        Side side = debit > 0 ? Side.DEBIT : Side.CREDIT;
-                        long amount = debit > 0 ? debit : rs.getLong("credit_minor");
-                        entries.add(new LedgerEntry(rs.getObject("id", UUID.class),
-                                rs.getObject("account_id", UUID.class), side, amount));
-                    }
-                }
-            }
-            return Optional.of(new LedgerTransaction(
-                    txnId, tenantId, kind, refType, refId, reverses, createdAt, entries));
+        try {
+            return scope.call(tenantId, c -> readTransaction(c, tenantId, txnId));
         } catch (SQLException e) {
             throw new IllegalStateException("Could not read transaction " + txnId, e);
         }
     }
 
-    @Override
-    public boolean isReversed(UUID tenantId, UUID txnId) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT 1 FROM ledger_txn WHERE tenant_id = ? AND reverses_txn_id = ?")) {
+    private Optional<LedgerTransaction> readTransaction(Connection c, UUID tenantId, UUID txnId)
+            throws SQLException {
+        String kind;
+        String refType;
+        UUID refId;
+        UUID reverses;
+        Instant createdAt;
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT kind, ref_type, ref_id, reverses_txn_id, created_at "
+                        + "FROM ledger_txn WHERE tenant_id = ? AND id = ?")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, txnId);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                kind = rs.getString("kind");
+                refType = rs.getString("ref_type");
+                refId = rs.getObject("ref_id", UUID.class);
+                reverses = rs.getObject("reverses_txn_id", UUID.class);
+                createdAt = rs.getObject("created_at", OffsetDateTime.class).toInstant();
             }
+        }
+        List<LedgerEntry> entries = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT e.id, e.account_id, e.debit_minor, e.credit_minor "
+                        + "FROM ledger_entry e JOIN ledger_txn t ON t.id = e.txn_id "
+                        + "WHERE t.tenant_id = ? AND e.txn_id = ?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, txnId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    long debit = rs.getLong("debit_minor");
+                    Side side = debit > 0 ? Side.DEBIT : Side.CREDIT;
+                    long amount = debit > 0 ? debit : rs.getLong("credit_minor");
+                    entries.add(new LedgerEntry(rs.getObject("id", UUID.class),
+                            rs.getObject("account_id", UUID.class), side, amount));
+                }
+            }
+        }
+        return Optional.of(new LedgerTransaction(
+                txnId, tenantId, kind, refType, refId, reverses, createdAt, entries));
+    }
+
+    @Override
+    public boolean isReversed(UUID tenantId, UUID txnId) {
+        try {
+            return scope.call(tenantId, c -> {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT 1 FROM ledger_txn WHERE tenant_id = ? AND reverses_txn_id = ?")) {
+                    ps.setObject(1, tenantId);
+                    ps.setObject(2, txnId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        return rs.next();
+                    }
+                }
+            });
         } catch (SQLException e) {
             throw new IllegalStateException("Could not check reversal of " + txnId, e);
         }
@@ -200,17 +219,21 @@ public final class JdbcLedgerRepository implements LedgerRepository {
 
     @Override
     public long netDebit(UUID tenantId, UUID accountId) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT COALESCE(SUM(e.debit_minor), 0) - COALESCE(SUM(e.credit_minor), 0) "
-                             + "FROM ledger_entry e JOIN ledger_txn t ON t.id = e.txn_id "
-                             + "WHERE t.tenant_id = ? AND e.account_id = ?")) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, accountId);
-            try (ResultSet rs = ps.executeQuery()) {
-                rs.next();
-                return exactLong(rs.getBigDecimal(1));
-            }
+        try {
+            BigDecimal net = scope.call(tenantId, c -> {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT COALESCE(SUM(e.debit_minor), 0) - COALESCE(SUM(e.credit_minor), 0) "
+                                + "FROM ledger_entry e JOIN ledger_txn t ON t.id = e.txn_id "
+                                + "WHERE t.tenant_id = ? AND e.account_id = ?")) {
+                    ps.setObject(1, tenantId);
+                    ps.setObject(2, accountId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        rs.next();
+                        return rs.getBigDecimal(1);
+                    }
+                }
+            });
+            return exactLong(net);
         } catch (SQLException e) {
             throw new IllegalStateException("Could not read balance of " + accountId, e);
         }
@@ -219,24 +242,30 @@ public final class JdbcLedgerRepository implements LedgerRepository {
     @Override
     public List<AccountBalance> balances(UUID tenantId) {
         // The tenant is in the join as well as in the WHERE, so entries are
-        // reached only through this tenant's transactions.
-        String sql = "SELECT a.id, a.type, "
-                + "COALESCE(SUM(e.debit_minor), 0) - COALESCE(SUM(e.credit_minor), 0) AS net "
-                + "FROM account a "
-                + "LEFT JOIN (ledger_entry e JOIN ledger_txn t ON t.id = e.txn_id AND t.tenant_id = ?) "
-                + "       ON e.account_id = a.id "
-                + "WHERE a.tenant_id = ? GROUP BY a.id, a.type ORDER BY a.code";
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, tenantId);
-            List<AccountBalance> result = new ArrayList<>();
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    result.add(new AccountBalance(rs.getObject("id", UUID.class),
-                            AccountType.valueOf(rs.getString("type")), exactLong(rs.getBigDecimal("net"))));
+        // reached only through this tenant's transactions. The SQL is a literal
+        // inside prepareStatement so the build can verify nothing is string-built.
+        try {
+            return scope.call(tenantId, c -> {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT a.id, a.type, "
+                                + "COALESCE(SUM(e.debit_minor), 0) - COALESCE(SUM(e.credit_minor), 0) AS net "
+                                + "FROM account a "
+                                + "LEFT JOIN (ledger_entry e JOIN ledger_txn t ON t.id = e.txn_id AND t.tenant_id = ?) "
+                                + "       ON e.account_id = a.id "
+                                + "WHERE a.tenant_id = ? GROUP BY a.id, a.type ORDER BY a.code")) {
+                    ps.setObject(1, tenantId);
+                    ps.setObject(2, tenantId);
+                    List<AccountBalance> result = new ArrayList<>();
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            result.add(new AccountBalance(rs.getObject("id", UUID.class),
+                                    AccountType.valueOf(rs.getString("type")),
+                                    exactLong(rs.getBigDecimal("net"))));
+                        }
+                    }
+                    return result;
                 }
-            }
-            return result;
+            });
         } catch (SQLException e) {
             throw new IllegalStateException("Could not read balances", e);
         }
@@ -249,14 +278,6 @@ public final class JdbcLedgerRepository implements LedgerRepository {
             return value.longValueExact();
         } catch (ArithmeticException overflow) {
             throw new LedgerException("Balance does not fit in a long", overflow);
-        }
-    }
-
-    private static void rollbackQuietly(Connection c) {
-        try {
-            c.rollback();
-        } catch (SQLException ignored) {
-            // The original exception is the one worth reporting.
         }
     }
 

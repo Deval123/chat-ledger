@@ -124,10 +124,10 @@ class LedgerEntryImmutabilityIT {
         //    transaction (autocommit off).
         try (Connection c = migrateConn(); Statement s = c.createStatement()) {
             c.setAutoCommit(false);
-            s.execute("INSERT INTO tenant(id,name,currency,scale) VALUES ("
-                    + lit(tenantAId) + ",'Seller A','XAF',0)");
-            s.execute("INSERT INTO tenant(id,name,currency,scale) VALUES ("
-                    + lit(tenantBId) + ",'Seller B','XAF',0)");
+            s.execute("INSERT INTO tenant(id,name,currency,scale,slug) VALUES ("
+                    + lit(tenantAId) + ",'Seller A','XAF',0,'seller-a')");
+            s.execute("INSERT INTO tenant(id,name,currency,scale,slug) VALUES ("
+                    + lit(tenantBId) + ",'Seller B','XAF',0,'seller-b')");
 
             accountAId = UUID.randomUUID();
             revenueAId = UUID.randomUUID();
@@ -327,8 +327,8 @@ class LedgerEntryImmutabilityIT {
     void app_role_can_insert_ledger_entry() throws Exception {
         UUID newTxnId   = UUID.randomUUID();
         UUID newEntryId = UUID.randomUUID();
-        try (Connection c = appConn(); Statement s = c.createStatement()) {
-            c.setAutoCommit(false);   // balanced when committed (V009)
+        try (Connection c = appConnFor(tenantAId); Statement s = c.createStatement()) {
+            // balanced when committed (V009); tenant set for row-level security (V011)
             s.execute("INSERT INTO ledger_txn(id,tenant_id,kind,ref_type,ref_id) VALUES ("
                     + lit(newTxnId) + "," + lit(tenantAId)
                     + ",'PAYMENT_MATCHED','PAYMENT'," + lit(UUID.randomUUID()) + ")");
@@ -340,7 +340,7 @@ class LedgerEntryImmutabilityIT {
                     + lit(revenueAId) + ",5000,0)");
             c.commit();
         }
-        try (Connection c = appConn();
+        try (Connection c = appConnFor(tenantAId);
              Statement s = c.createStatement();
              ResultSet rs = s.executeQuery(
                      "SELECT id FROM ledger_entry WHERE id=" + lit(newEntryId))) {
@@ -354,8 +354,8 @@ class LedgerEntryImmutabilityIT {
     void reversal_entry_can_be_inserted() throws Exception {
         UUID revTxnId   = UUID.randomUUID();
         UUID revEntryId = UUID.randomUUID();
-        try (Connection c = appConn(); Statement s = c.createStatement()) {
-            c.setAutoCommit(false);   // balanced when committed (V009)
+        try (Connection c = appConnFor(tenantAId); Statement s = c.createStatement()) {
+            // balanced when committed (V009); tenant set for row-level security (V011)
             // Reversal transaction, linked to the original by reverses_txn_id.
             s.execute("INSERT INTO ledger_txn(id,tenant_id,kind,ref_type,ref_id,reverses_txn_id) VALUES ("
                     + lit(revTxnId) + "," + lit(tenantAId)
@@ -371,7 +371,7 @@ class LedgerEntryImmutabilityIT {
             c.commit();
         }
         // Both the original and the reversal entry must be present — nothing deleted.
-        try (Connection c = appConn();
+        try (Connection c = appConnFor(tenantAId);
              Statement s = c.createStatement();
              ResultSet rs = s.executeQuery(
                      "SELECT COUNT(*) FROM ledger_entry WHERE txn_id IN ("
@@ -412,7 +412,7 @@ class LedgerEntryImmutabilityIT {
                 "JOIN   ledger_txn   lt ON lt.id = le.txn_id " +
                 "WHERE  lt.tenant_id = " + lit(tenantAId);
 
-        try (Connection c = appConn();
+        try (Connection c = appConnFor(tenantAId);
              Statement s = c.createStatement();
              ResultSet rs = s.executeQuery(sql)) {
             while (rs.next()) {
@@ -422,13 +422,20 @@ class LedgerEntryImmutabilityIT {
             }
         }
 
-        // Verify that tenant B's entry actually exists, so the test is not trivially
-        // vacuous — there must be at least one entry in the DB with debit_minor=9000.
-        String existsCheck =
-                "SELECT COUNT(*) FROM ledger_entry WHERE debit_minor = 9000";
-        try (Connection c = appConn();
+        // Row-level security, not the query's WHERE clause: with NO tenant predicate
+        // at all, tenant A still cannot see tenant B's entry.
+        try (Connection c = appConnFor(tenantAId);
              Statement s = c.createStatement();
-             ResultSet rs = s.executeQuery(existsCheck)) {
+             ResultSet rs = s.executeQuery("SELECT COUNT(*) FROM ledger_entry WHERE debit_minor = 9000")) {
+            rs.next();
+            assertThat(rs.getInt(1)).as("row-level security hides tenant B's entry from tenant A").isZero();
+        }
+
+        // Verify that tenant B's entry actually exists, so the test is not vacuous.
+        // The owner is not subject to row-level security.
+        try (Connection c = migrateConn();
+             Statement s = c.createStatement();
+             ResultSet rs = s.executeQuery("SELECT COUNT(*) FROM ledger_entry WHERE debit_minor = 9000")) {
             rs.next();
             assertThat(rs.getInt(1))
                     .as("tenant B's 9000-debit entry must exist so the isolation test is not vacuous")
@@ -448,6 +455,20 @@ class LedgerEntryImmutabilityIT {
 
     private static Connection appConn() throws SQLException {
         return DriverManager.getConnection(superJdbcUrl, APP_USER, APP_PASS);
+    }
+
+    /**
+     * An application-role connection in a transaction with the tenant set, as
+     * TenantScope does. The caller commits. Row-level security needs the tenant.
+     */
+    private static Connection appConnFor(UUID tenant) throws SQLException {
+        Connection c = appConn();
+        c.setAutoCommit(false);
+        try (java.sql.PreparedStatement ps = c.prepareStatement("SELECT set_config('app.tenant_id', ?, true)")) {
+            ps.setString(1, tenant.toString());
+            ps.execute();
+        }
+        return c;
     }
 
     /** Returns a PostgreSQL UUID literal: {@code '<uuid>'::uuid} */
