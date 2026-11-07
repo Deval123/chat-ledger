@@ -701,3 +701,131 @@ and only by name). Two other tests call `Class.forName` on controller classes, w
 Two things this still does not cover: nothing stops a future unit test from importing `LedgerDatabase`, so the
 no-Docker run is now the check, and it is worth doing in CI as a separate step. And `mvn -pl web test` on its
 own (without `-am`) cannot resolve the `ledger-core` tests jar on a fresh checkout; use `-pl web -am`.
+
+## Tooling notes: interruptions and credits
+
+These are about the tool, not the product, and are kept here because they changed how the work had to be checked.
+
+- **"Model response paused unexpectedly" (twice).** The agent stopped mid-task two times. One of them left work
+  undone: in task 3 a response ended while the source-scan test (`NoBackDoorTest`) was being written, and the file
+  did not exist afterwards. That was only found because the next step checked for the file instead of assuming it
+  was there (the same pause also hid a real finding: the CI workflow still held fixed passwords, which the scan
+  later caught). The second interruption was reported by the project owner; I cannot see it from inside the
+  session. The lesson is to treat a paused response as unfinished, list the files that should exist, and check
+  them before going on. Every "done" in these notes was confirmed by a build or a test run, not by the agent's own
+  message.
+- **The status bar showed "Kiro Free 50/50" while the kiroween-2026 bonus credits were being used.** As reported
+  by the project owner: the plan indicator did not reflect which credits were being spent, so it could not be used
+  to judge how much budget was left. I cannot see the status bar or the credit balance from inside the session, so
+  I do not report credit use in these notes except as the owner reads it from the interface. Do not plan work on the
+  plan indicator alone.
+
+## Task 4 - order extraction (4.1 to 4.3)
+
+Proposal and the owner's answers: `.kiro/specs/chat-ledger/task-4-design-stop.md`. Approved with all nine recommendations and six
+changes (canonical phone form, validator versus catalog, tenant currency never NULL, French input, a scan rule against Docker in
+unit tests, a demo catalog seed in task 9). No HTTP endpoint: the service is the entry point and the paste form (task 8) and the
+signed API (task 11) will call it.
+
+### What the spec and the design review caught
+
+- **The validator rule needed a boundary.** "Every amount appears in the source" is true only of amounts the parser *read*. A total
+  computed from the catalog is not in the text. Both cases are tested, and the rule is written next to the code (`OrderValidator`,
+  `OrderDecider`). The mutation that lets a parser amount through unchecked fails 4 validator tests; a test with a parser that lies
+  shows the pipeline refuses it.
+- **A phone needs one definition.** The hash, the last four digits and (tasks 5 and 6) the payer lookup all go through
+  `PhoneNumbers.canonicalDigits`. Tested on ten spellings. The limit is named in code and tests: with and without a country code
+  is two customers.
+- **There was no catalog table, no column for the order reference or the delivery note, and no way to store "no total".** Found by
+  re-reading V003 and V004 before designing. V014 adds the table and the columns.
+- **V003's comment promised an Argon2 hash with a salt that had no column.** An applied migration is never edited, so V014 corrects it
+  with `COMMENT ON COLUMN`, and the hash is an HMAC under a key derived from `app.secret`.
+
+### Defects the tests found in my own work
+
+- **`wasNull()` after reading other columns.** In `OrderRepository` a nullable total and a nullable unit price came back wrong
+  (a NULL total looked like a value and a NULL price like 0). `wasNull()` answers for the *last* column read, and the arguments of a
+  constructor are evaluated in order. Found by the first integration run; fixed by reading the value and asking at once; the original
+  defect is also one of the mutations.
+- **A CHECK that lets NULL through.** `status NOT IN (...) AND total_minor BETWEEN 1 AND ...` evaluates to *unknown* for a NULL total,
+  and a CHECK accepts unknown. The first version of V014 therefore allowed a `PENDING_PAYMENT` order with no total. Fixed with an explicit
+  `IS NOT NULL`, with a test for every status.
+- **`CHAR(3)` pads.** A currency of `XA` was stored as `XA `. Added a format CHECK.
+- **The line sum was capped only when a total was stated.** Found by the hostile corpus (fifty lines of the largest price). Now the sum is
+  capped whenever every line is priced.
+- **My own code broke my own rule twice.** `OrderParseContext` used `String.matches`, and `AmountParser` used `Pattern.quote` on a separator
+  taken from the message (valid, but a pattern built from input). The structural scan flagged the first; I found the second reviewing the
+  diff. Both are now plain loops.
+- **A lost file.** One test helper (`IngestionFixture`) was never written because a command changed into a directory that did not exist.
+  Found only by the compiler. The same lesson as the paused responses: check that what should exist exists.
+- **Test mistakes that were still worth reading.** A random actor id (the audit foreign key correctly refuses an actor from another tenant,
+  so that is now a test); a label containing `=` (it is item syntax, so the message is unparsed); a regex that matched the *escaped* text
+  `onerror=alert`; a corpus entry without angle brackets in a test that expected `&lt;`.
+
+### Mutation checks (each guard broken on purpose; the file restored from a copy and compared after every run)
+
+44 mutants, 49 runs. 39 were caught on the first run; 5 were not, and each one taught something (all 5 are caught now):
+
+| First result | What it showed | Fix |
+|---|---|---|
+| Amount digit cap removed: not caught | It duplicated the later amount cap, so removing it changed nothing visible | Added a case where it is the only guard (14 digits with leading zeros must be "too large"); now caught |
+| Format characters no longer stripped: not caught | They were stripped twice (before and after NFKC); the fixpoint loop made the first pass redundant | Deleted the redundant pass; now caught by 6 tests |
+| Catalog lookup by `LIKE`: not caught | The SQL returned the row, but the decider then looked it up by exact key and found nothing, hiding the change | Added a repository-level test that asks for `r%`, `%`, `ri_e` directly; now caught |
+| `wasNull` mutant: not caught | My mutant did not reproduce the real bug | Reintroduced the original defect exactly; caught by 3 tests |
+| Raw text CHECK removed: not caught | My mutation renamed the constraint and left its body, so it was not a mutation | Replaced the body with `CHECK (true)`; caught |
+
+Caught on the first run: input length, line and item caps; quantity
+bounds; amount cap; non-ASCII digit mapping; validator skipped, validator reading the raw text, stated total not compared with the lines,
+line sum cap, currency check; phone canonical form (double-zero prefix, letters allowed), phone and parsed order printing personal data;
+accent-insensitive keys; French labels; the FCFA alias; a pattern built from the message; the service's own NUL and id checks; the computed
+total cap; a stated total replaced by a computed one; catalog price range; a unit test referencing the test database or the container
+library; `ON CONFLICT` removed (concurrency test); a replay reported as a plain duplicate; the rate limit; the input check; one phone key for
+every tenant; a non-canonical phone hash; message text written to the log; an audit failure swallowed; the NULL-total CHECK; UPDATE granted on
+orders; the catalog writable by the application role; row-level security off on the catalog; escaped output turned off in a page.
+
+Not mutated: `ExtractionResult.Failure` carrying an enum instead of a string. Its guard is the type system plus a reflection test; changing
+the type breaks compilation, which is a failure but not a test failure. Said plainly rather than faked.
+
+### What the unit phase proves (it runs without Docker: verified with Docker stopped, 234 tests, all modules)
+
+- Ledger: balance and reversal properties on the in-memory ledger.
+- Extraction: the strict parser in both shapes and both languages; every rejection; the amount rules; text normalisation (stable, property
+  tested); the validator including "parser amounts must be in the source"; the canonical phone form; the hostile corpus and 3,000-try
+  property tests; and a **structural scan that the extraction code uses no pattern, format string, reflection, script or process facility**.
+- Ingestion: the service's input checks, the decider (stated versus computed totals, caps, catalog price range) and the pure pipeline.
+- Web: password hashing and policy, rate limiter, request guard filter, startup guards, permission matrix, handler coverage, template
+  lint, provisioning command rules, the isolation guard on invented catalogs, and the source rules: no controller takes a tenant from the
+  request, no SQL is built by concatenation, every repository has a cross-tenant test, and **(new) no unit test references the test database
+  or the container library, directly or through a helper class**. That scan is shown to catch invented violations and was mutation-checked.
+- Not proved by the unit phase: anything that needs PostgreSQL (row-level security, constraints, grants, idempotency under concurrency,
+  rendering through the real application). Those are the 215 integration tests.
+
+### Defenses weakened or traded off (design register items 19 to 31)
+
+Raw text kept verbatim; the phone hash is HMAC from `app.secret` (secret plus database together make numbers recoverable; rotation needs a
+rehash job); the same number with and without a country code is two customers, and customers without a phone are not merged; only two message
+shapes are understood and one unrecognised line makes the message unparsed; "the amount is in the message" proves presence, not meaning;
+refused input is not stored; the application role gains INSERT on three tables and the catalog is read-only; hard caps; a restricted
+`externalId` set; `NOT VALID` checks on existing tables; a replay with other text keeps the first order; a wall-clock bound in one test;
+and the database server's own log can contain the failing row (new item in task 13).
+
+### Not verified
+
+- Only synthetic messages were used. How well the two formats fit real WhatsApp orders is unknown, and a real seller's messages will
+  often be `UNPARSED` until the optional AI extractor (task 10) exists.
+- There is no HTTP entry for ingestion yet, so request-level behaviour (size limits, CSRF, signature) is covered by task 3 tests and by calling
+  the service directly, not by a request to an ingestion endpoint.
+- The log checks capture the application's logging (Logback) at DEBUG. They do not read PostgreSQL's server log or the JDBC driver's own log
+  (the test URL turns it off). See register item 31.
+- The concurrency test runs 16 threads once per run; it is not a stress test.
+- Requirement 1.4 is met for logs; the "masked in the UI" half waits for the board (task 8), where `th:text` and the masked `last4` must be used.
+- No new third-party dependency was added, so the dependency scan from task 3 was not re-run; an internal test-jar and the already managed
+  jqwik were the only additions.
+- PostgreSQL 16.4 only.
+- Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.
+
+### One honest remark
+
+The strongest results came from tests that were *wrong first*. The mutants that were not caught showed three places where I had written a
+guard twice (the digit cap, the format stripping, the SQL equality hidden behind a map lookup) and two mutants that did not mutate anything.
+A green run only counts after you have watched the same test go red.

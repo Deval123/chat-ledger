@@ -95,3 +95,6 @@ GRANT EXECUTE ON FUNCTION provision_tenant(text, text, text, text), provision_us
 - Secrets come from environment variables only. `mvn -Psecurity-check verify` checks dependencies for known vulnerabilities.
 - Not yet in place: TLS and trusted-proxy settings (deployment, task 13), so HSTS and per-address limits behind a proxy need
   that step.
+- Order text from chat messages is untrusted data: it is re-validated, parsed by a strict deterministic parser (no pattern is built
+  from it), stored with bound parameters only, never logged, and escaped on output. Phone numbers are stored only as a keyed hash plus
+  the last four digits.

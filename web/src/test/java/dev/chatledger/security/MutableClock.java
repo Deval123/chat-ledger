@@ -8,11 +8,11 @@ import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** A clock tests can move forward, so timeouts are tested without waiting. */
-final class MutableClock extends Clock {
+public final class MutableClock extends Clock {
 
     private final AtomicReference<Instant> now = new AtomicReference<>(Instant.now());
 
-    void advance(Duration duration) {
+    public void advance(Duration duration) {
         now.updateAndGet(i -> i.plus(duration));
     }
 

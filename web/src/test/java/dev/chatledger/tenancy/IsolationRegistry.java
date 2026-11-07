@@ -71,7 +71,11 @@ final class IsolationRegistry {
     static final Map<String, String> REPOSITORY_CONTRACT_TESTS = Map.of(
             "JdbcLedgerRepository", "dev.chatledger.ledger.LedgerPostgresIT#cross_tenant_reads_return_nothing",
             "AppUserRepository", "dev.chatledger.security.RepositoryIsolationIT#a_user_of_another_tenant_cannot_be_read",
-            "AuditLogRepository", "dev.chatledger.security.RepositoryIsolationIT#the_audit_trail_of_another_tenant_cannot_be_read");
+            "AuditLogRepository", "dev.chatledger.security.RepositoryIsolationIT#the_audit_trail_of_another_tenant_cannot_be_read",
+            "OrderRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_orders_cannot_be_read_or_written",
+            "CatalogRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_catalog_cannot_be_read",
+            "CustomerRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_customers_cannot_be_read",
+            "TenantRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_row_cannot_be_read");
 
     static final Map<String, TableSpec> TABLES = Map.ofEntries(
             Map.entry("tenant", new TableSpec(Kind.DIRECT, null, true,
@@ -110,6 +114,9 @@ final class IsolationRegistry {
             Map.entry("flag", TableSpec.direct(
                     (c, t, r) -> update(c, "INSERT INTO flag(id, tenant_id, subject_type, subject_id, code, reason) VALUES (?, ?, 'PAYMENT', ?, 'PROBE', 'probe')",
                             UUID.randomUUID(), t, r.paymentId()))),
+            Map.entry("catalog_item", TableSpec.direct(
+                    (c, t, r) -> update(c, "INSERT INTO catalog_item(id, tenant_id, name_key, display_name, unit_minor) VALUES (?, ?, ?, 'Probe', 1)",
+                            UUID.randomUUID(), t, "probe-" + tag()))),
             Map.entry("audit_log", TableSpec.direct(
                     (c, t, r) -> update(c, "INSERT INTO audit_log(id, tenant_id, action, subject) VALUES (?, ?, 'PROBE', 'probe')",
                             UUID.randomUUID(), t))));

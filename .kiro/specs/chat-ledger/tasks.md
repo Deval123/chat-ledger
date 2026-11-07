@@ -108,19 +108,27 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
     README has a short security section.
   - _Requirements: 9 (and 4.3, 4.5, 9.6 for tenant separation and who may export or delete)_
 
-- [ ] 4. Order extraction
-  - [ ] 4.1 Order parser for free-text messages (items, quantities, total, name, note).
-  - [ ] 4.2 Catalog lookup to compute missing totals.
-  - [ ] 4.3 Idempotent ingestion by external id; UNPARSED fallback.
+- [x] 4. Order extraction
+  - [x] 4.1 Order parser for text messages in two deterministic formats (labelled lines and one line), English and
+    French labels, `XAF`/`FCFA`/`F CFA`; everything else `UNPARSED`. Design and decisions:
+    `.kiro/specs/chat-ledger/task-4-design-stop.md`.
+  - [x] 4.2 Catalog lookup to compute missing totals.
+  - [x] 4.3 Idempotent ingestion by external id; UNPARSED fallback.
   - _Requirements: 1, 8_
 
 - [ ] 5. Payment extraction
+  - **Payer lookup must use `PhoneNumbers.canonicalDigits` (module `extraction`) and the per-tenant phone key
+    (`PhoneKeys`, module `web`) to find the customer from the SMS sender number. A second spelling of the
+    same rule would make the same person two customers.** The same number written with and without a country
+    code is still two customers (named limit, task 4).
   - [ ] 5.1 Template engine (named groups, mapping, date format).
   - [ ] 5.2 Two synthetic provider templates with examples.
   - [ ] 5.3 Duplicate and UNVERIFIED detection.
   - _Requirements: 2, 8_
 
 - [ ] 6. Matching engine
+  - Finding a payer from an SMS uses `PhoneNumbers.canonicalDigits` and `PhoneKeys` (see task 5); no new phone
+    normalisation anywhere.
   - [ ] 6.1 Scoring with reasons; thresholds as configuration.
   - [ ] 6.2 Auto, suggested, partial, over-payment flows with ledger postings.
   - [ ] 6.3 Overrides: confirm, reject, manual match, unmatch with audit log.
@@ -133,10 +141,16 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
 
 - [ ] 8. Board and summary UI
   - Thymeleaf plus HTMX, phone-first layout, five board columns, daily summary, CSV export.
+  - **CSV export must neutralise formula injection**: any cell that starts with `=`, `+`, `-`, `@`, tab or carriage
+    return (labels, customer and sender names, notes come from untrusted text) is prefixed so a spreadsheet
+    reads it as text. Verify with hostile cells from `HostileCorpus` (task 4).
   - _Requirements: 6, 4.5_
 
 - [ ] 9. Simulators and demo tenant
   - Chat simulator, confirmation feed, seven one-click scenarios, seeded synthetic data, scheduled reset.
+  - **Demo catalog seed**: the application role has SELECT only on `catalog_item` (task 4), so the demo tenant's
+    catalog (synthetic items and prices, English and French names) is created by the seed/reset job running as
+    the owner or an operator command, never by the web application. Verify the demo orders compute totals from it.
   - _Requirements: 7_
 
 - [ ] 10. Optional AI extractor
@@ -153,6 +167,9 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
 
 - [ ] 13. Deployment
   - Docker image, free container host, health check, demo credentials documented, warm-up note.
+  - **Database server logging**: PostgreSQL writes the failing row (`DETAIL: Failing row contains (...)`) and, with some settings, bound
+    parameter values to its own log. Order rows hold message text and names. Set `log_error_verbosity = terse`, `log_statement = none`
+    and `log_min_duration_statement = -1` (or hand the log to the operator only) and add that to the deployment checklist.
 
 - [ ] 14. Submission material
   - Under-3-minute video, write-up of how Kiro was used, README, blog post, social post.

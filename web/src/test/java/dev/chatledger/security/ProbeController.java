@@ -19,9 +19,34 @@ import org.springframework.web.bind.annotation.ResponseBody;
 class ProbeController {
 
     private final RateLimits limits;
+    private final dev.chatledger.orders.OrderRepository orders;
+    private final dev.chatledger.orders.CustomerRepository customers;
 
-    ProbeController(RateLimits limits) {
+    ProbeController(RateLimits limits, dev.chatledger.orders.OrderRepository orders,
+                    dev.chatledger.orders.CustomerRepository customers) {
         this.limits = limits;
+        this.orders = orders;
+        this.customers = customers;
+    }
+
+    /**
+     * Stands in for the board (task 8): shows a stored order the way a page will, with every value from the message
+     * (reference, name, note, item labels, raw text) going through {@code th:text}. The tenant is the principal's.
+     */
+    @GetMapping("/app/probe/order/{externalId}")
+    @PreAuthorize("hasAuthority('VIEW_BOARD')")
+    String order(@org.springframework.web.bind.annotation.PathVariable String externalId,
+                 @AuthenticationPrincipal TenantUserDetails user, org.springframework.ui.Model model) {
+        var order = orders.findByExternalId(user.tenantId(), externalId).orElseThrow(
+                () -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND));
+        model.addAttribute("status", order.status());
+        model.addAttribute("ref", order.orderRef());
+        model.addAttribute("note", order.deliveryNote());
+        model.addAttribute("raw", order.rawText());
+        model.addAttribute("name", order.customerId() == null ? null
+                : customers.find(user.tenantId(), order.customerId()).map(c -> c.displayName()).orElse(null));
+        model.addAttribute("labels", orders.lines(user.tenantId(), order.id()).stream().map(l -> l.label()).toList());
+        return "probe/order";
     }
 
     /** Stands in for message ingestion: the tenant limit, keyed by the principal's tenant. */
