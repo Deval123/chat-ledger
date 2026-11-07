@@ -327,3 +327,95 @@ org.flywaydb.core.Flyway`, so it does detect the regression.
 **Lesson:** a green build after a major upgrade says nothing about
 auto-configuration that silently disappeared. Test the startup path, not a
 re-implementation of it.
+
+---
+
+## Tasks 2.1 and 2.2 - Ledger core and property-based tests
+
+### What the spec caught
+
+- **"The sum of all balances is zero" is only true for one of two numbers.**
+  The task asked for balances "signed by account type" and for tenant balances
+  that sum to zero. Both cannot hold: signed by type, a sale shows +5000 on the
+  asset and +5000 on revenue. Only debits minus credits sums to zero. The model
+  now has both: `netDebitMinor` (sums to zero) and `signedMinor()` (reads
+  naturally). Found while writing `AccountBalance`, before any test existed.
+- **Requirement 4.2 plus the task 2.3 triggers shaped the whole design.** A
+  correction must be a new transaction, so reversal needed a link column. And
+  because `ledger_entry` can no longer be updated, a tenant column on entries
+  could not be back-filled, which ruled out the obvious fix for tenant
+  consistency (see below).
+- **A header with no entries slips past an entry-level trigger.** The deferred
+  balance trigger on `ledger_entry` never fires for a transaction that has no
+  entries. It needed a second one on `ledger_txn`. The test
+  `header_without_entries_is_refused_by_the_database` exists because of this.
+- **"Never floating point" does not mean "never overflow".** A `long` wraps
+  silently. Per-side totals use `Math.addExact`. Account balances are limited to
+  [-Long.MAX_VALUE, Long.MAX_VALUE] because `Long.MIN_VALUE` cannot be negated.
+
+### What I changed from the spec / the request
+
+- **"Check that the reversal has the same tenant" is a composite foreign key,
+  not a CHECK.** A CHECK cannot read another row. V009 adds
+  `UNIQUE (id, tenant_id)` and `FOREIGN KEY (reverses_txn_id, tenant_id)`.
+- **Entry/account tenant consistency is a BEFORE INSERT trigger, not a
+  constraint.** `ledger_entry` has no tenant column. I also made
+  `account.tenant_id` immutable, which was not asked for, because otherwise the
+  check is hollow: an account could be moved after the fact.
+- **`isReversed` was added to the repository port.** Without it a second
+  reversal of a transaction whose reversal would overflow was reported as an
+  overflow instead of "already reversed".
+- **Two existing tests broke, correctly.** `LedgerEntryImmutabilityIT` seeded
+  single, unbalanced entries in autocommit mode. V009 refuses that, so the
+  fixtures now write balanced pairs in explicit database transactions, and
+  `FlywayStartupIT` lists the three new triggers.
+- **The persistence classes are plain JDBC, not Spring beans.** Nothing in `web`
+  uses them yet, and the smoke test context has no datasource. Wiring comes with
+  the first consumer (task 6).
+- **The PostgreSQL property reuses the in-memory one** through a `ledger-core`
+  test-jar (generators, scenario runner, in-memory repository) instead of
+  copying them.
+- **An earlier comment in the root pom was wrong.** It said Boot 4.1.1 ships
+  JUnit 5.11. It ships JUnit 6. jqwik 1.9.3 was checked to run on it and was kept
+  as asked.
+
+### Known gaps (not enforced by the database)
+
+- A reversal must mirror its original, and a reversal cannot be reversed. The
+  database checks only that a reversal is balanced, in the same tenant, and
+  unique. A buggy writer could record an unrelated transaction as the "reversal"
+  of another and block its real reversal.
+- The overflow check in `LedgerService` reads the balance and then writes. Two
+  concurrent postings to the same account could both pass it. The database does
+  not enforce the balance range, so the result would be a loud `LedgerException`
+  when balances are read, not a silent wrap-around. A fix needs a lock or a
+  database-side check.
+- Deferred triggers, like the V008 ones, can still be dropped by the table owner
+  or a superuser (see task 2.3).
+
+### One honest remark on what worked and what did not
+
+**What worked:** an independent oracle. The scenario runner keeps its own
+BigInteger balances and, for every operation, predicts whether the ledger must
+accept or reject it. That makes the properties non-vacuous: code that rejects
+everything fails as surely as code that wraps around. **Mutation testing earned
+its keep:** the first version of the properties passed even when I replaced
+`Math.addExact` with `+`. Random entry lists almost never produce two sides that
+are equal only after wrapping. Only my example test caught it. I added a
+generator that builds exactly that case, and the mutation is now caught by two
+properties. The same check on the database (removing the balance triggers, then
+the reversal unique constraint) fails exactly the matching tests.
+
+**What did not work:**
+- While cleaning up after a mutation I ran `git checkout -- .` for the whole
+  repository. It reverted my own uncommitted edits to five tracked files
+  (`Account`, `AccountType`, `LedgerEntry`, `LedgerTransaction`, the
+  `ledger-core` pom) and brought the old smoke test back. Nothing of anyone
+  else's was lost (the tree was clean when I started) and I restored it from a
+  backup and by rewriting, but it was a careless command. Mutate a copy and
+  restore with `cp`, never with a repository-wide git command.
+- Docker Desktop had stopped mid-session, so every Testcontainers test errored
+  until I restarted it. That was the environment, not the code.
+- My first database mutation run printed nothing: `-pl web` could not resolve
+  the new test-jar without `-am`. I noticed only because the output was empty.
+  Always check that a negative check actually ran.

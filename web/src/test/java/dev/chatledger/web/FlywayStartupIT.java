@@ -119,9 +119,14 @@ class FlywayStartupIT {
             }
         }
         assertThat(triggers).containsExactlyInAnyOrder(
+                // V008: immutability
                 "trg_ledger_entry_no_update_delete",
                 "trg_ledger_entry_no_truncate",
                 "trg_ledger_txn_no_update_delete",
-                "trg_ledger_txn_no_truncate");
+                "trg_ledger_txn_no_truncate",
+                // V009: tenant consistency and deferred balance check
+                "trg_ledger_entry_same_tenant",
+                "trg_ledger_entry_balanced",
+                "trg_ledger_txn_balanced");
     }
 }

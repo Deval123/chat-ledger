@@ -56,8 +56,9 @@
       jqwik 1.9.3 — last stable release in the 1.9 line (2025-06-07).
       The 1.10.x line shipped an intentional prompt-injection payload in
       test output (https://github.com/jlink/jqwik/releases) and is not
-      used here. 1.9.3 supports JUnit Platform 1.11 (Boot 4.1.1 ships
-      JUnit 5.11 / platform 1.11).
+      used here. Keep this exact version. Boot 4.1.1 ships JUnit Jupiter 6
+      (not 5.11, as an earlier version of this comment wrongly said); the
+      jqwik 1.9.3 engine was checked to run on it (task 2.2).
     -->
     <jqwik.version>1.9.3</jqwik.version>
     <tomcat.version>11.0.27</tomcat.version>
@@ -76,6 +77,14 @@
         <groupId>dev.chatledger</groupId>
         <artifactId>ledger-core</artifactId>
         <version>${project.version}</version>
+      </dependency>
+      <!-- Test support from ledger-core: in-memory repository, scenario runner, jqwik generators. -->
+      <dependency>
+        <groupId>dev.chatledger</groupId>
+        <artifactId>ledger-core</artifactId>
+        <version>${project.version}</version>
+        <type>test-jar</type>
+        <scope>test</scope>
       </dependency>
       <dependency>
         <groupId>dev.chatledger</groupId>

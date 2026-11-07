@@ -81,6 +81,7 @@ class LedgerEntryImmutabilityIT {
     private static UUID tenantAId;
     private static UUID tenantBId;
     private static UUID accountAId;
+    private static UUID revenueAId;
     private static UUID txnAId;
     private static UUID entryAId;   // the stable entry used for mutation tests
 
@@ -118,32 +119,46 @@ class LedgerEntryImmutabilityIT {
         // 3. Seed tenant A and tenant B data as migrate role (schema owner).
         tenantAId = UUID.randomUUID();
         tenantBId = UUID.randomUUID();
+        //    Since V009 a ledger transaction must be balanced when it commits, so
+        //    each one is written as a debit and a credit in one database
+        //    transaction (autocommit off).
         try (Connection c = migrateConn(); Statement s = c.createStatement()) {
+            c.setAutoCommit(false);
             s.execute("INSERT INTO tenant(id,name,currency,scale) VALUES ("
                     + lit(tenantAId) + ",'Seller A','XAF',0)");
             s.execute("INSERT INTO tenant(id,name,currency,scale) VALUES ("
                     + lit(tenantBId) + ",'Seller B','XAF',0)");
 
             accountAId = UUID.randomUUID();
+            revenueAId = UUID.randomUUID();
             s.execute("INSERT INTO account(id,tenant_id,code,name,type) VALUES ("
                     + lit(accountAId) + "," + lit(tenantAId)
                     + ",'AR','Accounts Receivable','ASSET')");
+            s.execute("INSERT INTO account(id,tenant_id,code,name,type) VALUES ("
+                    + lit(revenueAId) + "," + lit(tenantAId)
+                    + ",'REV','Sales revenue','REVENUE')");
 
             txnAId = UUID.randomUUID();
+            entryAId = UUID.randomUUID();
             s.execute("INSERT INTO ledger_txn(id,tenant_id,kind,ref_type,ref_id) VALUES ("
                     + lit(txnAId) + "," + lit(tenantAId)
                     + ",'ORDER_ACCEPTED','ORDER'," + lit(UUID.randomUUID()) + ")");
-
-            entryAId = UUID.randomUUID();
             s.execute("INSERT INTO ledger_entry(id,txn_id,account_id,debit_minor,credit_minor)"
                     + " VALUES (" + lit(entryAId) + "," + lit(txnAId) + ","
                     + lit(accountAId) + ",5000,0)");
+            s.execute("INSERT INTO ledger_entry(id,txn_id,account_id,debit_minor,credit_minor)"
+                    + " VALUES (" + lit(UUID.randomUUID()) + "," + lit(txnAId) + ","
+                    + lit(revenueAId) + ",0,5000)");
 
             // Tenant B data.
             UUID acctBId = UUID.randomUUID();
+            UUID revBId = UUID.randomUUID();
             s.execute("INSERT INTO account(id,tenant_id,code,name,type) VALUES ("
                     + lit(acctBId) + "," + lit(tenantBId)
                     + ",'AR','Accounts Receivable','ASSET')");
+            s.execute("INSERT INTO account(id,tenant_id,code,name,type) VALUES ("
+                    + lit(revBId) + "," + lit(tenantBId)
+                    + ",'REV','Sales revenue','REVENUE')");
             UUID txnBId = UUID.randomUUID();
             s.execute("INSERT INTO ledger_txn(id,tenant_id,kind,ref_type,ref_id) VALUES ("
                     + lit(txnBId) + "," + lit(tenantBId)
@@ -151,6 +166,10 @@ class LedgerEntryImmutabilityIT {
             s.execute("INSERT INTO ledger_entry(id,txn_id,account_id,debit_minor,credit_minor)"
                     + " VALUES (" + lit(UUID.randomUUID()) + "," + lit(txnBId) + ","
                     + lit(acctBId) + ",9000,0)");
+            s.execute("INSERT INTO ledger_entry(id,txn_id,account_id,debit_minor,credit_minor)"
+                    + " VALUES (" + lit(UUID.randomUUID()) + "," + lit(txnBId) + ","
+                    + lit(revBId) + ",0,9000)");
+            c.commit();
         }
     }
 
@@ -309,12 +328,17 @@ class LedgerEntryImmutabilityIT {
         UUID newTxnId   = UUID.randomUUID();
         UUID newEntryId = UUID.randomUUID();
         try (Connection c = appConn(); Statement s = c.createStatement()) {
+            c.setAutoCommit(false);   // balanced when committed (V009)
             s.execute("INSERT INTO ledger_txn(id,tenant_id,kind,ref_type,ref_id) VALUES ("
                     + lit(newTxnId) + "," + lit(tenantAId)
                     + ",'PAYMENT_MATCHED','PAYMENT'," + lit(UUID.randomUUID()) + ")");
             s.execute("INSERT INTO ledger_entry(id,txn_id,account_id,debit_minor,credit_minor)"
                     + " VALUES (" + lit(newEntryId) + "," + lit(newTxnId) + ","
                     + lit(accountAId) + ",0,5000)");
+            s.execute("INSERT INTO ledger_entry(id,txn_id,account_id,debit_minor,credit_minor)"
+                    + " VALUES (" + lit(UUID.randomUUID()) + "," + lit(newTxnId) + ","
+                    + lit(revenueAId) + ",5000,0)");
+            c.commit();
         }
         try (Connection c = appConn();
              Statement s = c.createStatement();
@@ -331,15 +355,20 @@ class LedgerEntryImmutabilityIT {
         UUID revTxnId   = UUID.randomUUID();
         UUID revEntryId = UUID.randomUUID();
         try (Connection c = appConn(); Statement s = c.createStatement()) {
-            // Reversal transaction references the original transaction.
-            s.execute("INSERT INTO ledger_txn(id,tenant_id,kind,ref_type,ref_id) VALUES ("
+            c.setAutoCommit(false);   // balanced when committed (V009)
+            // Reversal transaction, linked to the original by reverses_txn_id.
+            s.execute("INSERT INTO ledger_txn(id,tenant_id,kind,ref_type,ref_id,reverses_txn_id) VALUES ("
                     + lit(revTxnId) + "," + lit(tenantAId)
-                    + ",'REVERSAL','LEDGER_TXN'," + lit(txnAId) + ")");
-            // Original posted: debit 5000 / credit 0.
-            // Reversal posts the mirror:  debit 0 / credit 5000.
+                    + ",'REVERSAL','LEDGER_TXN'," + lit(txnAId) + "," + lit(txnAId) + ")");
+            // Original posted: debit AR 5000 / credit REV 5000.
+            // Reversal posts the mirror: credit AR 5000 / debit REV 5000.
             s.execute("INSERT INTO ledger_entry(id,txn_id,account_id,debit_minor,credit_minor)"
                     + " VALUES (" + lit(revEntryId) + "," + lit(revTxnId) + ","
                     + lit(accountAId) + ",0,5000)");
+            s.execute("INSERT INTO ledger_entry(id,txn_id,account_id,debit_minor,credit_minor)"
+                    + " VALUES (" + lit(UUID.randomUUID()) + "," + lit(revTxnId) + ","
+                    + lit(revenueAId) + ",5000,0)");
+            c.commit();
         }
         // Both the original and the reversal entry must be present — nothing deleted.
         try (Connection c = appConn();

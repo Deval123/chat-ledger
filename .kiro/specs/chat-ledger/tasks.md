@@ -7,10 +7,10 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
   - Public repo files: LICENSE (Apache-2.0), README (English), `.kiro` committed and not ignored.
   - _Requirements: 4, 9_
 
-- [ ] 2. Ledger core
-  - [ ] 2.1 Accounts, transactions, entries, balance invariant, reversals.
-  - [ ] 2.2 Property-based tests: balanced transactions, reversal returns to the same balances.
-  - [ ] 2.3 Database constraints: no update or delete on entries.
+- [x] 2. Ledger core
+  - [x] 2.1 Accounts, transactions, entries, balance invariant, reversals.
+  - [x] 2.2 Property-based tests: balanced transactions, reversal returns to the same balances.
+  - [x] 2.3 Database constraints: no update or delete on entries.
   - _Requirements: 4_
 
 - [ ] 3. Tenancy and security base

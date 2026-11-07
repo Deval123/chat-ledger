@@ -3,13 +3,23 @@ package dev.chatledger.ledger;
 /**
  * Standard double-entry account types.
  *
- * <p>Normal balance: ASSET and EXPENSE increase with a debit;
- * LIABILITY, EQUITY, and REVENUE increase with a credit.
+ * <p>The normal side is the side that increases the balance: debit for assets
+ * and expenses, credit for liabilities, equity and revenue.
  */
 public enum AccountType {
-    ASSET,
-    LIABILITY,
-    EQUITY,
-    REVENUE,
-    EXPENSE
+    ASSET(Side.DEBIT),
+    LIABILITY(Side.CREDIT),
+    EQUITY(Side.CREDIT),
+    REVENUE(Side.CREDIT),
+    EXPENSE(Side.DEBIT);
+
+    private final Side normalSide;
+
+    AccountType(Side normalSide) {
+        this.normalSide = normalSide;
+    }
+
+    public Side normalSide() {
+        return normalSide;
+    }
 }
