@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Payment - chat-ledger')}">
+</head>
+<body>
+<main>
+  <!--/* Test-only page. Every value that came from a message is printed with th:text, which escapes it. */-->
+  <h1>Payment <span id="status" th:text="${status}">STATUS</span></h1>
+  <p id="provider" th:text="${provider}">provider</p>
+  <p id="tx" th:text="${tx}">tx</p>
+  <p id="name" th:text="${name}">name</p>
+  <p id="last4" th:text="${last4}">last4</p>
+  <p id="ref" th:text="${ref}">ref</p>
+  <pre id="raw" th:text="${raw}">raw</pre>
+</main>
+</body>
+</html>

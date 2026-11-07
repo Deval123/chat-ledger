@@ -22,14 +22,20 @@ public final class InputChecks {
     private InputChecks() {
     }
 
+    /** Checks an order message (up to {@link OrderLimits#MAX_INPUT_CHARS} characters). */
     public static Optional<RejectReason> check(String externalId, String text) {
+        return check(externalId, text, OrderLimits.MAX_INPUT_CHARS);
+    }
+
+    /** Checks a message of at most {@code maxChars} characters (payment texts use {@code PaymentLimits.MAX_SMS_CHARS}). */
+    public static Optional<RejectReason> check(String externalId, String text, int maxChars) {
         if (!validExternalId(externalId)) {
             return Optional.of(RejectReason.INVALID_EXTERNAL_ID);
         }
         if (text == null || text.isBlank()) {
             return Optional.of(RejectReason.BLANK_TEXT);
         }
-        if (text.length() > OrderLimits.MAX_INPUT_CHARS) {
+        if (text.length() > maxChars) {
             return Optional.of(RejectReason.TEXT_TOO_LARGE);
         }
         for (int i = 0; i < text.length(); i++) {

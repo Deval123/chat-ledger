@@ -9,19 +9,19 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 
 /** Captures everything logged at DEBUG and above while open: messages and exception texts. */
-final class LogCapture implements AutoCloseable {
+public final class LogCapture implements AutoCloseable {
 
     private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
     private final Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
     private final Level before = root.getLevel();
 
-    LogCapture() {
+    public LogCapture() {
         appender.start();
         root.addAppender(appender);
         root.setLevel(Level.DEBUG);
     }
 
-    String text() {
+    public String text() {
         StringBuilder sb = new StringBuilder();
         for (ILoggingEvent e : List.copyOf(appender.list)) {
             sb.append(e.getFormattedMessage()).append('\n');

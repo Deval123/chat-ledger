@@ -829,3 +829,158 @@ and the database server's own log can contain the failing row (new item in task 
 The strongest results came from tests that were *wrong first*. The mutants that were not caught showed three places where I had written a
 guard twice (the digit cap, the format stripping, the SQL equality hidden behind a map lookup) and two mutants that did not mutate anything.
 A green run only counts after you have watched the same test go red.
+
+## Task 5 - payment extraction (5.1 to 5.3)
+
+Proposal and the owner's answers: `.kiro/specs/chat-ledger/task-5-design-stop.md`. Approved on all twelve decisions with one big change and
+three additions. **D1 became option C: a template is literal text with typed holes, matched by our own linear scanner. No regular-expression
+engine and no new dependency.** The proposal had recommended RE2/J with a pattern whitelist; the owner chose to remove the engine instead of
+hardening it. Added: an optional `{reference}` hole (stored in `payment.reference`, compared with the same key function as `orders.order_ref`),
+two lines in `tasks.md` task 6 (an `UNVERIFIED` payment is never auto-matched, a `DUPLICATE` is never posted, matching uses `payment.reference`),
+and one in task 9 (simulators generate timestamps inside the plausibility window). No HTTP endpoint: the service is the entry point.
+
+### What the spec and the design review caught
+
+- **Requirement 2.4 could not be met by the schema.** It says the new record is marked `DUPLICATE`, but V004's `UNIQUE (tenant_id, provider, tx_id)`
+  refused a second row. V015 replaces it with a partial unique index that leaves `DUPLICATE` rows out, plus a CHECK and a composite foreign key so
+  the link stays inside the tenant.
+- **An `UNPARSED` payment has no provider and no amount**, but both were `NOT NULL`; there was no `external_id` for idempotency and no column for the
+  sender's hash. All in V015, with the NULLs tied to the status by a CHECK written with explicit `IS NOT NULL` (the task 4 lesson).
+- **The design promised templates "without a release" and "regex with named groups".** Neither survives option C. The design text is changed (register
+  items 34 and 35) rather than left to disagree with the code.
+- **Matching needs the order code.** Without a `reference` the maximum matching score is 75 and the auto-match threshold is 85, so nothing could ever
+  auto-match. Found by re-reading requirement 3 against the payment fields; this is why the owner added the reference hole.
+- **RE2/J itself.** Checked before recommending it: version 1.8 (2025-01-09), no advisory on OSV, but two open issues (#168, #215) report compile hangs
+  on some patterns. A linear matcher does not make a hostile *template* safe. That finding is part of why option C was chosen.
+
+### What changed from the design stop
+
+- No pattern whitelist parser, no compile deadline thread, no RE2/J gates, no weakened defense 3 (a new third-party library). The new named cost is
+  **less flexibility**: no optional parts or alternatives in a template, a delimiter rule, ids and references cannot contain `.` or `:` when read from an SMS,
+  a currency hole reads letters only (`F CFA` is written as literal text).
+- The shipped set grew from three to **five** templates (ProviderA and ProviderB each with and without a reference, plus the forwarded shape).
+- Time zones are fixed offsets only (no named zones, no daylight saving); dates are numeric and fixed width.
+- Two guards I had written were **deleted as redundant** after mutation checks showed nothing depended on them (below).
+
+### Defects the tests found in my own work
+
+- **The delimiter rule was wrong when I first wrote it.** I only compared the first character after a hole, but a hole that allows a space runs
+  through spaces and swallowed the next word (`Received 5000 XAF from Ana K.` read `XAF from` as the currency). Found while writing the shipped templates.
+  The rule now looks past spaces, and a currency hole reads letters only.
+- **My own test templates were refused by my own rule, repeatedly.** The rule was right each time.
+- **A variable named `javaPattern` tripped my own structural scan** (it looks for the substring `Pattern.`). Renamed to `formatText`.
+- **A zero-width character inside a transaction id is removed by normalisation**, so the message parses; my test expected a refusal. The expectation was wrong, not the code.
+- **`CHAR(4)` and `CHAR(3)`.** `sender_last4 CHAR(4)` refuses a fifth character with `22001` before any CHECK runs (my constraint test expected `23514`).
+- **A test expected a page to hide a phone number that the page prints on purpose.** The raw text is shown verbatim (escaped); only the hash must not appear.
+- **A flaky assertion of mine: `doesNotContain("1234")` on text that contains random UUIDs.** A UUID contains the four characters `1234` about once in 2,300 times, and with a hundred of them in a captured log it did in the first full run.
+  Removed from the payment tests; **the same flaw existed in task 4's `OrderIngestionIT`** (it passed until now by luck) and is fixed there too.
+- **The mutation driver had a bug that made 33 results meaningless.** After each mutant the file was restored with its old modification time, so Maven did not
+  recompile the module and a stale mutated class stayed in `target/`. Every mutant in the next module was then "killed" by the previous mutant's leftover: `D01` to `D04` and
+  `J01` to `J11` by `T11`, and `Q01` to `Q18` by `Z18`. The signal was that 15 different guards were all "killed" by the same unrelated test (`PaymentTemplatesTest.an_example_must_match_its_own_template`). Fixed (touch the file after restoring) and **all mutants were run again from a clean build**. Only the second run is reported below.
+- **The explicit tenant in a statement was not proven.** Removing `tenant_id = ?` from a `SELECT` survived: row-level security still hid the other tenant's rows, so every
+  isolation test stayed green. New test runs the repository as the schema owner (which bypasses row-level security) so only the statements' own predicate scopes the result.
+  The same gap existed in the task 4 repositories; closed in "Task 5 follow-up".
+- **The app role's `TRUNCATE` privilege was untested.** A mutant that granted it survived. Now `has_table_privilege` is asserted for all seven privileges.
+
+### Mutation checks (each guard broken on purpose; the file restored from a copy and compared after every run)
+
+Final run from a clean build: **143 mutants, 141 caught, 2 not caught** (both explained below). The first run had 145 mutants and 11 survivors; each survivor taught something:
+
+| First result | What it showed | Fix |
+|---|---|---|
+| Template length cap `>` to `>=`: not caught | No test sat exactly on the boundary | Test at exactly 500 and 501 characters |
+| Minimum literal characters `<` to `<=`: not caught | Same | Test at exactly 12 and 11 literal characters |
+| Duplicate date token (`dd/MM/dd/yyyy HH:mm`): not caught | My "duplicate" test case lacked `MM`, so it was refused for a different reason | Case with every required token plus a repeat |
+| Parser's normalised-length cap removed: not caught | Normalisation can grow text (one character becomes 18) but no test used it | Test with 200 × U+FDFA (must be `INPUT_TOO_LARGE`) |
+| `sameResultAs` ignoring reference / amount: not caught | Never tested in isolation | `ParsedPaymentTest`: each field changed alone |
+| "No other template matches an example" removed: not caught | My twin-template test used a different provider, so the other check fired first | Same-provider twin test |
+| "Example read the same by the whole set" removed: not caught | Implied by the stricter check above it, so redundant | **Guard deleted** |
+| Date-width pre-check removed: not caught | The strict fixed-width formatter already refuses every other width | **Guard and the `dateWidth` plumbing deleted** |
+| Explicit tenant removed from a statement: not caught | Row-level security hid it (see above) | Owner-run repository test |
+| `TRUNCATE` granted to the app role (found in the second run): not caught | Only UPDATE and DELETE were tested | Privilege assertions |
+
+Caught in the final run (by the tests named in the run logs, not by compilation): every template gate (id, provider, currency, scale, zone, date format and its required and
+duplicate tokens, empty, too long, stray brace, unterminated, unknown and duplicate and adjacent holes, too few literals, not normalised, the delimiter rule in three forms,
+required holes, transaction-id rules, sender conflict, `MAX_HOLES` lowered); the scanner (end of message, give-back of spaces, minimum and maximum lengths, start with a space, literal
+comparison and its length guard); hole character sets; every typed parser; the validator (amount range, **amount written in the message skipped**, currency, window at both ends and
+both boundary values, formats, phone and last four); the template proof (counter-examples, example normalised and validated, expected fields, minimum examples and counter-examples,
+duplicate ids, template count); the ambiguity rule; the payment size cap in the parser, in `InputChecks` and in the service; the `UNVERIFIED` rule; the pipeline's validator;
+strict JSON (duplicate keys, unknown fields at three levels, size cap, null, wrong type, non-object root); startup that refuses a broken template; a regular expression and a
+format string added to the engine (the structural scan); a unit test that reaches the Docker-backed fixture; the service (rate limit, input check, replay with different text, duplicate
+lookup, `ON CONFLICT`, one phone key for all tenants, hash not stored, message text written to the log, tenant currency on `UNPARSED`, duplicate status, audit row, reference and last
+four not stored, `wasNull`, the retry after a lost race, explicit tenant in two statements, unescaped output in the page); the schema (partial index replaced by a plain one, UPDATE,
+DELETE and TRUNCATE granted, every CHECK emptied or loosened, the foreign key not tenant-scoped, the unique external id removed).
+
+Not caught:
+
+- **`TOO_MANY_HOLES` skipped.** The guard is unreachable today: there are eight hole types and each may appear once, so a template cannot have more than ten holes. It is kept because the
+  owner asked for the cap, and a test asserts `HoleType.values().length <= MAX_HOLES` so adding a hole type without revisiting it fails. Lowering `MAX_HOLES` to 7 is caught. This is an equivalent mutant, said plainly.
+- **The template source reads at most 8 KiB + 1 bytes, and removing that bound was not caught.** The JSON reader refuses the same file afterwards, so the only difference is memory used on a
+  file inside our own jar. Not observable by a test without a huge fixture; kept as a bound.
+
+Not mutated: the `FailureReason` enum carrying no text (the type system is the guard, as in task 4); the redacting `toString` of `ParsedPayment`, `PaymentRepository.Stored` and `PaymentIngestionResult` (tests exist, but I did not try a mutant of them).
+
+### What the unit phase proves (it runs without Docker: verified with Docker stopped; 357 tests, all modules, was 234)
+
+Adds to the task 4 list: the template compiler and every one of its refusals; the scanner on its own (including a measured step count: the worst case over the hostile corpora stays under
+1,000 steps per template, deterministic, no wall clock); the typed parsers; the payment validator including a parser that lies; the proof of a template set from its own examples; the ambiguity
+rule; the pipeline and the decider; the strict JSON reader; a corpus of hostile templates (nested quantifiers, flags, markup, duplicate keys, oversize); the five shipped templates against their examples,
+counter-examples, each other, the order corpus and the payment corpus; property tests with random text; and the structural scan, now also covering the payment code. Not proved by the unit phase:
+anything that needs PostgreSQL: the 264 integration tests (was 215) cover idempotency under 16 threads, 16 concurrent messages with one transaction id (one original, fifteen linked duplicates), the
+constraints and grants, the sender hash equal to the customer hash for the same number, the shared rate limit, atomic rollback, the log canary and rendering through the real application.
+
+### Defenses weakened or traded off (design register items 32 to 50)
+
+SMS authenticity cannot be checked; raw text kept verbatim; **templates are less flexible than patterns**; templates ship with the release; numeric dates and a fixed offset only; the
+15-minute and 35-day window; ambiguity refuses; duplicates are stored (growth bounded by the rate limit); the transaction-id uniqueness is a partial index; the application role gains INSERT on
+`payment`; `NOT VALID` checks; hard caps; free text and screenshots stay `UNPARSED`; a sender name is free text; the country-code limit carries over and no customer is created from an SMS;
+transaction ids are compared in upper case (item 47, changed after review; see "Task 5 follow-up"); "the amount is in the message" proves presence, not meaning; references
+must be compared through `ReferenceKeys` in task 6; and the inherited items 31, 5 and 1.
+
+### Not verified
+
+- Only synthetic texts. I do not know how real operator SMS read; the five templates are guesses about shape, and a real seller's messages will often be `UNPARSED` until real formats are added.
+- No HTTP endpoint: size limits, CSRF and signing for payments are not exercised by a request; the service is called directly.
+- Dates and zones: fixed offsets only, tested with `+01:00`; no daylight saving, no month names.
+- The log checks capture Logback at DEBUG; PostgreSQL's server log and the JDBC driver's log were not read (register item 31).
+- Concurrency was run once per test run with 16 threads; the retry after a lost race is caught by the mutation check, but a stress test was not built.
+- No new dependency was added, so the dependency scan from task 3 was not re-run.
+- Duplicate detection works only for a template with a transaction id (item 47 folds its case).
+- The "masked in the UI" half of requirement 1.4 waits for the board (task 8).
+- Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.
+
+### One honest remark
+
+The most useful result was a failure of my own *tooling*: 15 mutants were "killed" by one unrelated test, which looked like a strong suite and was a stale class file. A caught mutant only means something
+if the test that caught it is about that mutant. The second most useful was a mutant that survived because a safety property (the explicit tenant in each query) was being provided by a second mechanism, so the tests could not tell whether the first one was still there.
+
+### Task 5 follow-up (owner's review: two changes)
+
+1. **The statements' own tenant predicate, proven for the task 4 repositories.** New `OrderRepositoriesStatementScopeIT` runs `OrderRepository`, `CustomerRepository` and `CatalogRepository`
+   as the schema owner (which bypasses row-level security), so only each statement's `tenant_id = ?` scopes the result. A control checks that the owner really sees both tenants.
+2. **Transaction ids are compared in upper case** (V015 was not merged, so it is changed in place). The partial unique index is on `(tenant_id, provider, upper(tx_id))`, the duplicate lookup is
+   `upper(tx_id) = upper(?)`, and the id and `raw_text` stay as written. Ids are ASCII (the CHECK), so `upper()` is the same everywhere. Register item 47 is rewritten: the cost is a false duplicate
+   if a provider issues two ids that differ only by case, which the seller can see.
+
+**Mutation checks** (restored from a copy and compared each time; the file is touched after restoring, the lesson from the driver bug above). Each tenant mutant keeps the bound parameter and replaces
+`tenant_id = ?` with `? IS NOT NULL`, so it changes the result, not the SQL syntax. 16 mutants:
+
+| Mutant | Result |
+|---|---|
+| orders: `findByExternalId`, `lines`, `count` without tenant | caught by the owner-run order test |
+| customers: `find`, `findByPhoneHash`, `count` without tenant | caught by the owner-run customer test |
+| catalog: `prices`, `count` without tenant | caught by the owner-run catalog test |
+| payments: `findByExternalId`, `findOriginal`, `count` without tenant | caught by the owner-run payment test |
+| orders: the "find the customer by phone hash" statement inside the order insert without tenant | **not caught at first**, then caught (below) |
+| unique index on the id as written | caught by the constraint test and the two-case concurrency test |
+| duplicate lookup exact, index folded | caught (two-case tests) |
+| duplicate lookup folding only the column | caught |
+| duplicate lookup folding only the parameter | **not caught at first**, then caught (below) |
+
+Two survivors, both my test's fault:
+
+- **The customer lookup.** Phone hashes are per tenant, so two tenants never hold the same hash and my first test (same phone in both tenants) could not reach the bug. The test now hands the repository
+  the same hash for both tenants on purpose.
+- **Fold only the parameter** (`tx_id = upper(?)`). Every test stored the original in upper case, so folding the parameter alone looked right. Added the opposite direction: original in lower case, replay in upper case.
+
+Nothing was added to the production code for the first change. Not verified: the case fold uses PostgreSQL's `upper()`, tested with ASCII ids only (all the CHECK allows); a database with an unusual collation was not tried.

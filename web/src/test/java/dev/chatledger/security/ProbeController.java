@@ -21,12 +21,31 @@ class ProbeController {
     private final RateLimits limits;
     private final dev.chatledger.orders.OrderRepository orders;
     private final dev.chatledger.orders.CustomerRepository customers;
+    private final dev.chatledger.payments.PaymentRepository payments;
 
     ProbeController(RateLimits limits, dev.chatledger.orders.OrderRepository orders,
-                    dev.chatledger.orders.CustomerRepository customers) {
+                    dev.chatledger.orders.CustomerRepository customers, dev.chatledger.payments.PaymentRepository payments) {
         this.limits = limits;
         this.orders = orders;
         this.customers = customers;
+        this.payments = payments;
+    }
+
+    /** Stands in for the payment list (task 8): every value from the text goes through {@code th:text}. */
+    @GetMapping("/app/probe/payment/{externalId}")
+    @PreAuthorize("hasAuthority('VIEW_BOARD')")
+    String payment(@org.springframework.web.bind.annotation.PathVariable String externalId,
+                   @AuthenticationPrincipal TenantUserDetails user, org.springframework.ui.Model model) {
+        var p = payments.findByExternalId(user.tenantId(), externalId).orElseThrow(
+                () -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND));
+        model.addAttribute("status", p.status());
+        model.addAttribute("provider", p.provider());
+        model.addAttribute("tx", p.transactionId());
+        model.addAttribute("name", p.senderName());
+        model.addAttribute("last4", p.senderLast4());
+        model.addAttribute("ref", p.reference());
+        model.addAttribute("raw", p.rawText());
+        return "probe/payment";
     }
 
     /**

@@ -1,0 +1,54 @@
+{
+  "id": "provider-b-recu-ref",
+  "provider": "PROVIDER_B",
+  "currency": "XAF",
+  "scale": 0,
+  "transactionIdRequired": true,
+  "zone": "+01:00",
+  "dateFormat": "dd/MM/yyyy HH:mm",
+  "template": "Vous avez reçu {amount} {currency} de {senderName} ({senderPhone}). ID transaction : {transactionId}. Motif : {reference}. Le {paidAt}",
+  "examples": [
+    {
+      "text": "Vous avez reçu 5 000 FCFA de Aïcha N. (+999 000 000 1234). ID transaction : PB93H27L. Motif : A-1042. Le 03/11/2026 10:15",
+      "expect": {
+        "amount": 5000,
+        "transactionId": "PB93H27L",
+        "senderName": "Aïcha N.",
+        "senderLast4": "1234",
+        "reference": "A-1042",
+        "paidAt": "2026-11-03T09:15:00Z"
+      }
+    },
+    {
+      "text": "Vous avez reçu 20 000 XAF de Marie-Claire Ndong (+999 000 000 5678). ID transaction : PB0008LL. Motif : CMD-9. Le 02/11/2026 18:40",
+      "expect": {
+        "amount": 20000,
+        "transactionId": "PB0008LL",
+        "senderName": "Marie-Claire Ndong",
+        "senderLast4": "5678",
+        "reference": "CMD-9",
+        "paidAt": "2026-11-02T17:40:00Z"
+      }
+    },
+    {
+      "text": "Vous avez reçu 300 FCFA de Jo (999 000 000 4321). ID transaction : PB-13-35XZ. Motif : x7. Le 03/11/2026 11:05",
+      "expect": {
+        "amount": 300,
+        "transactionId": "PB-13-35XZ",
+        "senderName": "Jo",
+        "senderLast4": "4321",
+        "reference": "x7",
+        "paidAt": "2026-11-03T10:05:00Z"
+      }
+    }
+  ],
+  "counterExamples": [
+    "Vous avez reçu 5 000 FCFA de Aïcha N. (+999 000 000 1234). ID transaction : PB93H27L. Le 03/11/2026 10:15",
+    "Vous avez reçu 5 000 FCFA de Aïcha N. (+999 000 000 1234). ID transaction : PB93H27L. Motif : A-1042. Le 03/11/2026 10:15 merci",
+    "Bonjour. Vous avez reçu 5 000 FCFA de Aïcha N. (+999 000 000 1234). ID transaction : PB93H27L. Motif : A-1042. Le 03/11/2026 10:15",
+    "Vous avez reçu 5 000 FCFA de Aïcha N. (+999 000 000 1234). ID transaction : PB93H27L. Motif : . Le 03/11/2026 10:15",
+    "Vous avez reçu 5 000 FCFA de Aïcha N. (+999 000 000 1234). ID transaction : PB93H27L. Motif A-1042. Le 03/11/2026 10:15",
+    "Vous avez reçu 5 000 FCFA de Aïcha N. (+999 000 000 1234). ID transaction : PB93H27L. Motif : A 1042. Le 03/11/2026 10:15",
+    "You received 5000 XAF from Ana K. (+999 000 000 1234). Txn PA7K2M9X. Ref A-1042. 03/11/2026 10:15"
+  ]
+}

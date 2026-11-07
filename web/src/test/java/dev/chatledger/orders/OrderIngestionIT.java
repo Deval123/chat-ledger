@@ -506,7 +506,7 @@ class OrderIngestionIT {
         OrderRepository.Stored o = f.orders.findByExternalId(tenant, externalId).orElseThrow();
         for (String printed : new String[]{r.toString(), o.toString(), f.orders.lines(tenant, o.id()).get(0).toString(),
                 f.customers.find(tenant, o.customerId()).orElseThrow().toString()}) {
-            assertThat(printed).doesNotContain("Ana").doesNotContain("tomato").doesNotContain("1234").doesNotContain("gate")
+            assertThat(printed).doesNotContain("Ana").doesNotContain("tomato").doesNotContain("999 000 000").doesNotContain("gate")
                     .doesNotContain("A-1042").doesNotContain("Order:");
         }
     }

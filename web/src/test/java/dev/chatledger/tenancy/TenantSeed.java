@@ -82,9 +82,9 @@ public record TenantSeed(
                     order, tenant, "ext-" + tag, customer);
             update(c, "INSERT INTO order_line(id, order_id, tenant_id, label, qty, unit_minor) VALUES (?, ?, ?, 'item', 1, 1000)",
                     orderLine, order, tenant);
-            update(c, "INSERT INTO payment(id, tenant_id, provider, tx_id, amount_minor, currency, status, raw_text)"
-                            + " VALUES (?, ?, 'ProviderA', ?, 1000, 'XAF', 'RECEIVED', 'synthetic confirmation')",
-                    payment, tenant, "tx-" + tag);
+            update(c, "INSERT INTO payment(id, tenant_id, external_id, provider, tx_id, amount_minor, currency, status, raw_text, paid_at)"
+                            + " VALUES (?, ?, ?, 'PROVIDER_A', ?, 1000, 'XAF', 'RECEIVED', 'synthetic confirmation', now())",
+                    payment, tenant, "pay-" + tag, "tx-" + tag);
             update(c, "INSERT INTO account(id, tenant_id, code, name, type) VALUES (?, ?, 'AR', 'Receivable', 'ASSET')",
                     receivable, tenant);
             update(c, "INSERT INTO account(id, tenant_id, code, name, type) VALUES (?, ?, 'REV', 'Revenue', 'REVENUE')",
