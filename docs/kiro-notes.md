@@ -42,8 +42,8 @@ Updated as each task is completed.
   (1) a `BEFORE UPDATE OR DELETE OR TRUNCATE ON ledger_entry` trigger that raises
   an exception unconditionally, catching any session regardless of role; and
   (2) separating the migration role (DDL rights, runs Flyway) from the application
-  role (INSERT/SELECT only on `ledger_entry`, no DDL). Until task 2.3 is done
-  the immutability constraint is advisory, not enforced.
+  role (INSERT/SELECT only on `ledger_entry`, no DDL). **Closed in task 2.3**
+  (V008, `docker/initdb/01_create_roles.sh`); see the residual-risk note below.
 
 #### Steering (`tech.md`, `security.md`, `product.md`)
 
@@ -215,22 +215,115 @@ to 1.9.3.
 ### angus-activation / CVE-2025-7962
 
 The OWASP check flags `org.eclipse.angus:angus-activation` for CVE-2025-7962
-(SMTP injection, CVSS 8.7) via CPE `cpe:/a:eclipse:angus_mail`.
+(SMTP injection, CVSS 7.5 in the scan) via CPE `cpe:/a:eclipse:angus_mail`.
 
-**This is a confirmed false positive.** CVE-2025-7962 affects the angus-mail
-SMTP transport layer, not angus-activation (the Jakarta Activation Framework
-implementation for file-type detection). The two artifacts share only the Eclipse
-Angus project namespace; angus-activation contains no mail transport code and
-cannot perform SMTP injection under any circumstances.
+**This is a false positive.** CVE-2025-7962 describes an SMTP injection in the
+Jakarta Mail SMTP transport (`org.eclipse.angus:smtp`), not in angus-activation
+(the Jakarta Activation implementation, used for file-type detection). The scanner
+matches the two artifacts only because they share the Eclipse Angus project name.
+Source: the CVE record on nvd.nist.gov. The suppression is limited to this jar and
+this CPE.
 
-Evidence: DependencyCheck GitHub issue #8144 confirms the misattribution; the
-false positive was fixed in DC hosted suppressions PR #8310 (merged 2025-12-22).
-The suppression entry in `dependency-check-suppressions.xml` closes the gap
-locally until the fix propagates to the DC version pinned in this project.
-
-chat-ledger does not send email. Even if the flag were not a false positive, the
-vulnerability would not be reachable from this codebase.
+chat-ledger does not send email, so even a real finding would not be reachable
+from this codebase.
 
 The suppression entry carries an expiry of **2027-06-01** and must be
 re-evaluated at that date or when either angus-activation or Dependency Check is
 next upgraded.
+
+### Tomcat patched above the Boot BOM, and one analyzer turned off
+
+After the upgrade, the only remaining finding was `tomcat-embed-core` 11.0.24 (CVSS
+up to 9.8), the version managed by the Boot 4.1.1 BOM. The `tomcat.version`
+property in the root POM now pins Tomcat 11.0.27, and the OWASP check passes.
+
+The Sonatype OSS Index analyzer is disabled in the `security-check` profile: it needs
+credentials the project does not use and only produced errors. This is a deliberate,
+named trade-off: the NVD data remains the vulnerability source.
+
+### What the CI taught us (for the write-up)
+
+- The vulnerability check failed on the first pull request: the skeleton had been
+  generated on an end-of-life Spring Boot line. A scheduled check in CI is what
+  caught it, not a human review.
+- The NVD API key must be wired into the plugin configuration explicitly; setting
+  the environment variable alone is not enough.
+- A first run without a cache downloads the whole NVD feed (about 418,000 records),
+  so the data directory is cached between runs.
+
+---
+
+## Task 2.3 - Ledger immutability enforced by the database
+
+### What was added
+
+- `V008`: one plain trigger function `ledger_immutable()` (no `SECURITY DEFINER`)
+  attached to `ledger_entry` and `ledger_txn` as a row trigger
+  (`BEFORE UPDATE OR DELETE`) and a statement trigger (`BEFORE TRUNCATE`).
+  Grants: `chatledger_app` gets `SELECT, INSERT` on the ledger tables and
+  `SELECT` elsewhere. There are deliberately no default privileges: each new
+  table or sequence must be granted to `chatledger_app` explicitly in the
+  migration that creates it, so the app role never gets access to a table
+  nobody reviewed. The schema has no sequences today (UUID keys).
+- `docker/initdb/01_create_roles.sh`: creates the non-superuser schema owner
+  `chatledger_migrate`, the `chatledger_app` group role and the app login, all
+  from environment variables. No password is in any migration.
+- Three distinct identities: the bootstrap superuser (`POSTGRES_USER`, cluster
+  init only), `chatledger_migrate` (Flyway only, via `spring.flyway.user` and
+  `spring.flyway.password`, no defaults), and the app login (`DB_USER`).
+- `LedgerEntryImmutabilityIT` (Testcontainers PostgreSQL, run by Failsafe in
+  `mvn verify`, which now needs Docker).
+
+### Honest limit
+
+The triggers do not apply "whatever the role". The table owner and any
+superuser can run `ALTER TABLE ... DISABLE TRIGGER` or `DROP TRIGGER` and then
+mutate rows. The trigger does stop the owner from a plain UPDATE, DELETE or
+TRUNCATE, but not from deliberately removing the trigger first.
+
+Compensation, not elimination:
+
+- The application connects as a role that is neither owner nor superuser, so it
+  cannot alter the triggers (tested).
+- The owner role `chatledger_migrate` is used only by Flyway.
+- The superuser is used only to initialise the cluster and is never given to
+  the app or to Flyway.
+
+Not covered: a compromised migration pipeline or a leaked owner or superuser
+credential. Mitigations for later: restrict who can run Flyway, and consider
+an event trigger or audit logging that records `ALTER TABLE ... DISABLE TRIGGER`.
+
+### Bugs found while reviewing my own first draft
+
+- `NOINHERIT` on the app login would have stopped it receiving the
+  `chatledger_app` privileges. Removed.
+- V008 tried to `CREATE ROLE` as a role with `NOCREATEROLE`, which fails.
+  Role creation moved to the init script.
+- The V009 placeholder migration and the unused `app.db_app_login` block were
+  removed; group membership is granted by the init script.
+
+---
+
+## Boot 4: Flyway never ran at startup (found after task 2.3)
+
+**Symptom:** the app started, logged no Flyway lines and left the database empty.
+
+**Cause:** Spring Boot 4 moved Flyway auto-configuration out of `flyway-core`
+into its own module. With only `flyway-core` and `flyway-database-postgresql`
+on the classpath there is no `Flyway` bean and no migration. Nothing failed, so
+the Boot 4 upgrade build stayed green. The earlier `LedgerEntryImmutabilityIT`
+did not catch it because it calls `Flyway.configure()` by hand.
+
+**Fix:** `web/pom.xml` now uses `spring-boot-starter-flyway` plus
+`flyway-database-postgresql`. The artifact name comes from the Spring Boot
+reference (How-to > Database Initialization > Flyway).
+
+**Guard:** `FlywayStartupIT` boots the real Spring context against a
+Testcontainers PostgreSQL. Flyway runs as the migrate role, the datasource uses
+the app role, and the test asserts the four V008 triggers exist. It was run
+against the old dependencies first and failed with `No qualifying bean of type
+org.flywaydb.core.Flyway`, so it does detect the regression.
+
+**Lesson:** a green build after a major upgrade says nothing about
+auto-configuration that silently disappeared. Test the startup path, not a
+re-implementation of it.

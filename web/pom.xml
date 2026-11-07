@@ -69,9 +69,15 @@
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
     </dependency>
+    <!--
+      Spring Boot 4 moved Flyway auto-configuration out of flyway-core into
+      spring-boot-starter-flyway. With flyway-core alone, no migration runs on
+      startup. flyway-database-postgresql is still needed for PostgreSQL.
+      (Spring Boot docs: How-to > Database Initialization > Flyway.)
+    -->
     <dependency>
-      <groupId>org.flywaydb</groupId>
-      <artifactId>flyway-core</artifactId>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-flyway</artifactId>
     </dependency>
     <dependency>
       <groupId>org.flywaydb</groupId>
@@ -132,6 +138,14 @@
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+      <!--
+        Runs *IT classes (Testcontainers) in the verify phase. Version and
+        executions come from the Spring Boot parent. Requires Docker.
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
       </plugin>
     </plugins>
   </build>

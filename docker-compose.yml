@@ -1,9 +1,17 @@
 # ── chat-ledger local development stack ───────────────────────────────────────
 # All credentials are read from the .env file (never hard-coded here).
-# Copy .env.example to .env and fill in the placeholders before running.
+# Copy .env.example to .env and fill in every placeholder before running.
+#
+# Role separation (see docs/kiro-notes.md, task 2.3):
+#   POSTGRES_USER      Bootstrap superuser created by the PostgreSQL image.
+#                      Used only by Docker to initialise the cluster and by the
+#                      init script in docker/initdb/.  Must never be given to the
+#                      application or to Flyway.
+#   MIGRATE_USER       Non-superuser schema owner; used by Flyway only.
+#   APP_LOGIN_USER     Runtime application login; member of chatledger_app.
 #
 # Usage:
-#   docker compose up -d       # start PostgreSQL
+#   docker compose up -d       # start PostgreSQL (creates roles on first run)
 #   docker compose down -v     # stop and remove the volume
 #
 # The application is run separately with:
@@ -14,14 +22,22 @@ services:
     image: postgres:16.4-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB:       ${POSTGRES_DB}
-      POSTGRES_USER:     ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Bootstrap superuser — only used during cluster init and by the initdb script.
+      POSTGRES_DB:           ${POSTGRES_DB}
+      POSTGRES_USER:         ${POSTGRES_USER}
+      POSTGRES_PASSWORD:     ${POSTGRES_PASSWORD}
+      # Passed into the init script to create the migrate and app-login roles.
+      MIGRATE_USER:          ${MIGRATE_USER}
+      MIGRATE_PASSWORD:      ${MIGRATE_PASSWORD}
+      APP_LOGIN_USER:        ${APP_LOGIN_USER}
+      APP_LOGIN_PASSWORD:    ${APP_LOGIN_PASSWORD}
     ports:
       # Bind to loopback only so the port is not reachable from other hosts.
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Init script runs once on first volume creation (initdb.d convention).
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
