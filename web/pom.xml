@@ -83,6 +83,16 @@
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-database-postgresql</artifactId>
     </dependency>
+    <!-- Argon2id password hashing (Spring Security's Argon2PasswordEncoder needs BouncyCastle) -->
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcprov-jdk18on</artifactId>
+    </dependency>
+    <!-- Bounded cache for the in-memory rate limiter (version managed by the Boot BOM) -->
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
+    </dependency>
     <!--
       thymeleaf-extras-springsecurity6 is still the correct artifact ID
       in Boot 4.1.1 (version 3.1.5.RELEASE, managed by the Boot BOM).

@@ -59,7 +59,7 @@ class LedgerEntryImmutabilityIT {
             new PostgreSQLContainer<>("postgres:16.4-alpine")
                     .withDatabaseName("chatledger_it")
                     .withUsername("tc_superuser")
-                    .withPassword("tc_super_secret");
+                    .withPassword(UUID.randomUUID().toString());
 
     // ── Connection details ────────────────────────────────────────────────────
 
@@ -70,11 +70,11 @@ class LedgerEntryImmutabilityIT {
 
     // chatledger_migrate — non-superuser schema owner; runs Flyway.
     private static final String MIGRATE_USER = "chatledger_migrate";
-    private static final String MIGRATE_PASS = "migrate_test_secret";
+    private static final String MIGRATE_PASS = UUID.randomUUID().toString();
 
     // chatledger_app_login — runtime application login.
     private static final String APP_USER = "chatledger_app_login";
-    private static final String APP_PASS = "app_test_secret";
+    private static final String APP_PASS = UUID.randomUUID().toString();
 
     // ── Fixture IDs (read-only after setUp) ───────────────────────────────────
 
@@ -98,7 +98,7 @@ class LedgerEntryImmutabilityIT {
         try (Connection c = superConn(); Statement s = c.createStatement()) {
             s.execute("CREATE ROLE \"" + MIGRATE_USER + "\""
                     + " LOGIN PASSWORD '" + MIGRATE_PASS + "'"
-                    + " CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION");
+                    + " NOCREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION");
             s.execute("ALTER DATABASE chatledger_it OWNER TO \""
                     + MIGRATE_USER + "\"");
             // Group role and app login: init script responsibility in production.

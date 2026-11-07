@@ -135,7 +135,7 @@ class TenancyIntegrityIT {
         for (String bad : new String[]{"Seller@Example.test", " seller@example.test", "seller@example.test ", "a@"}) {
             expectViolation("23514", "chk_app_user_email_normalised", c -> update(c,
                     "INSERT INTO app_user(id, tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?, 'HELPER')",
-                    UUID.randomUUID(), a.tenantId(), bad, "{placeholder}not-a-hash"));
+                    UUID.randomUUID(), a.tenantId(), bad, TestHashes.UNUSABLE));
         }
     }
 
@@ -144,12 +144,12 @@ class TenancyIntegrityIT {
         String email = "shared-" + UUID.randomUUID().toString().substring(0, 8) + "@example.test";
         try (Connection c = DB.migrateDataSource().getConnection()) {
             update(c, "INSERT INTO app_user(id, tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?, 'HELPER')",
-                    UUID.randomUUID(), a.tenantId(), email, "{placeholder}not-a-hash");
+                    UUID.randomUUID(), a.tenantId(), email, TestHashes.UNUSABLE);
             update(c, "INSERT INTO app_user(id, tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?, 'HELPER')",
-                    UUID.randomUUID(), b.tenantId(), email, "{placeholder}not-a-hash");
+                    UUID.randomUUID(), b.tenantId(), email, TestHashes.UNUSABLE);
         }
         expectViolation("23505", "uq_user_email_per_tenant", c -> update(c,
                 "INSERT INTO app_user(id, tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?, 'HELPER')",
-                UUID.randomUUID(), a.tenantId(), email, "{placeholder}not-a-hash"));
+                UUID.randomUUID(), a.tenantId(), email, TestHashes.UNUSABLE));
     }
 }

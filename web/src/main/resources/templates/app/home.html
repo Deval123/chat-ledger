@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('chat-ledger')}">
+</head>
+<!--/*
+  Every page under app/ puts the CSRF token on <body> as an hx-headers attribute (an attribute, not a script),
+  so htmx sends it with each request. A template lint fails the build if a page here lacks it.
+*/-->
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;}|">
+<main>
+  <h1>chat-ledger</h1>
+  <p>You are signed in as <strong th:text="${role}">SELLER</strong>.</p>
+  <p>The board arrives in a later step.</p>
+  <!--/* Sign-out is a POST with a CSRF token (Thymeleaf adds the hidden field). */-->
+  <form th:action="@{/logout}" method="post">
+    <button type="submit">Sign out</button>
+  </form>
+</main>
+</body>
+</html>

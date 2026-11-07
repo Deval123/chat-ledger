@@ -63,6 +63,13 @@
     <jqwik.version>1.9.3</jqwik.version>
     <tomcat.version>11.0.27</tomcat.version>
 
+    <!--
+      BouncyCastle provider: Spring Security's Argon2PasswordEncoder needs it (the only reason it is here).
+      Not managed by the Boot BOM, so pinned here. 1.86 was the newest release on Maven Central when this
+      was added (task 3.4); advisories were checked and are listed in docs/kiro-notes.md.
+    -->
+    <bouncycastle.version>1.86</bouncycastle.version>
+
     <!-- plugin versions — pinned explicitly, matching Boot BOM values -->
     <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
     <maven-surefire-plugin.version>3.5.6</maven-surefire-plugin.version>
@@ -120,6 +127,13 @@
         <version>2.0.5</version>
         <type>pom</type>
         <scope>import</scope>
+      </dependency>
+
+      <!-- BouncyCastle provider for Argon2 (not in the Boot BOM) -->
+      <dependency>
+        <groupId>org.bouncycastle</groupId>
+        <artifactId>bcprov-jdk18on</artifactId>
+        <version>${bouncycastle.version}</version>
       </dependency>
 
       <!-- jqwik (property-based testing) — not in Boot BOM -->

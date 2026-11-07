@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:fragment="head(title)">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--/*
+    htmx contract: htmx's defaults allow eval, script tags in responses and an injected inline style, all of
+    which the CSP forbids. Turn them off, and let it talk to its own origin only. The htmx library itself is
+    added in task 8, served from this origin.
+  */-->
+  <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"selfRequestsOnly":true}'>
+  <title th:text="${title}">chat-ledger</title>
+</head>
+<body>
+</body>
+</html>

@@ -71,7 +71,7 @@ public record TenantSeed(
                     tenant, "Seed seller " + tag, "seed-" + tag);
             // The stored value is a placeholder, not a real hash and not a real password.
             update(c, "INSERT INTO app_user(id, tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?, 'SELLER')",
-                    user, tenant, "seller-" + tag + "@example.test", "{placeholder}not-a-hash");
+                    user, tenant, "seller-" + tag + "@example.test", TestHashes.UNUSABLE);
             update(c, "INSERT INTO customer(id, tenant_id, display_name) VALUES (?, ?, ?)",
                     customer, tenant, "Synthetic customer");
             update(c, "INSERT INTO orders(id, tenant_id, external_id, customer_id, total_minor, currency, status, raw_text)"

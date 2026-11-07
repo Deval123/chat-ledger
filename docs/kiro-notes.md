@@ -502,3 +502,202 @@ reason on the first try (the repository scan picked up a test fake, fixtures lac
 generics ambiguity in my own assertions), and the one real hole, the fail-open trigger, slipped past
 the clever generic harness. The lesson is the one from task 2: a guard you have not seen fail is a
 guess.
+
+## Task 3, checkpoint 2a - authentication, sessions, CSRF, provisioning (3.4 to 3.7, part of 3.8)
+
+Stopped here on purpose, as asked: rate limits, security headers and CSP, template lint, error pages
+and size limits (rest of 3.8, 3.9, 3.10) are not built.
+
+### What the spec and the design review caught
+
+- **A malformed stored hash would have been a 500, not a failed login.** Found by the first run of
+  `PasswordHashingTest`: Argon2 throws `IllegalStateException` for a damaged encoding and the verifier
+  only caught `IllegalArgumentException`. It now answers "no match" for both, with a test.
+- **The framework logs the session id.** `SecurityContextLogoutHandler` writes "Invalidated session
+  <id>" at DEBUG. The log-capture test runs the whole app at DEBUG on purpose and failed on it. Logout
+  now uses a small handler of our own that does not log it.
+- **The framework's cookie deletion is ignored by browsers for a `__Host-` cookie** (it omits `Secure`).
+  The same handler sends the deletion with the flags the cookie was issued with.
+- **JDK 22 and later break piped passwords.** `System.console()` is non-null even when stdin is piped,
+  so `echo ... | provision-user` would have prompted into the void. Maven here runs on JDK 23, which is
+  how a test that was meant to read stdin came back "skipped". Fixed with `Console.isTerminal()`.
+- **CI held fixed passwords.** The new secret scan flagged `ci_password` and `ci-secret-...` in
+  `ci.yml` (the init script's `${VAR:?}` guards were false positives and the scanner was tightened).
+  CI now generates masked random values per run.
+- **Requirement 9.1 needed more than the URL rules.** The handler coverage test fails the build for any
+  request handler with neither `@PreAuthorize` nor a place on a four-name public list.
+- Three integration tests still held hard-coded throwaway passwords and created the migrate role with
+  `CREATEDB`, unlike production. Both fixed.
+
+### What changed from the design while building
+
+- Login is a controller, not Spring's form login, so the whole sign-in is one readable method.
+- Migration numbers: the authentication plumbing is V013 (V012 became `audit_log` immutability, which you
+  asked for in this checkpoint).
+- The application role has no INSERT or UPDATE on `app_user` or `tenant`. A user cannot change their own
+  role, and the running application cannot create a user at all.
+- Failed sign-ins are logged (keyed hash, client address) but not written to `audit_log`; successful
+  sign-in is written first and, if the write fails, no session is created (tested). Sign-out never blocks.
+
+### Security check, as requested (reported before any suppression; none written)
+
+`-Psecurity-check` (plugin 10.0.4, NVD data from 2026-11-07, run on a copy of the tree): 58 dependencies,
+0 vulnerability entries, nothing suppressed. `bcprov-jdk18on` 1.86: 0 findings. A control run with
+log4j-core 2.14.1 planted failed the build at the CVSS 7 gate, so the scanner does work. A cross-check on
+OSV.dev (name and version only) shows no advisories for 1.86; twelve older ones are fixed in 1.85 or
+earlier, the newest GHSA-qp49-qgx5-5m26 and GHSA-9pwp-9qqc-pr26 (fixed in 1.85). No NVD API key was set, so
+the scan ran with the cached feed and a warning. It must be re-run at the end of task 3 if a dependency is
+added (the rate limiter may add Caffeine).
+
+### Mutation checks
+
+| Mutation | Caught by |
+|---|---|
+| `/admin/**` open to any signed-in user | `AuthorizationIT` (1 failure) |
+| CSRF disabled | `AuthenticationIT` (2 failures, 14 errors) |
+| Password check skipped for an unknown workspace | `LoginAuthenticationProviderTest` (2 failures) |
+| User status re-check never due | `SessionLifetimeIT` (5 failures) |
+| Absolute timeout never applied | `SessionLifetimeIT` (1 failure) |
+| Verifier catching only `IllegalArgumentException` | `PasswordVerifierTest` (found, not planted) |
+
+Not mutation-checked: the audit-log immutability triggers beyond their own tests, the provisioning
+privilege tests, the secret and sign-up scanners (each was shown to catch invented input instead).
+
+### Defenses weakened or traded off in this checkpoint
+
+1. No lockout and no rate limit yet (3.9). Until then, only the cap of four concurrent Argon2 checks
+   (waiting 2 seconds, then 429) limits guessing; that is a denial-of-service guard, not a guessing
+   defense. Do not expose this build.
+2. `SameSite=Strict` means a link from another site opens the app signed out until the next click. Chosen
+   by you; the cost is one extra click.
+3. The client address is logged on failed sign-in. It is personal data; kept for following up attacks.
+4. Java cannot wipe a `String`, so the typed password stays in memory until garbage collection in the
+   provisioning command and the login request. Accepted; not reachable without access to the process.
+5. Clear-Site-Data is only sent on secure requests (so it was tested with a secure mock request, not a
+   real TLS connection).
+6. The stored-hash format check is `NOT VALID`, so rows that predate it are not re-checked. There are
+   none created by the application.
+7. Retention of the ledger after personal data is deleted is still an assumption to check against local
+   accounting law.
+
+### Not verified
+
+The provisioning commands were tested through their class with a real PostgreSQL, but not by running
+`java -jar` against a built jar. The cookie flags were checked on a real Tomcat over HTTP, not over TLS.
+Timing equality of failed logins is argued from identical work (a unit test counts the calls), not
+measured.
+
+### One honest remark
+
+The log-capture test and the unit test with a mock stdin both looked like they proved something and did
+not until the harness was made to bite: the first only found the session id because I turned DEBUG on, and
+the second was skipped on this machine, which is what exposed the JDK 22 console change. Asking "did the
+test actually run, and at what level" caught more than any of the clever tests did.
+
+## Task 3, checkpoint 2b - headers, CSP, error pages, limits (rest of 3.8, 3.9, 3.10)
+
+### What the spec and the design review caught
+
+- **A limit on `Content-Length` is not a size limit.** The design said "counts streamed bytes", and the tests
+  that send the same oversized body with and without a declared length show why: the JDK client sends it
+  chunked and a header check alone passes it. The guard reads at most the limit and hands the checked bytes
+  on, so the CSRF filter and the controllers see what was checked. A valid sign-in sent chunked is a test too,
+  because replacing the request is exactly the kind of change that quietly breaks form parsing.
+- **Servers repair bad bytes; the design said reject.** Tomcat turns invalid UTF-8 into U+FFFD and drops
+  broken percent sequences. The guard parses forms, queries and JSON strictly (`InputRules`) and answers 400.
+  It also means a NUL in the login form is a 400, not the uniform "sign-in failed", so the old "garbage
+  characters" case moved out of the uniform-failure test and into its own.
+- **The framework puts the request path and a timestamp in error responses regardless of
+  `server.error.include-path=never`.** Found by an error-page test that looked for them. `MinimalErrorAttributes`
+  now allows only status and reason.
+- **Template comments were being sent to every client**, including my notes about the CSP and the error pages.
+  Found by reading a failed assertion's output. They are now Thymeleaf parser comments, removed at render, and a
+  test fails if a rendered page contains `<!--`.
+- **Rate limits are counted before the CSRF check on purpose.** A test posts without a token ten times (each is a 403)
+  and shows the eleventh is a 429; otherwise leaving the token out would give unlimited attempts.
+- **The test suite itself needed the limits.** Every IT signs in from one address, so a shared context would trip
+  the real per-address limit. The base class sets them very high; the limit tests run in their own contexts with
+  the real defaults.
+- Two of my first drafts were wrong in ways the tests exposed: the percent-sequence bounds check in
+  `InputRules.decode` (a muddled condition, rewritten and covered by `%`, `%4`, `%zz` cases) and a lambda capturing
+  a non-final variable in the guard.
+
+### What changed from the design while building
+
+- **Ingestion limit has no real endpoint yet.** It is a named limit on `RateLimits` keyed by the tenant from the
+  principal, proven end to end through a test-only probe endpoint (and unit-tested). Task 4 and task 11 must call
+  `RateLimits.ingestion(tenantId)`; I did not invent an ingestion URL to hang it on.
+- The per-account limit is applied in the login controller (where the submitted account is known), the per-address
+  limits in a filter in front of CSRF.
+- Limits are written `limit/period[/burst]` (for example `60/1m/30`) and parsed at startup, so a bad value stops the
+  application instead of disabling a limit.
+- `Cache-Control` stays the framework's `no-store` everywhere; versioned static files, which should be cacheable,
+  arrive with task 8 and are now a register item (17).
+- The layout is a `head` fragment plus an `hx-headers` attribute on `<body>` of every page under `app/`, enforced by
+  a lint (a page there without it fails). The htmx library is not added yet (task 8).
+
+### Security check (Caffeine added)
+
+`-Psecurity-check` re-run on a copy of the tree: 60 dependencies analysed, 0 vulnerability entries, nothing
+suppressed; `caffeine-3.2.4.jar` is in the report with no findings. The NVD data was the cached copy from earlier
+today (the plugin skipped its update), so the result is as current as that feed. No NVD key was set.
+
+### Mutation checks
+
+| Mutation | Caught by |
+|---|---|
+| CSP header removed | `SecurityHeadersIT` (2 failures) |
+| Chunked bodies not read or counted | `RequestGuardIT` (3 failures) |
+| Per-account limit disabled | `RateLimitsIT` (4 failures) |
+| Token bucket refilled past the burst | `InMemoryRateLimiterTest` (1 failure) |
+| Inline `style=` added to a page | `TemplateLintTest` (1 failure) |
+| Error attributes back to the framework's | `ErrorPagesIT` (1 failure) |
+| Control characters allowed in input | `InputRulesTest` and `RequestGuardIT` (4 failures) |
+| Per-address filter removed from the chain | `AddressLimitsIT` (4 failures) |
+
+### Defenses weakened or traded off in this step (design register 14 to 18)
+
+1. The per-account limit lets a stranger who knows a workspace code and email lock that user out for up to 15 minutes
+   (tokens come back one per 3 minutes; a successful sign-in resets it). The alternative is unthrottled guessing.
+2. Limits count the socket address and ignore `X-Forwarded-For`; behind a proxy all users share one address until
+   deployment (task 13) names the proxy. A test proves a forged header does not choose the key.
+3. Bodies are held in memory up to their cap (4 KiB login, 16 KiB JSON, 64 KiB otherwise).
+4. Anything with a control character or bad encoding is refused, which could refuse a legitimate odd client.
+5. Single node: counters reset on restart and multiply by the number of nodes; the 100,000-key cap lets an attacker
+   with that many addresses reset a bucket.
+6. HSTS was tested with a secure mock request, not a real TLS connection, and is off behind a proxy until task 13.
+
+### Not verified
+
+- The oversized-header test accepts 400 or 431 or a dropped connection, because I did not pin down which this Tomcat
+  sends; it proves the request is refused, not how.
+- Request bodies larger than the container's swallow limit were not tested (the client would be reset while writing).
+- Real TLS, real proxies, and many concurrent clients were not tested; limits were checked with one client at a time.
+- Memory use under the 100,000-key cap was checked by key count in a unit test, not measured in bytes.
+
+### One honest remark
+
+The mistake worth keeping: I wrote the error-page tests against what I assumed a browser gets, and they failed
+because my test client sent no `Accept` header and the framework answered with JSON. That was the test's fault, but
+fixing it led to two real findings (the `path` and the comments). A failing test that is "my fault" is still worth
+reading to the end.
+
+## Correction: a unit test that needed Docker
+
+**Green on a machine with Docker is not the same as green everywhere, and our own test mixed the two.**
+`SourceRulesTest.every_repository_class_is_registered_with_a_cross_tenant_test` is a unit test, but it checked
+that each registered contract test exists with `Class.forName(name)`, which also *initialises* the class. The
+named class is an `*IT` whose static initialiser starts a Testcontainers PostgreSQL, so the unit phase failed
+(`ExceptionInInitializerError: Could not find a valid Docker environment`) on any machine without Docker. I only
+ever ran it with Docker up, so I never saw it. It now calls
+`Class.forName(name, false, SourceRulesTest.class.getClassLoader())`, which only checks that the method exists.
+
+How it was checked, with Docker Desktop actually stopped (`docker info` could not connect, socket gone):
+`mvn -pl web -am test` passed, 106 unit tests in `web` and all modules, no failures or skips. With the old
+`Class.forName(name)` put back, the same run failed with exactly that error, so the fix is what made it pass.
+No other unit test touches `LedgerDatabase`, `Testcontainers` or an `*IT` class (only this one referred to one,
+and only by name). Two other tests call `Class.forName` on controller classes, which have no static state.
+
+Two things this still does not cover: nothing stops a future unit test from importing `LedgerDatabase`, so the
+no-Docker run is now the check, and it is worth doing in CI as a separate step. And `mvn -pl web test` on its
+own (without `-am`) cannot resolve the `ledger-core` tests jar on a fresh checkout; use `-pl web -am`.

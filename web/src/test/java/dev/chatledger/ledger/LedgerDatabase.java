@@ -29,6 +29,9 @@ public final class LedgerDatabase {
     public static final String MIGRATE_USER = "chatledger_migrate";
     public static final String APP_USER = "chatledger_app_login";
 
+    public static final String PROVISION_USER = "chatledger_provisioner_login";
+
+    private static final String PROVISION_PASS = UUID.randomUUID().toString();
     private static final String MIGRATE_PASS = UUID.randomUUID().toString();
     private static final String APP_PASS = UUID.randomUUID().toString();
 
@@ -79,6 +82,11 @@ public final class LedgerDatabase {
             s.execute("CREATE ROLE \"" + APP_USER + "\" LOGIN PASSWORD '" + APP_PASS
                     + "' NOSUPERUSER NOCREATEDB NOCREATEROLE");
             s.execute("GRANT chatledger_app TO \"" + APP_USER + "\"");
+            // Provisioning: group role first, because V013 grants EXECUTE to it only if it exists.
+            s.execute("CREATE ROLE chatledger_provisioner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE");
+            s.execute("CREATE ROLE \"" + PROVISION_USER + "\" LOGIN PASSWORD '" + PROVISION_PASS
+                    + "' NOSUPERUSER NOCREATEDB NOCREATEROLE");
+            s.execute("GRANT chatledger_provisioner TO \"" + PROVISION_USER + "\"");
         } catch (SQLException e) {
             throw new IllegalStateException("Could not bootstrap roles", e);
         }
@@ -102,6 +110,19 @@ public final class LedgerDatabase {
     /** Connects as the application role: the identity the ledger code runs as. */
     public DataSource appDataSource() {
         return dataSource(APP_USER, APP_PASS);
+    }
+
+    /** Connects as the provisioning login: EXECUTE on the provisioning functions only. */
+    public DataSource provisionerDataSource() {
+        return dataSource(PROVISION_USER, PROVISION_PASS);
+    }
+
+    public String appPassword() {
+        return APP_PASS;
+    }
+
+    public String provisionerPassword() {
+        return PROVISION_PASS;
     }
 
     /** Connects as the schema owner. Only for test set-up that the app role may not do. */

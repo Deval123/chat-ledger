@@ -12,6 +12,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -30,9 +31,12 @@ class InitScriptIT {
 
     private static final String MIGRATE_USER = "chatledger_migrate";
     private static final String APP_USER = "chatledger_app_login";
-    // Deliberately hostile: single and double quotes, backslash, $$, semicolon, SQL comment.
-    private static final String MIGRATE_PASS = "m'ig\"r\\ate$$;-- p@ss";
-    private static final String APP_PASS = "a'pp\"\\$$); DROP ROLE x;-- q";
+    private static final String PROVISION_USER = "chatledger_provisioner_login";
+    // Hostile characters (quotes, backslash, $$, semicolon, SQL comment) plus a random
+    // part, so no fixed password is in the repository and every run differs.
+    private static final String MIGRATE_PASS = "m'ig\"r\\ate$$;-- " + UUID.randomUUID();
+    private static final String APP_PASS = "a'pp\"\\$$); DROP ROLE x;-- " + UUID.randomUUID();
+    private static final String PROVISION_PASS = "p'rov\"\\$$); DROP ROLE y;-- " + UUID.randomUUID();
 
     private static final Path SCRIPT = Path.of("..", "docker", "initdb", "01_create_roles.sh")
             .toAbsolutePath().normalize();
@@ -43,11 +47,13 @@ class InitScriptIT {
             new PostgreSQLContainer<>("postgres:16.4-alpine")
                     .withDatabaseName("chatledger_init")
                     .withUsername("tc_superuser")
-                    .withPassword("tc_super_secret")
+                    .withPassword(UUID.randomUUID().toString())
                     .withEnv("MIGRATE_USER", MIGRATE_USER)
                     .withEnv("MIGRATE_PASSWORD", MIGRATE_PASS)
                     .withEnv("APP_LOGIN_USER", APP_USER)
                     .withEnv("APP_LOGIN_PASSWORD", APP_PASS)
+                    .withEnv("PROVISION_DB_USER", PROVISION_USER)
+                    .withEnv("PROVISION_DB_PASSWORD", PROVISION_PASS)
                     .withCopyFileToContainer(
                             MountableFile.forHostPath(SCRIPT, 0755),
                             "/docker-entrypoint-initdb.d/01_create_roles.sh");
@@ -58,7 +64,13 @@ class InitScriptIT {
     }
 
     @Test
-    void both_logins_work_with_hostile_passwords() throws SQLException {
+    void all_three_logins_work_with_hostile_passwords() throws SQLException {
+        try (Connection c = connect(PROVISION_USER, PROVISION_PASS);
+             Statement s = c.createStatement();
+             ResultSet rs = s.executeQuery("SELECT current_user")) {
+            rs.next();
+            assertThat(rs.getString(1)).isEqualTo(PROVISION_USER);
+        }
         try (Connection c = connect(MIGRATE_USER, MIGRATE_PASS);
              Statement s = c.createStatement();
              ResultSet rs = s.executeQuery("SELECT current_user")) {
@@ -80,7 +92,8 @@ class InitScriptIT {
              ResultSet rs = s.executeQuery(
                      "SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolreplication "
                      + "FROM pg_roles WHERE rolname IN ('" + MIGRATE_USER + "','"
-                     + APP_USER + "','chatledger_app')")) {
+                     + APP_USER + "','chatledger_app','" + PROVISION_USER
+                     + "','chatledger_provisioner')")) {
             int seen = 0;
             while (rs.next()) {
                 seen++;
@@ -90,7 +103,7 @@ class InitScriptIT {
                 assertThat(rs.getBoolean("rolcreaterole")).as(name + " createrole").isFalse();
                 assertThat(rs.getBoolean("rolreplication")).as(name + " replication").isFalse();
             }
-            assertThat(seen).isEqualTo(3);
+            assertThat(seen).isEqualTo(5);
         }
     }
 
@@ -108,6 +121,15 @@ class InitScriptIT {
                     "SELECT pg_has_role('" + APP_USER + "', 'chatledger_app', 'USAGE')")) {
                 rs.next();
                 assertThat(rs.getBoolean(1)).isTrue();
+            }
+            try (ResultSet rs = s.executeQuery(
+                    "SELECT pg_has_role('" + PROVISION_USER + "', 'chatledger_provisioner', 'USAGE'), "
+                    + "pg_has_role('" + PROVISION_USER + "', 'chatledger_app', 'USAGE'), "
+                    + "pg_has_role('" + APP_USER + "', 'chatledger_provisioner', 'USAGE')")) {
+                rs.next();
+                assertThat(rs.getBoolean(1)).as("provisioner login is in its group").isTrue();
+                assertThat(rs.getBoolean(2)).as("provisioner login is not an app role").isFalse();
+                assertThat(rs.getBoolean(3)).as("app login is not a provisioner").isFalse();
             }
         }
     }

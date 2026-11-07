@@ -16,6 +16,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -36,16 +37,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FlywayStartupIT {
 
     private static final String MIGRATE_USER = "chatledger_migrate";
-    private static final String MIGRATE_PASS = "migrate_startup_secret";
+    private static final String MIGRATE_PASS = UUID.randomUUID().toString();
+    private static final String APP_SECRET = UUID.randomUUID() + "" + UUID.randomUUID();
     private static final String APP_USER = "chatledger_app_login";
-    private static final String APP_PASS = "app_startup_secret";
+    private static final String APP_PASS = UUID.randomUUID().toString();
 
     @SuppressWarnings("resource") // lifetime managed by the JVM / Ryuk
     private static final PostgreSQLContainer<?> POSTGRES =
             new PostgreSQLContainer<>("postgres:16.4-alpine")
                     .withDatabaseName("chatledger_startup")
                     .withUsername("tc_superuser")
-                    .withPassword("tc_super_secret");
+                    .withPassword(UUID.randomUUID().toString());
 
     // Started before the Spring context is built; the roles must exist first
     // because production creates them in docker/initdb/01_create_roles.sh.
@@ -55,7 +57,7 @@ class FlywayStartupIT {
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
              Statement s = c.createStatement()) {
             s.execute("CREATE ROLE \"" + MIGRATE_USER + "\" LOGIN PASSWORD '"
-                    + MIGRATE_PASS + "' CREATEDB NOSUPERUSER NOCREATEROLE");
+                    + MIGRATE_PASS + "' NOCREATEDB NOSUPERUSER NOCREATEROLE");
             s.execute("ALTER DATABASE chatledger_startup OWNER TO \"" + MIGRATE_USER + "\"");
             s.execute("CREATE ROLE chatledger_app NOLOGIN NOSUPERUSER NOCREATEROLE");
             s.execute("CREATE ROLE \"" + APP_USER + "\" LOGIN PASSWORD '"
@@ -75,7 +77,7 @@ class FlywayStartupIT {
         // Flyway: the migrate role only.
         registry.add("spring.flyway.user", () -> MIGRATE_USER);
         registry.add("spring.flyway.password", () -> MIGRATE_PASS);
-        registry.add("app.secret", () -> "startup-test-secret-not-for-production");
+        registry.add("app.secret", () -> APP_SECRET);
     }
 
     // Fails the context load with a missing bean when the Flyway

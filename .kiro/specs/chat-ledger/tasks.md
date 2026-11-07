@@ -13,7 +13,7 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
   - [x] 2.3 Database constraints: no update or delete on entries.
   - _Requirements: 4_
 
-- [ ] 3. Tenancy and security base
+- [x] 3. Tenancy and security base
   Design: `design.md`, section "Tenancy and authentication". Rules for every step: never edit
   V001-V009; schema changes go in new migrations with explicit grants, no default privileges, and
   the application role owns no table; no password, hash, token or session id in any log; generic
@@ -48,14 +48,14 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
     `*Repository` class has a cross-tenant contract test; a new `SECURITY DEFINER` function fails the
     build until listed; no controller parameter or request field is named like a tenant; `web` main
     code builds no SQL by string concatenation.
-  - [ ] 3.4 Password hashing and policy: Argon2id through `DelegatingPasswordEncoder`, pinned
+  - [x] 3.4 Password hashing and policy: Argon2id through `DelegatingPasswordEncoder`, pinned
     `bcprov-jdk18on`, length 12 to 128, common-password list, at most four verifications at once.
     Verify: stored hashes start with `{argon2id}$argon2id$` and carry parameters at or above 19456 KiB,
     2 passes, 1 lane; no plaintext password is ever stored or logged; correct and wrong passwords
     verify as expected; the policy rejects short, long, email-derived and common passwords;
     `mvn -Psecurity-check verify` is run and every finding is reported with its severity before any
     suppression is written.
-  - [ ] 3.5 Authentication (V012 `resolve_tenant_for_login`): workspace, email and password login,
+  - [x] 3.5 Authentication (V013 `resolve_tenant_for_login`): workspace, email and password login,
     principal built from the database row, disabled users and tenants refused, user status re-read
     at most every 60 seconds.
     Verify: unknown workspace, unknown email, wrong password and disabled account return a byte-
@@ -63,8 +63,8 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
     workspace is unknown; the tenant in the principal comes from the row, not the form (a forged
     `tenant` field has no effect); disabling a user or changing a role takes effect within 60
     seconds; a captured log of every path contains no password, hash, session id, token or email.
-  - [ ] 3.6 Provisioning, no self-registration and no UI: `chatledger_provisioner` role (in
-    `docker/initdb` and `.env.example`), `provision_tenant` and `provision_user` (V012), and two
+  - [x] 3.6 Provisioning, no self-registration and no UI: `chatledger_provisioner` role (in
+    `docker/initdb` and `.env.example`), `provision_tenant` and `provision_user` (V013), and two
     operator-run one-shot commands, `provision-tenant` and `provision-user`. The password is read from
     a prompt or standard input only, never from the command line or an environment variable.
     Verify: `/register` and `/signup` are not served; `provision-tenant` creates one tenant and one
@@ -76,14 +76,14 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
     provisioner role has no table privileges; a scan finds no `INSERT` into `tenant` or `app_user` in
     any migration and no literal password in properties, SQL or scripts; test credentials are random
     per run (the throwaway passwords in the existing integration tests are replaced).
-  - [ ] 3.7 Authorization: permission table for SELLER and HELPER, method security, deny by default,
+  - [x] 3.7 Authorization: permission table for SELLER and HELPER, method security, deny by default,
     `/admin/**` for SELLER.
     Verify: an exhaustive role-by-permission test against an independent expected table; HELPER gets
     403 on export, delete and user-management endpoints (test endpoints stand in until those features
     exist); unauthenticated requests are redirected to `/login`, and htmx requests get 401 with
     `HX-Redirect` instead of a swapped login page; a test fails for any handler that has neither
     `@PreAuthorize` nor a place on the public allowlist; a user cannot change their own role.
-  - [ ] 3.8 Session, CSRF, headers and CSP: cookie flags, idle and absolute timeouts, fixation
+  - [x] 3.8 Session, CSRF, headers and CSP: cookie flags, idle and absolute timeouts, fixation
     protection, `POST /logout`, Thymeleaf and htmx CSRF contract, security headers, template lint,
     clean error pages.
     Verify: `Set-Cookie` has `HttpOnly`, `Secure`, `SameSite` and the `__Host-` prefix in the
@@ -94,14 +94,14 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
     referrer, frame, COOP, CORP and permissions headers, and HSTS only over HTTPS; a template lint
     fails on inline `<script>`, `style=`, `on...=` handlers, `th:utext` and unescaped inline output;
     error pages contain no stack trace, message or framework version.
-  - [ ] 3.9 Rate and size limits: `RateLimiter` interface with the in-memory implementation, login
+  - [x] 3.9 Rate and size limits: `RateLimiter` interface with the in-memory implementation, login
     and ingestion filters, body size filter, field validation helpers.
     Verify: the limiter is unit-tested with an injected clock (refill, burst, bounded memory); the
     sixth attempt for one account key and the eleventh from one IP return 429 with `Retry-After`,
     identically for accounts that do not exist; one tenant's ingestion limit does not affect another;
     oversized bodies get 413 for both declared and chunked requests on login and ingestion; invalid
     UTF-8, NUL and control characters are rejected.
-  - [ ] 3.10 Close-out.
+  - [x] 3.10 Close-out.
     Verify: `mvn clean verify` green; `mvn -Psecurity-check verify` findings listed with severity and
     any suppression carrying CVE, jar, justification and expiry; `docs/kiro-notes.md` records what the
     spec caught, what changed from the spec and every weakened defense from the design's register;
