@@ -25,5 +25,15 @@ public enum FailureReason {
     /** The stated total differs from the sum of the lines: the seller must look. */
     TOTAL_MISMATCH,
     /** No total in the message and at least one item has no price in the message or the catalog. */
-    PRICE_UNKNOWN
+    PRICE_UNKNOWN,
+    /** No payment template matches the whole message. */
+    NO_TEMPLATE_MATCH,
+    /** More than one template matches and they do not give the same result. */
+    AMBIGUOUS_TEMPLATE,
+    INVALID_DATE,
+    /** The timestamp is valid but too far in the future or the past. */
+    DATE_IMPLAUSIBLE,
+    INVALID_TRANSACTION_ID,
+    INVALID_REFERENCE,
+    INVALID_NAME
 }

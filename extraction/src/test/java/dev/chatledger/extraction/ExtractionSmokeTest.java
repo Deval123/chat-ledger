@@ -57,7 +57,7 @@ class ExtractionSmokeTest {
         var order = new ParsedOrder("A-1", "Secret Name", phone,
                 List.of(new ParsedOrder.OrderLine("Secret Item", 1, 100L, null)), 100L, "XAF", "Secret Note", "Secret Raw");
         for (String printed : new String[]{order.toString(), order.lines().get(0).toString(), phone.toString(),
-                new ParsedPayment("P", "T", 1, "XAF", "Secret Sender", "1234", null, "Secret Raw").toString()}) {
+                new ParsedPayment("tpl", "P", "T", 1, "XAF", "Secret Sender", phone, "1234", "SecretRef", null, "Secret Raw").toString()}) {
             assertThat(printed).doesNotContain("Secret").doesNotContain("9990000001234").doesNotContain("999 000");
         }
         assertThat(phone.toString()).isEqualTo("Phone[****1234]");

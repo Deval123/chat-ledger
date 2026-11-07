@@ -78,7 +78,8 @@ Every candidate keeps its list of reasons so the UI can say why.
 ## Extraction pipeline
 
 1. Normalize text (whitespace, digits, accents, common separators).
-2. Try each parser or template in order. First valid result wins.
+2. Orders: try each parser in order, first valid result wins. Payments: scan **every** template over the whole message; if more than one
+   matches and they do not give the same result, the message is `UNPARSED` (`AMBIGUOUS_TEMPLATE`). Template order never decides money.
 3. If none match and an AI extractor is configured, call it with a timeout and a JSON schema.
 4. Validate: amount appears in the source text, currency known, date plausible. Reject otherwise.
 5. Never pass phone numbers or names to an external service unless the operator has enabled it.
@@ -89,9 +90,13 @@ and can point at any compatible endpoint.
 
 ## Provider templates
 
-Templates are data, not code: name, regex with named groups, field mapping, date format.
-The demo ships two **synthetic** formats ("ProviderA", "ProviderB"). Real operator formats
-can be added without a release. Do not copy real operator wording into the repository.
+Templates are data, not code, and they are **literal text with typed holes, not regular expressions**: for example
+`You received {amount} {currency} from {senderName} ({senderPhone}). Txn {transactionId}. {paidAt}`.
+A template file (JSON) carries: id, provider code, currency, scale, whether a transaction id is required, a fixed UTC offset, a numeric
+date format, the template text, at least three examples (with the fields they must give) and at least five counter-examples (texts that
+must not match). Holes: `amount`, `currency`, `senderName`, `senderPhone` (or `senderLast4`), `transactionId`, `paidAt`, `reference`.
+The demo ships five **synthetic** templates for two formats ("ProviderA", "ProviderB") and a forwarded shape. Templates ship in the jar;
+adding one needs a release (see register item 35). Do not copy real operator wording into the repository.
 
 ## API (JSON, signed)
 
@@ -591,6 +596,48 @@ Full proposal and the owner's answers: `task-4-design-stop.md`. What was built, 
 - **`X-Tenant` in the API** is request input; resolved above (it only selects a signing key).
 - Requirement 4.5 (CSV export) and 9.6 are SELLER-only by the matrix above.
 
+## Payment extraction (task 5)
+
+Full proposal and the owner's answers: `task-5-design-stop.md` (approved with D1 changed to option C and four additions). What was built.
+
+- **Entry point.** `PaymentIngestionService.ingest(tenantId, actor, externalId, text)` in `web`. No HTTP endpoint yet (the paste form, task 8,
+  and the signed machine API, task 11, will call it). Steps: re-check the input (`InputChecks`, 1,000 characters for a payment) → per-tenant
+  rate limit (the same budget as orders) → idempotency lookup → tenant currency and scale from its own row → `PaymentPipeline`
+  (normalise, scan templates, read typed fields, validate, decide) → duplicate lookup → one transaction for the payment and its audit row.
+- **Templates are literal text with typed holes, matched by our own scanner.** No regular-expression engine and no new dependency. The scanner
+  walks the normalised message once: a literal must be there exactly; a hole consumes characters its type allows, up to its maximum length,
+  gives back trailing spaces to the next literal, and must reach its minimum; the whole message must be consumed. There is no search and no
+  backtracking, so each character is looked at a constant number of times; the step count is exposed and tested. **Delimiter rule:** the first
+  character of the literal after a hole must not be one the hole allows, so every hole has one unambiguous end. Caps: 500 characters per
+  template, 10 holes, at least 12 literal characters, no two holes without a literal between them, each hole at most once, 8 KiB per file, 20 templates.
+- **Hole character sets** are narrower than the database CHECKs. A transaction id or reference reads letters, digits, `_`, `-`; a currency reads ASCII
+  letters (so `F CFA` is written as literal text in a template); an amount reads digits, space, `,`, `.`, `'`; a date reads digits and `/ - : . space`.
+- **Gates (build and startup).** Each shipped file is bound strictly (no unknown field, no duplicate key, no wrong type, 8 KiB). Then `PaymentTemplate.compile`
+  applies the structural rules above plus: fixed-width numeric date format (`yyyy MM dd HH mm`, optional `ss`, strict resolver), a fixed UTC offset,
+  a transaction-id hole if and only if the template says it carries one, `amount` and `paidAt` required, not both `senderPhone` and `senderLast4`,
+  and a template already written in normalised form. Then `PaymentTemplates.of` proves the set: every example must give exactly the stated fields,
+  pass the validator, and be read the same by the whole set; no counter-example may match. **Any failure stops the application**
+  (`IllegalStateException` naming the template id and a problem code, never text): a template silently skipped would turn a whole provider into `UNPARSED`.
+- **Ambiguity.** Two templates may match one message only if they give the same result; otherwise `UNPARSED` / `AMBIGUOUS_TEMPLATE`. A provider text that sometimes has a
+  reference is two templates (with and without it).
+- **Fields.** Typed parsers: amount (`AmountParser`, scale from the tenant), currency (`FCFA`/`XAF` aliases, must equal the template's), transaction id, name,
+  phone (`Phone`, `PhoneNumbers.canonicalDigits`), last four digits, reference (same format as `orders.order_ref`), date (strict, fixed offset). A captured
+  value is never used raw. `PaymentValidator` (run once, in the pipeline) re-checks bounds, that the amount is written in the message, that the currency is the
+  tenant's, and that the time is inside the window: at most 15 minutes ahead and 35 days back, else `DATE_IMPLAUSIBLE`.
+- **Statuses.** `RECEIVED` (the template carries a transaction id), `UNVERIFIED` (a template that declares none; never auto-matched, task 6), `DUPLICATE`
+  (same tenant, provider and transaction id as an existing non-duplicate payment; stored, linked by `duplicate_of`, never posted to the ledger, task 6),
+  `UNPARSED` (nothing read; only the text and the tenant's currency are stored).
+- **Sender.** A full number is hashed with `PhoneKeys` (the same function and key as customers) and its last four digits are kept; a `senderLast4` hole keeps only the
+  digits. No customer is ever created from an SMS. `reference` is stored as written and compared with `ReferenceKeys.key` (strip, upper-case), the same key
+  function as `orders.order_ref`.
+- **Database (V015).** New `external_id` (unique per tenant), `reference`, `sender_phone_hash`, `duplicate_of` (composite foreign key with the tenant), `template_id`;
+  `provider` and `amount_minor` nullable but tied to `UNPARSED` by a CHECK; the plain transaction-id UNIQUE becomes a partial unique index that leaves `DUPLICATE` rows out;
+  format and length CHECKs on every text column (`NOT VALID`, existing table); `INSERT` (not UPDATE or DELETE) for the application role.
+- **Logging.** `PaymentEvents` takes ids, enums and the template id only; `ParsedPayment`, `PaymentRepository.Stored` and `PaymentIngestionResult` print no text, name,
+  number, transaction id or reference.
+
+### Trade-offs and weakened defenses (task 5): register items 32 to 50, below.
+
 ## Testing strategy
 
 - Unit tests for parsers, scoring, and each suspicion rule, with a table of examples.
@@ -632,3 +679,22 @@ The demo credentials go in the Devpost testing field.
 | 29 | A replay with different text keeps the first order | Requirement 1.3 | The caller is told (`DUPLICATE_DIFFERENT_TEXT`), a fixed-label event is logged, nothing is overwritten |
 | 30 | The pathological-input test has a wall-clock bound, which can be flaky on a slow machine | Timing is the only direct measure | Generous bound plus a deterministic structural scan: the extraction code cannot build a regular expression, format string, class or process from text |
 | 31 | PostgreSQL's own server log can contain the failing row of a constraint violation (message text, names, hashes) and, depending on settings, bound parameters | The application cannot control the database server's log | The application log carries ids and codes only (tested). Deployment (task 13) must set `log_error_verbosity = terse` and `log_statement = none`; the item is in `tasks.md` task 13 |
+| 32 | The authenticity of an SMS cannot be verified from its text: a forged text in the exact provider shape looks real | There is no signature on an SMS | The system never moves money; no transaction id gives `UNVERIFIED` (never auto-matched, task 6); a repeated id gives `DUPLICATE`; the task 7 flags; the seller has the last word; the machine feed needs the HMAC signature (task 11) |
+| 33 | Raw text is stored verbatim in `payment.raw_text` and holds names and numbers | Needed for audit | Tenant isolation, never logged, never printed by a value type, escaped on output (tested), deletion by requirement 9.6 in a later task |
+| 34 | **Templates are less flexible than patterns.** No optional parts and no alternatives in one template (a text that sometimes has a reference is two templates); the delimiter rule forbids a literal that starts with a character the hole allows; transaction ids and references read only letters, digits, `_`, `-` (a `.` or `:` in one cannot be read from an SMS although the database accepts it); a currency hole reads letters only (`F CFA` is literal text); some real formats will need a new scanner feature | The owner chose a linear scanner of our own over a regex engine: no new dependency, no backtracking, no engine to patch | Two templates for two shapes, the ambiguity rule, a clear refusal at startup naming the problem code, examples and counter-examples that prove each template, `UNPARSED` and the seller's last word for anything unread |
+| 35 | Templates ship with the release; the original design said they could be added without one | Nothing from outside the build reaches the scanner at runtime | A `PaymentTemplateSource` interface; a database source can follow with the same gates; a new provider format needs a pull request |
+| 36 | Numeric dates only; one fixed UTC offset per template; no daylight-saving | Month names and zones are locale and rule dependent | The template is refused at load rather than half working; the target region has no daylight saving; other regions need a template with the right offset |
+| 37 | Timestamps more than 15 minutes ahead or 35 days back are `UNPARSED` (`DATE_IMPLAUSIBLE`) | A forged or stale confirmation must not look current; the simulators (task 9) must generate dates in the window | The message is kept and visible; the numbers are named constants (`PaymentLimits`) |
+| 38 | Ambiguity refuses: a message matched by two templates with different results becomes `UNPARSED` | Template order must never decide money | The build-time proof makes ambiguity a development error; identical results are accepted |
+| 39 | Duplicates are stored, so a replayed valid SMS under new external ids adds `DUPLICATE` rows | Requirement 2.4 | The per-tenant ingestion rate limit bounds growth; each row is at most 1,000 characters; the rows are the evidence for the duplicate flag |
+| 40 | The transaction-id uniqueness is a partial unique index (`DUPLICATE` rows excluded) | A plain constraint would refuse the duplicate record | The index still forbids two non-duplicate rows with the same id (tested under 16 concurrent submissions); a CHECK ties `DUPLICATE` to a non-null `duplicate_of`; a composite foreign key keeps the link inside the tenant |
+| 41 | The application role gains INSERT on `payment` | Ingestion must write | No UPDATE or DELETE (tested), RLS `WITH CHECK`; status changes will be a separate named grant in task 6 |
+| 42 | New CHECKs on the existing `payment` table are `NOT VALID` | The table may hold rows from before | They apply to every new and changed row; `VALIDATE CONSTRAINT` once old data is known to fit |
+| 43 | Hard caps: 1,000 characters per SMS, 20 templates, 500 characters per template, 10 holes, 12 literal characters, 8 KiB per file | Bounded work | Named constants (`PaymentLimits`); larger input is refused or becomes `UNPARSED` |
+| 44 | Free-typed text and screenshots stay `UNPARSED`; there is no OCR (requirement 2.5 mentions screenshots) | Only deterministic templates exist until task 10 | The text is kept; `UNVERIFIED` is reached only by a template that declares no transaction id |
+| 45 | A sender name is free text from an SMS and could be forged | Nothing verifies it | Never a key or an identity, length-bounded, escaped on output, advisory in tasks 6 and 7 |
+| 46 | A sender number written with and without a country code is two hashes, so the payer lookup may miss; no customer is created from an SMS | No country logic; a forged SMS must not add people | The same function and key as orders (item 21); the miss is predictable; the seller can confirm by hand |
+| 47 | Transaction ids are compared in upper case: `pa1x2y3z` and `PA1X2Y3Z` are one transaction, so a replay with the case changed is a `DUPLICATE`. The cost is a false duplicate if a provider ever issues two ids that differ only by case | Providers' ids are tokens a human retypes or a forwarder re-cases; the safe failure is a duplicate the seller can see, not a second payment | The unique index is on `(tenant_id, provider, upper(tx_id))` and the lookup uses `upper(tx_id) = upper(?)`; the id and the whole text are stored as written; tested sequentially, in both directions, and with 16 concurrent messages in two cases |
+| 48 | "The amount is written in the message" proves presence, not meaning (item 23) | The check is independent of the parser | The template's fixed wording around the amount, the stated currency, the task 7 near-miss rule, the seller's last word |
+| 49 | Reference hole values are stored as written and compared by a key function (strip, upper-case); task 6 must use `ReferenceKeys` for every comparison, or `ord-1` and `ORD-1` will not match | One format with `orders.order_ref`, no data migration | A test of the key function; the task 6 line in `tasks.md`; a functional index on `upper(...)` can be added when the matching query exists |
+| 50 | Inherited: item 31 (PostgreSQL server log), item 5 (in-memory rate limiter), item 1 (the tenant setting protects against our own bugs, not SQL injection) | See those items | See those items |

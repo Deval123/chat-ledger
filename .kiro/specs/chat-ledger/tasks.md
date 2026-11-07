@@ -116,19 +116,26 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
   - [x] 4.3 Idempotent ingestion by external id; UNPARSED fallback.
   - _Requirements: 1, 8_
 
-- [ ] 5. Payment extraction
+- [x] 5. Payment extraction
   - **Payer lookup must use `PhoneNumbers.canonicalDigits` (module `extraction`) and the per-tenant phone key
     (`PhoneKeys`, module `web`) to find the customer from the SMS sender number. A second spelling of the
     same rule would make the same person two customers.** The same number written with and without a country
-    code is still two customers (named limit, task 4).
-  - [ ] 5.1 Template engine (named groups, mapping, date format).
-  - [ ] 5.2 Two synthetic provider templates with examples.
-  - [ ] 5.3 Duplicate and UNVERIFIED detection.
+    code is still two customers (named limit, task 4). Task 5 stores `payment.sender_phone_hash` with exactly
+    this function and key; the lookup itself is task 6.
+  - [x] 5.1 Template engine: templates are literal text with typed holes, matched by our own linear scanner (no regular
+    expression, no new dependency), strict JSON files, numeric dates with a fixed offset, examples and counter-examples
+    proven at startup. Design and decisions: `.kiro/specs/chat-ledger/task-5-design-stop.md` (D1 = option C).
+  - [x] 5.2 Five synthetic templates for two providers (with and without a `reference`) and a forwarded shape.
+  - [x] 5.3 Duplicate and UNVERIFIED detection; idempotent ingestion by external id; UNPARSED fallback.
   - _Requirements: 2, 8_
 
 - [ ] 6. Matching engine
   - Finding a payer from an SMS uses `PhoneNumbers.canonicalDigits` and `PhoneKeys` (see task 5); no new phone
     normalisation anywhere.
+  - **An `UNVERIFIED` payment is never auto-matched** (suggested at most; the seller decides). **A `DUPLICATE` payment is never
+    posted to the ledger** (requirement 2.4). **Matching uses `payment.reference`** (the order code the payer wrote), compared with
+    the order's `order_ref` through `ReferenceKeys.key` (extraction module), the same key function on both sides; without it the
+    maximum score is 75 and nothing can reach the auto-match threshold of 85. Verify each with a test.
   - [ ] 6.1 Scoring with reasons; thresholds as configuration.
   - [ ] 6.2 Auto, suggested, partial, over-payment flows with ledger postings.
   - [ ] 6.3 Overrides: confirm, reject, manual match, unmatch with audit log.
@@ -148,6 +155,9 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
 
 - [ ] 9. Simulators and demo tenant
   - Chat simulator, confirmation feed, seven one-click scenarios, seeded synthetic data, scheduled reset.
+  - **Simulators generate timestamps inside the payment plausibility window relative to the current time** (not more than 15
+    minutes ahead, not more than 35 days back; `PaymentLimits`), in each template's own time zone and date format, so demo payments
+    are not `UNPARSED`. Verify that every generated demo payment is accepted.
   - **Demo catalog seed**: the application role has SELECT only on `catalog_item` (task 4), so the demo tenant's
     catalog (synthetic items and prices, English and French names) is created by the seed/reset job running as
     the owner or an operator command, never by the web application. Verify the demo orders compute totals from it.

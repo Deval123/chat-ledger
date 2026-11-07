@@ -1,0 +1,54 @@
+{
+  "id": "provider-a-forwarded",
+  "provider": "PROVIDER_A",
+  "currency": "XAF",
+  "scale": 0,
+  "transactionIdRequired": false,
+  "zone": "+01:00",
+  "dateFormat": "dd/MM/yyyy HH:mm",
+  "template": "Forwarded: received {amount} {currency} from {senderName} ({senderLast4}) on {paidAt}",
+  "examples": [
+    {
+      "text": "Forwarded: received 5000 XAF from Ana K. (1234) on 03/11/2026 10:15",
+      "expect": {
+        "amount": 5000,
+        "transactionId": null,
+        "senderName": "Ana K.",
+        "senderLast4": "1234",
+        "reference": null,
+        "paidAt": "2026-11-03T09:15:00Z"
+      }
+    },
+    {
+      "text": "Forwarded: received 12 500 XAF from Bea Nkomo (5678) on 02/11/2026 18:40",
+      "expect": {
+        "amount": 12500,
+        "transactionId": null,
+        "senderName": "Bea Nkomo",
+        "senderLast4": "5678",
+        "reference": null,
+        "paidAt": "2026-11-02T17:40:00Z"
+      }
+    },
+    {
+      "text": "Forwarded: received 700 XAF from Cy-Lou O'Neil (4321) on 03/11/2026 11:05",
+      "expect": {
+        "amount": 700,
+        "transactionId": null,
+        "senderName": "Cy-Lou O'Neil",
+        "senderLast4": "4321",
+        "reference": null,
+        "paidAt": "2026-11-03T10:05:00Z"
+      }
+    }
+  ],
+  "counterExamples": [
+    "received 5000 XAF from Ana K. (1234) on 03/11/2026 10:15",
+    "Forwarded: received 5000 XAF from Ana K. (12345) on 03/11/2026 10:15",
+    "Forwarded: received 5000 XAF from Ana K. (123) on 03/11/2026 10:15",
+    "Forwarded: received 5000 XAF from Ana K. (1234) on 03/11/2026 10:15 thanks",
+    "Forwarded: received 5000 XAF from Ana K. (1234) on",
+    "Forwarded: received 5000 XAF from Ana K. (+999 000 000 1234). Txn PA7K2M9X. 03/11/2026 10:15",
+    "You received 5000 XAF from Ana K. (+999 000 000 1234). Txn PA7K2M9X. 03/11/2026 10:15"
+  ]
+}

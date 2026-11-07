@@ -32,6 +32,7 @@ final class IngestionFixture {
     final CustomerRepository customers = new CustomerRepository(DB.appDataSource());
     final OrderRepository orders = new OrderRepository(DB.appDataSource());
     final AuditLogRepository audit = new AuditLogRepository(DB.appDataSource());
+    final RateLimits limits;
     final OrderIngestionService service;
 
     /** The default limit of the design: 60 a minute, burst 30. */
@@ -40,7 +41,7 @@ final class IngestionFixture {
     }
 
     IngestionFixture(String ingestionRule) {
-        RateLimits limits = new RateLimits(new InMemoryRateLimiter(clock,
+        limits = new RateLimits(new InMemoryRateLimiter(clock,
                 Map.of(RateLimits.INGESTION_TENANT, RateRule.parse("test", ingestionRule)), 10_000, Duration.ofHours(1)));
         service = new OrderIngestionService(tenants, catalog, orders, limits, phoneKeys, new IngestionEvents());
     }

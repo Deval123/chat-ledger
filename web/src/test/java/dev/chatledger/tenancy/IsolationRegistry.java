@@ -75,7 +75,8 @@ final class IsolationRegistry {
             "OrderRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_orders_cannot_be_read_or_written",
             "CatalogRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_catalog_cannot_be_read",
             "CustomerRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_customers_cannot_be_read",
-            "TenantRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_row_cannot_be_read");
+            "TenantRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_row_cannot_be_read",
+            "PaymentRepository", "dev.chatledger.payments.PaymentRepositoryIsolationIT#another_tenants_payments_cannot_be_read_or_written");
 
     static final Map<String, TableSpec> TABLES = Map.ofEntries(
             Map.entry("tenant", new TableSpec(Kind.DIRECT, null, true,
@@ -95,9 +96,9 @@ final class IsolationRegistry {
                     (c, t, r) -> update(c, "INSERT INTO order_line(id, order_id, tenant_id, label, qty, unit_minor) VALUES (?, ?, ?, 'probe', 1, 1)",
                             UUID.randomUUID(), r.orderId(), t))),
             Map.entry("payment", TableSpec.direct(
-                    (c, t, r) -> update(c, "INSERT INTO payment(id, tenant_id, provider, tx_id, amount_minor, currency, status, raw_text)"
-                                    + " VALUES (?, ?, 'ProviderA', ?, 1, 'XAF', 'RECEIVED', 'probe')",
-                            UUID.randomUUID(), t, "probe-" + tag()))),
+                    (c, t, r) -> update(c, "INSERT INTO payment(id, tenant_id, external_id, provider, tx_id, amount_minor, currency, status, raw_text, paid_at)"
+                                    + " VALUES (?, ?, ?, 'PROVIDER_A', ?, 1, 'XAF', 'RECEIVED', 'probe', now())",
+                            UUID.randomUUID(), t, "probe-pay-" + tag(), "probe-" + tag()))),
             Map.entry("account", TableSpec.direct(
                     (c, t, r) -> update(c, "INSERT INTO account(id, tenant_id, code, name, type) VALUES (?, ?, ?, 'Probe', 'ASSET')",
                             UUID.randomUUID(), t, "P" + tag()))),

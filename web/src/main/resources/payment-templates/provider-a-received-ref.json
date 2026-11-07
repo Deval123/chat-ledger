@@ -1,0 +1,55 @@
+{
+  "id": "provider-a-received-ref",
+  "provider": "PROVIDER_A",
+  "currency": "XAF",
+  "scale": 0,
+  "transactionIdRequired": true,
+  "zone": "+01:00",
+  "dateFormat": "dd/MM/yyyy HH:mm",
+  "template": "You received {amount} {currency} from {senderName} ({senderPhone}). Txn {transactionId}. Ref {reference}. {paidAt}",
+  "examples": [
+    {
+      "text": "You received 5000 XAF from Ana K. (+999 000 000 1234). Txn PA7K2M9X. Ref A-1042. 03/11/2026 10:15",
+      "expect": {
+        "amount": 5000,
+        "transactionId": "PA7K2M9X",
+        "senderName": "Ana K.",
+        "senderLast4": "1234",
+        "reference": "A-1042",
+        "paidAt": "2026-11-03T09:15:00Z"
+      }
+    },
+    {
+      "text": "You received 15 000 XAF from Bea Nkomo (+999 000 000 5678). Txn PA0002QQ. Ref ORD_77. 02/11/2026 18:40",
+      "expect": {
+        "amount": 15000,
+        "transactionId": "PA0002QQ",
+        "senderName": "Bea Nkomo",
+        "senderLast4": "5678",
+        "reference": "ORD_77",
+        "paidAt": "2026-11-02T17:40:00Z"
+      }
+    },
+    {
+      "text": "You received 700 XAF from Cy-Lou O'Neil (+999 000 000 4321). Txn PA-88-CD34. Ref b12. 03/11/2026 11:05",
+      "expect": {
+        "amount": 700,
+        "transactionId": "PA-88-CD34",
+        "senderName": "Cy-Lou O'Neil",
+        "senderLast4": "4321",
+        "reference": "b12",
+        "paidAt": "2026-11-03T10:05:00Z"
+      }
+    }
+  ],
+  "counterExamples": [
+    "You received 5000 XAF from Ana K. (+999 000 000 1234). Txn PA7K2M9X. 03/11/2026 10:15",
+    "You received 5000 XAF from Ana K. (+999 000 000 1234). Txn PA7K2M9X. Ref A-1042. 03/11/2026 10:15 thanks",
+    "Hello! You received 5000 XAF from Ana K. (+999 000 000 1234). Txn PA7K2M9X. Ref A-1042. 03/11/2026 10:15",
+    "You received 5000 XAF from Ana K. (+999 000 000 1234). Txn PA7K2M9X. Ref . 03/11/2026 10:15",
+    "You received 5000 XAF from Ana K. (+999 000 000 1234). Txn PA7K2M9X. Ref A-1042 03/11/2026 10:15",
+    "You received 5000 XAF from Ana K. (+999 000 000 1234). Txn PA7K2M9X. ref A-1042. 03/11/2026 10:15",
+    "You received 5000 XAF from Ana K. (+999 000 000 1234). Txn PA7K2M9X. Ref A 1042. 03/11/2026 10:15",
+    "Forwarded: received 5000 XAF from Ana K. (1234) on 03/11/2026 10:15"
+  ]
+}
