@@ -62,11 +62,16 @@ final class IsolationRegistry {
                     + "policy follows ledger_txn");
 
     /** SECURITY DEFINER functions allowed to exist. Each one needs a reason and a test. */
-    static final Set<String> ALLOWED_DEFINER_FUNCTIONS = Set.of();
+    static final Set<String> ALLOWED_DEFINER_FUNCTIONS = Set.of(
+            "resolve_tenant_for_login",   // login: workspace code to tenant id, nothing else (V013)
+            "provision_tenant",           // operator only, via the provisioner role (V013)
+            "provision_user");            // operator only, via the provisioner role (V013)
 
     /** Every repository class and the test that proves it cannot read another tenant. */
     static final Map<String, String> REPOSITORY_CONTRACT_TESTS = Map.of(
-            "JdbcLedgerRepository", "dev.chatledger.ledger.LedgerPostgresIT#cross_tenant_reads_return_nothing");
+            "JdbcLedgerRepository", "dev.chatledger.ledger.LedgerPostgresIT#cross_tenant_reads_return_nothing",
+            "AppUserRepository", "dev.chatledger.security.RepositoryIsolationIT#a_user_of_another_tenant_cannot_be_read",
+            "AuditLogRepository", "dev.chatledger.security.RepositoryIsolationIT#the_audit_trail_of_another_tenant_cannot_be_read");
 
     static final Map<String, TableSpec> TABLES = Map.ofEntries(
             Map.entry("tenant", new TableSpec(Kind.DIRECT, null, true,
@@ -74,7 +79,7 @@ final class IsolationRegistry {
                             UUID.randomUUID(), "probe-" + tag()))),
             Map.entry("app_user", TableSpec.direct(
                     (c, t, r) -> update(c, "INSERT INTO app_user(id, tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?, 'HELPER')",
-                            UUID.randomUUID(), t, "probe-" + tag() + "@example.test", "{placeholder}not-a-hash"))),
+                            UUID.randomUUID(), t, "probe-" + tag() + "@example.test", TestHashes.UNUSABLE))),
             Map.entry("customer", TableSpec.direct(
                     (c, t, r) -> update(c, "INSERT INTO customer(id, tenant_id, display_name) VALUES (?, ?, 'Probe')",
                             UUID.randomUUID(), t))),

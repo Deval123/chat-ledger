@@ -3,6 +3,7 @@ package dev.chatledger.tenancy;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.core.type.classreading.CachingMetadataReaderFactory;
@@ -78,6 +79,23 @@ class SourceRulesTest {
         assertThat(tenantInputs(Clean.class)).isEmpty();
     }
 
+    @Test
+    void the_signed_in_principal_is_server_side_and_not_a_request_input() {
+        assertThat(tenantInputs(CleanWithPrincipal.class)).isEmpty();
+        // The same type read from the request body is still flagged.
+        assertThat(tenantInputs(BadPrincipalTypeAsBody.class)).anyMatch(v -> v.contains("tenantId"));
+    }
+
+    record Principal(String tenantId, String email) { }
+
+    static class CleanWithPrincipal {
+        @PostMapping("/x") void handle(@AuthenticationPrincipal Principal principal) { }
+    }
+
+    static class BadPrincipalTypeAsBody {
+        @PostMapping("/x") void handle(@RequestBody Principal principal) { }
+    }
+
     // Invented controllers. They carry no class-level stereotype, so Spring never registers them.
     static class BadByParameter {
         @PostMapping("/x") void handle(@RequestParam String tenantId) { }
@@ -127,6 +145,9 @@ class SourceRulesTest {
                 continue;
             }
             for (Parameter parameter : method.getParameters()) {
+                if (parameter.isAnnotationPresent(AuthenticationPrincipal.class)) {
+                    continue;   // filled in by Spring Security from the session, never from the request
+                }
                 List<String> names = new ArrayList<>();
                 names.add(parameter.getName());
                 for (var a : parameter.getAnnotations()) {
@@ -150,7 +171,8 @@ class SourceRulesTest {
 
     private static Set<String> collectFieldNames(Class<?> type, Set<Class<?>> seen, int depth) {
         Set<String> names = new TreeSet<>();
-        if (depth > 3 || type.isPrimitive() || type.getName().startsWith("java.") || !seen.add(type)) {
+        if (depth > 3 || type.isPrimitive() || type.getName().startsWith("java.")
+                || type.getName().startsWith("jakarta.") || type.getName().startsWith("org.springframework.") || !seen.add(type)) {
             return names;
         }
         if (type.isRecord()) {
@@ -301,7 +323,9 @@ class SourceRulesTest {
         IsolationRegistry.REPOSITORY_CONTRACT_TESTS.forEach((repository, test) -> {
             String[] parts = test.split("#");
             try {
-                Class.forName(parts[0]).getDeclaredMethod(parts[1]);
+                // initialize=false: only the method's existence is checked. Initialising an *IT class would run its
+                // static initialiser, which starts a Testcontainers database and so needs Docker.
+                Class.forName(parts[0], false, SourceRulesTest.class.getClassLoader()).getDeclaredMethod(parts[1]);
             } catch (ReflectiveOperationException e) {
                 throw new AssertionError(repository + " names the contract test " + test + " which does not exist", e);
             }

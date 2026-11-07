@@ -10,6 +10,11 @@
 #   chatledger_app   NOLOGIN group role; migration V008 grants it table privileges.
 #   APP_LOGIN_USER   Runtime login role, member of chatledger_app. Not owner,
 #                    not superuser.
+#   chatledger_provisioner  NOLOGIN group role; migration V013 grants it EXECUTE on
+#                    the two provisioning functions and nothing else.
+#   PROVISION_DB_USER  Login role, member of chatledger_provisioner. Used only by
+#                    the operator commands provision-tenant and provision-user.
+#                    It has no table privileges.
 #
 # Credentials come from environment variables only. They are read by psql with
 # \getenv (never placed on a command line) and quoted by PostgreSQL itself with
@@ -25,6 +30,8 @@ set -euo pipefail
 : "${MIGRATE_PASSWORD:?MIGRATE_PASSWORD must be set}"
 : "${APP_LOGIN_USER:?APP_LOGIN_USER must be set}"
 : "${APP_LOGIN_PASSWORD:?APP_LOGIN_PASSWORD must be set}"
+: "${PROVISION_DB_USER:?PROVISION_DB_USER must be set}"
+: "${PROVISION_DB_PASSWORD:?PROVISION_DB_PASSWORD must be set}"
 : "${POSTGRES_DB:?POSTGRES_DB must be set}"
 
 psql -v ON_ERROR_STOP=1 \
@@ -35,6 +42,8 @@ psql -v ON_ERROR_STOP=1 \
 \getenv migrate_password MIGRATE_PASSWORD
 \getenv app_user         APP_LOGIN_USER
 \getenv app_password     APP_LOGIN_PASSWORD
+\getenv prov_user        PROVISION_DB_USER
+\getenv prov_password    PROVISION_DB_PASSWORD
 
 -- Schema owner and Flyway login. It owns the database (set below), which is
 -- enough to create tables, functions and triggers. It is not a superuser and
@@ -64,6 +73,17 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user')
 \gexec
 
 SELECT format('GRANT chatledger_app TO %I', :'app_user')
+\gexec
+-- Provisioning: group role (granted EXECUTE by migration V013) and its login.
+SELECT 'CREATE ROLE chatledger_provisioner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'chatledger_provisioner')
+\gexec
+SELECT format(
+    'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
+    :'prov_user', :'prov_password')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'prov_user')
+\gexec
+SELECT format('GRANT chatledger_provisioner TO %I', :'prov_user')
 \gexec
 EOSQL
 

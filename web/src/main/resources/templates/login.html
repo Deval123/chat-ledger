@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Sign in - chat-ledger')}">
+</head>
+<body>
+<main>
+  <h1>Sign in</h1>
+  <!--/* One message for every kind of failure: it never says which field was wrong. */-->
+  <p th:if="${param.error}" role="alert">Sign-in failed. Check your workspace code, email and password.</p>
+  <p th:if="${param.logout}" role="status">You have signed out.</p>
+  <form th:action="@{/login}" method="post">
+    <p>
+      <label for="workspace">Workspace code</label><br>
+      <input id="workspace" name="workspace" type="text" maxlength="32" required
+             autocomplete="organization" autocapitalize="none" spellcheck="false">
+    </p>
+    <p>
+      <label for="email">Email</label><br>
+      <input id="email" name="email" type="email" maxlength="254" required autocomplete="username">
+    </p>
+    <p>
+      <label for="password">Password</label><br>
+      <input id="password" name="password" type="password" maxlength="128" required autocomplete="current-password">
+    </p>
+    <button type="submit">Sign in</button>
+  </form>
+</main>
+</body>
+</html>

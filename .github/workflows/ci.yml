@@ -29,18 +29,25 @@ jobs:
           distribution: "temurin"
           cache: "maven"
 
+      # Throwaway credentials, random for every run and masked in the log. Nothing here
+      # reaches a real database; the integration tests start their own with their own random ones.
+      - name: Generate throwaway credentials
+        run: |
+          for name in DB_PASSWORD APP_SECRET; do
+            value="$(openssl rand -hex 32)"
+            echo "::add-mask::${value}"
+            echo "${name}=${value}" >> "$GITHUB_ENV"
+          done
+
       # ── Build and run unit tests ─────────────────────────────────────
       # Surefire runs every *Test.java and *Tests.java class.
       # Secrets are never present in CI; the test profile disables the DB.
       - name: Build and run tests
         run: mvn --batch-mode --no-transfer-progress verify
         env:
-          # Placeholder values so Spring context loads under the test profile.
-          # No real database is started for unit tests.
+          # Non-secret connection details; the password and app secret come from the step above.
           DB_URL: jdbc:postgresql://localhost:5432/chatledger_ci
           DB_USER: ci_user
-          DB_PASSWORD: ci_password
-          APP_SECRET: ci-secret-not-for-production
 
   vulnerability-check:
     name: OWASP dependency vulnerability check
@@ -63,6 +70,16 @@ jobs:
           distribution: "temurin"
           cache: "maven"
 
+      # Throwaway credentials, random for every run and masked in the log. Nothing here
+      # reaches a real database; the integration tests start their own with their own random ones.
+      - name: Generate throwaway credentials
+        run: |
+          for name in DB_PASSWORD APP_SECRET; do
+            value="$(openssl rand -hex 32)"
+            echo "::add-mask::${value}"
+            echo "${name}=${value}" >> "$GITHUB_ENV"
+          done
+
       # ── NVD data cache ───────────────────────────────────────────────
       # The dependency-check plugin downloads NVD CVE data on first run
       # (~200 MB). Caching it avoids re-downloading the full feed on every
@@ -84,8 +101,6 @@ jobs:
         env:
           DB_URL: jdbc:postgresql://localhost:5432/chatledger_ci
           DB_USER: ci_user
-          DB_PASSWORD: ci_password
-          APP_SECRET: ci-secret-not-for-production
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
       - name: Upload OWASP dependency check report

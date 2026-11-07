@@ -59,3 +59,39 @@ GitHub Actions runs on every push:
 
 The demo tenant uses synthetic data only. No real phone numbers, names, or
 operator wording appear anywhere in the repository.
+
+## Creating a workspace and users (operator only)
+
+There is no sign-up page. An operator creates a workspace and its first seller, then more users, with two
+one-shot commands. They connect as a separate database login (`PROVISION_DB_*` in `.env.example`) that can
+only run the two provisioning functions. The new user's password is typed at a prompt or piped on standard
+input; it is never accepted as an argument or an environment variable.
+
+```
+java -jar web/target/web-*.jar provision-tenant --workspace river-shop --name "River Shop" --email seller@example.test
+java -jar web/target/web-*.jar provision-user   --workspace river-shop --email helper@example.test --role HELPER
+```
+
+A database created before the provisioner role existed needs the role and the grants once, as the database
+superuser (migration V013 already created the functions):
+
+```
+CREATE ROLE chatledger_provisioner NOLOGIN;
+GRANT EXECUTE ON FUNCTION provision_tenant(text, text, text, text), provision_user(text, text, text, text)
+    TO chatledger_provisioner;
+-- and a login role that is a member of it, with a password you generate
+```
+
+## Security in short
+
+- Every tenant table has row-level security and every query is scoped by tenant; ledger and audit rows can never be updated or deleted.
+- Passwords are Argon2id. Sign-in failures all look the same, and sign-in is throttled per account, per address and per
+  concurrent password check. There is no sign-up page: an operator provisions workspaces and users.
+- Sessions use a `__Host-` cookie (Secure, HttpOnly, SameSite=Strict), expire after 30 minutes idle and 12 hours in total, and
+  every POST needs a CSRF token (htmx pages carry it as a `hx-headers` attribute on `<body>`).
+- A strict content security policy is sent with every response. Templates may not contain inline scripts, styles, event handlers
+  or unescaped output; a test reads every template.
+- Request bodies are limited (4 KiB login, 16 KiB JSON, 64 KiB otherwise) and must be clean UTF-8 without control characters.
+- Secrets come from environment variables only. `mvn -Psecurity-check verify` checks dependencies for known vulnerabilities.
+- Not yet in place: TLS and trusted-proxy settings (deployment, task 13), so HSTS and per-address limits behind a proxy need
+  that step.
