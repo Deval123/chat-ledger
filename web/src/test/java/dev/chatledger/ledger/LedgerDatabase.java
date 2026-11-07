@@ -145,11 +145,16 @@ public final class LedgerDatabase {
 
     /** Inserts a tenant row (the app role has only SELECT on tenant) and returns its id. */
     public UUID createTenant() {
+        return createTenant("XAF", 0);
+    }
+
+    /** Inserts a tenant with the given currency and number of decimal places. */
+    public UUID createTenant(String currency, int scale) {
         UUID id = UUID.randomUUID();
         try (Connection c = migrateDataSource().getConnection();
              Statement s = c.createStatement()) {
             s.execute("INSERT INTO tenant(id, name, currency, scale, slug) VALUES ('" + id
-                    + "'::uuid, 'Test seller', 'XAF', 0, 'shop-" + id.toString().replace("-", "").substring(0, 12) + "')");
+                    + "'::uuid, 'Test seller', '" + currency + "', " + scale + ", 'shop-" + id.toString().replace("-", "").substring(0, 12) + "')");
         } catch (SQLException e) {
             throw new IllegalStateException("Could not create tenant", e);
         }

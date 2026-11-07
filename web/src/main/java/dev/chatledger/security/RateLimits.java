@@ -14,7 +14,7 @@ public class RateLimits {
     static final String LOGIN_IP = "login-ip";
     static final String LOGIN_ACCOUNT = "login-account";
     static final String LOGIN_PAGE_IP = "login-page-ip";
-    static final String INGESTION_TENANT = "ingestion-tenant";
+    public static final String INGESTION_TENANT = "ingestion-tenant";
 
     private final RateLimiter limiter;
 

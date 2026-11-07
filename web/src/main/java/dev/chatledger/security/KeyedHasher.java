@@ -46,4 +46,19 @@ public class KeyedHasher {
             throw new IllegalStateException("HMAC-SHA-256 is not available", e);
         }
     }
+
+    /**
+     * A 32-byte key for one purpose, derived from the application secret: HMAC-SHA-256(secret, purpose). Different
+     * purposes give unrelated keys, so the secret itself never leaves this class and one derived key cannot be
+     * turned into another. Used for the per-tenant phone hash key.
+     */
+    public byte[] derive(String purpose) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(key, "HmacSHA256"));
+            return mac.doFinal(purpose.getBytes(StandardCharsets.UTF_8));
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("HMAC-SHA-256 is not available", e);
+        }
+    }
 }

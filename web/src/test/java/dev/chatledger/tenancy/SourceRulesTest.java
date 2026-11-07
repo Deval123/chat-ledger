@@ -24,6 +24,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
@@ -330,5 +332,113 @@ class SourceRulesTest {
                 throw new AssertionError(repository + " names the contract test " + test + " which does not exist", e);
             }
         });
+    }
+
+    // ── Unit tests never need Docker ────────────────────────────────────────
+
+    /**
+     * The needles are written in pieces so this file does not contain them itself and so is not flagged by its own rule.
+     * A unit test that starts a container fails on any machine without Docker; this rule keeps that from coming back.
+     */
+    private static final List<String> DOCKER_NEEDLES = List.of("Ledger" + "Database", "test" + "containers");
+
+    @Test
+    void no_unit_test_references_the_test_database_or_the_container_library_directly_or_through_a_helper() throws IOException {
+        Map<String, String> sources = new TreeMap<>();
+        List<Path> roots = new ArrayList<>();
+        try (Stream<Path> modules = Files.list(Path.of(".."))) {
+            for (Path module : modules.toList()) {
+                Path tests = module.resolve("src/test/java");
+                if (Files.isDirectory(tests)) {
+                    roots.add(tests);
+                }
+            }
+        }
+        assertThat(roots).as("the scan found the modules' test sources").hasSizeGreaterThanOrEqualTo(3);
+        int unitTests = 0;
+        for (Path root : roots) {
+            try (Stream<Path> files = Files.walk(root)) {
+                for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+                    String name = file.getFileName().toString().replace(".java", "");
+                    sources.put(name, Files.readString(file));
+                    if (isUnitTestName(name)) {
+                        unitTests++;
+                    }
+                }
+            }
+        }
+        assertThat(unitTests).as("the scan found unit tests").isGreaterThan(20);
+        assertThat(sources.keySet()).as("the scan sees the Docker-backed classes, so it is not vacuous")
+                .contains("LedgerPostgresIT", "AbstractWebIT");
+        assertThat(dockerReachingUnitTests(sources)).isEmpty();
+    }
+
+    @Test
+    void the_docker_scan_catches_a_direct_reference_an_import_an_annotation_and_a_helper() {
+        String db = "Ledger" + "Database";
+        String lib = "org.test" + "containers.containers.PostgreSQLContainer";
+        String annotation = "@Test" + "containers";
+        assertThat(dockerReachingUnitTests(Map.of("FooTest", "class FooTest { " + db + " d = " + db + ".get(); }"))).containsExactly("FooTest");
+        assertThat(dockerReachingUnitTests(Map.of("FooTest", "import " + lib + "; class FooTest { }"))).containsExactly("FooTest");
+        assertThat(dockerReachingUnitTests(Map.of("FooTests", annotation + " class FooTests { }"))).containsExactly("FooTests");
+        assertThat(dockerReachingUnitTests(Map.of("FooTest", "class FooTest { Object o = Class.forName(\"x." + db + "\"); }")))
+                .as("a class name in a string").containsExactly("FooTest");
+        // Through a helper that is not itself a test, and through two helpers.
+        assertThat(dockerReachingUnitTests(Map.of("FooTest", "class FooTest { Helper h; }", "Helper", "class Helper { " + db + " d; }")))
+                .containsExactly("FooTest");
+        assertThat(dockerReachingUnitTests(Map.of("FooTest", "class FooTest { Outer o; }", "Outer", "class Outer { Inner i; }",
+                "Inner", "class Inner { " + db + " d; }"))).containsExactly("FooTest");
+    }
+
+    @Test
+    void the_docker_scan_accepts_integration_tests_comments_and_names_only_inside_strings_of_other_classes() {
+        String db = "Ledger" + "Database";
+        assertThat(dockerReachingUnitTests(Map.of("FooIT", "class FooIT { " + db + " d; }"))).isEmpty();
+        assertThat(dockerReachingUnitTests(Map.of("FooTest", "// uses " + db + " in a comment\n/* test" + "containers */ class FooTest { }"))).isEmpty();
+        assertThat(dockerReachingUnitTests(Map.of("FooTest", "class FooTest { String s = \"BarIT#method\"; }", "BarIT", "class BarIT { " + db + " d; }")))
+                .as("a unit test may name an IT in a string (the registry does); it only must not use it").isEmpty();
+        assertThat(dockerReachingUnitTests(Map.of("FooTest", "class FooTest { Other o; }", "Other", "class Other { }"))).isEmpty();
+    }
+
+    private static boolean isUnitTestName(String name) {
+        return name.endsWith("Test") || name.endsWith("Tests");
+    }
+
+    /** Names of unit tests (not *IT) whose source reaches Docker: directly, or through classes they reference by name. */
+    static List<String> dockerReachingUnitTests(Map<String, String> sources) {
+        Map<String, String> noComments = new TreeMap<>();
+        Map<String, String> code = new TreeMap<>();
+        sources.forEach((name, source) -> {
+            String stripped = source.replaceAll("(?s)/\\*.*?\\*/", " ").replaceAll("(?m)//.*$", " ");
+            noComments.put(name, stripped);
+            code.put(name, stripped.replaceAll("\"(\\\\.|[^\"\\\\])*\"", "\"\""));
+        });
+        Set<String> reaching = new HashSet<>();
+        noComments.forEach((name, source) -> {
+            String lower = source.toLowerCase(java.util.Locale.ROOT);
+            if (DOCKER_NEEDLES.stream().anyMatch(n -> lower.contains(n.toLowerCase(java.util.Locale.ROOT)))) {
+                reaching.add(name);
+            }
+        });
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (Map.Entry<String, String> e : code.entrySet()) {
+                if (reaching.contains(e.getKey())) {
+                    continue;
+                }
+                for (String docker : reaching) {
+                    if (java.util.regex.Pattern.compile("\\b" + java.util.regex.Pattern.quote(docker) + "\\b").matcher(e.getValue()).find()) {
+                        reaching.add(e.getKey());
+                        changed = true;
+                        break;
+                    }
+                }
+                if (changed) {
+                    break;
+                }
+            }
+        }
+        return reaching.stream().filter(SourceRulesTest::isUnitTestName).sorted().toList();
     }
 }

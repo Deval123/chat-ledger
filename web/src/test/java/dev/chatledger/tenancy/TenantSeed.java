@@ -29,7 +29,8 @@ public record TenantSeed(
         List<UUID> entryIds,
         UUID matchId,
         UUID flagId,
-        UUID auditId) {
+        UUID auditId,
+        UUID catalogItemId) {
 
     /** Row ids by table name. */
     public Map<String, List<UUID>> idsByTable() {
@@ -45,7 +46,8 @@ public record TenantSeed(
                 Map.entry("ledger_entry", entryIds),
                 Map.entry("match", List.of(matchId)),
                 Map.entry("flag", List.of(flagId)),
-                Map.entry("audit_log", List.of(auditId)));
+                Map.entry("audit_log", List.of(auditId)),
+                Map.entry("catalog_item", List.of(catalogItemId)));
     }
 
     public static TenantSeed create(DataSource owner) {
@@ -63,6 +65,7 @@ public record TenantSeed(
         UUID match = UUID.randomUUID();
         UUID flag = UUID.randomUUID();
         UUID audit = UUID.randomUUID();
+        UUID catalogItem = UUID.randomUUID();
         String tag = tenant.toString().replace("-", "").substring(0, 12);
 
         try (Connection c = owner.getConnection()) {
@@ -99,12 +102,14 @@ public record TenantSeed(
                     flag, tenant, payment);
             update(c, "INSERT INTO audit_log(id, tenant_id, actor, action, subject) VALUES (?, ?, ?, 'TEST', 'seed')",
                     audit, tenant, user);
+            update(c, "INSERT INTO catalog_item(id, tenant_id, name_key, display_name, unit_minor) VALUES (?, ?, 'seed item', 'Seed item', 1000)",
+                    catalogItem, tenant);
             c.commit();
         } catch (SQLException e) {
             throw new IllegalStateException("Could not seed tenant", e);
         }
         return new TenantSeed(tenant, user, customer, order, orderLine, payment, receivable, revenue, txn,
-                List.of(debit, credit), match, flag, audit);
+                List.of(debit, credit), match, flag, audit, catalogItem);
     }
 
     static void update(Connection c, String sql, Object... params) throws SQLException {

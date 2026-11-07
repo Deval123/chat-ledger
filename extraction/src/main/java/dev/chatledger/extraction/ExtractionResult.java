@@ -5,8 +5,8 @@ import java.util.Optional;
 /**
  * Outcome of attempting to extract a structured record from raw text.
  *
- * <p>A result is either successful (carries a {@link ParsedMessage}) or failed
- * (carries a reason). Callers check {@link #isSuccess()} before unwrapping.
+ * <p>A result is either successful (carries a {@link ParsedMessage}) or failed (carries a
+ * {@link FailureReason}, an enum, so no text from the message can travel in it).
  *
  * @param <T> The concrete type of the parsed message (order or payment).
  */
@@ -19,19 +19,17 @@ public sealed interface ExtractionResult<T extends ParsedMessage>
     Optional<T> value();
 
     /** Returns the failure reason, or empty if this is a success. */
-    Optional<String> failureReason();
-
-    // ── Implementations ──────────────────────────────────────────────
+    Optional<FailureReason> failureReason();
 
     record Success<T extends ParsedMessage>(T parsed) implements ExtractionResult<T> {
-        @Override public boolean isSuccess()              { return true; }
-        @Override public Optional<T> value()              { return Optional.of(parsed); }
-        @Override public Optional<String> failureReason() { return Optional.empty(); }
+        @Override public boolean isSuccess()                    { return true; }
+        @Override public Optional<T> value()                    { return Optional.of(parsed); }
+        @Override public Optional<FailureReason> failureReason() { return Optional.empty(); }
     }
 
-    record Failure<T extends ParsedMessage>(String reason) implements ExtractionResult<T> {
-        @Override public boolean isSuccess()              { return false; }
-        @Override public Optional<T> value()              { return Optional.empty(); }
-        @Override public Optional<String> failureReason() { return Optional.of(reason); }
+    record Failure<T extends ParsedMessage>(FailureReason reason) implements ExtractionResult<T> {
+        @Override public boolean isSuccess()                    { return false; }
+        @Override public Optional<T> value()                    { return Optional.empty(); }
+        @Override public Optional<FailureReason> failureReason() { return Optional.of(reason); }
     }
 }

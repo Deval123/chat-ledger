@@ -26,4 +26,11 @@ public record ParsedPayment(
         String senderLast4,
         Instant paidAt,
         String rawText
-) implements ParsedMessage {}
+) implements ParsedMessage {
+
+    /** Counts and flags only: a sender name, a number or the text must not reach a log through this record. */
+    @Override
+    public String toString() {
+        return "ParsedPayment[hasTransactionId=" + (transactionId != null) + ", hasSender=" + (senderName != null) + "]";
+    }
+}

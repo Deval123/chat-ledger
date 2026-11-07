@@ -31,19 +31,28 @@ public class AuditLogRepository {
     public void append(UUID tenantId, UUID actor, String action, String subject) {
         try {
             scope.call(tenantId, c -> {
-                try (PreparedStatement ps = c.prepareStatement(
-                        "INSERT INTO audit_log(id, tenant_id, actor, action, subject) VALUES (?, ?, ?, ?, ?)")) {
-                    ps.setObject(1, UUID.randomUUID());
-                    ps.setObject(2, tenantId);
-                    ps.setObject(3, actor);
-                    ps.setString(4, action);
-                    ps.setString(5, subject);
-                    ps.executeUpdate();
-                }
+                appendWithin(c, tenantId, actor, action, subject);
                 return null;
             });
         } catch (SQLException e) {
             throw new IllegalStateException("Could not write the audit trail", e);
+        }
+    }
+
+    /**
+     * Appends an entry on a connection that is already inside a {@link TenantScope} for {@code tenantId}, so the entry
+     * commits or rolls back together with the work it records.
+     */
+    public static void appendWithin(java.sql.Connection c, UUID tenantId, UUID actor, String action, String subject)
+            throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO audit_log(id, tenant_id, actor, action, subject) VALUES (?, ?, ?, ?, ?)")) {
+            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, actor);
+            ps.setString(4, action);
+            ps.setString(5, subject);
+            ps.executeUpdate();
         }
     }
 

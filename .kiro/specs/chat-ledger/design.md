@@ -514,6 +514,44 @@ transaction or it will see nothing; the raw-SQL helpers in `LedgerPostgresIT` an
 `LedgerEntryImmutabilityIT` must set the tenant; `FlywayStartupIT` expects the new policies.
 Seeding done as the owner is unaffected.
 
+## Order extraction (task 4)
+
+Full proposal and the owner's answers: `task-4-design-stop.md`. What was built, in short.
+
+- **Entry point.** `OrderIngestionService.ingest(tenantId, actor, externalId, text)` in `web`. No HTTP endpoint yet: the paste form
+  (task 8) and the signed machine API (task 11) will call it, so every defense below applies to both. The tenant is always a
+  parameter taken from the principal (or the verified signing key), never from the message.
+- **Steps.** Re-check the input (`InputChecks`, refuse and never repair) → per-tenant rate limit → idempotency lookup → read the
+  tenant's currency and scale from its own row → `OrderPipeline` (normalise, parse, validate, catalog lookup, decide) → one
+  transaction for customer, order, lines and audit row.
+- **Parser.** Deterministic and strict, two shapes only (labelled lines, one line), English and French labels as constants
+  (`Order/Commande`, `Name/Nom`, `Phone/Telephone`, `Total/Montant`, `Deliver/Livraison`). `FCFA`, `F CFA` and `XAF` are the tenant's
+  XAF; any other currency word is kept as written and refused by the validator. No pattern is built from the message, no
+  backtracking, no reflection or format strings (a source scan enforces it). Anything not understood fails and the message is kept as
+  `UNPARSED`; it is never dropped and never guessed.
+- **Normalisation** works on a derived copy: format characters (bidirectional overrides, zero-width) are removed, NFKC applied, digits of
+  any script mapped to ASCII, spaces and line breaks reduced. The stored `raw_text` is the original, byte for byte.
+- **Validator versus catalog.** Every amount the **parser read** (a price, a line total, the stated total) must be written in the
+  message; this is checked on the normalised text, independently of the parser. A total **computed from the catalog** is not in the
+  message: the decider computes it with `Math.*Exact`, caps it at 10^12 minor units, and does not require it to appear in the text.
+  A stated total is never replaced by a computed one: if they disagree the order is `NEEDS_REVIEW` with the stated number kept.
+- **Statuses and nullability.** `PENDING_PAYMENT` (total known), `NEEDS_REVIEW` (a price is unknown, or the totals disagree),
+  `UNPARSED`. Only `total_minor` (and a line's `unit_minor`) may be NULL, and a CHECK ties a NULL total to `UNPARSED` / `NEEDS_REVIEW`
+  only. `currency` is always the tenant's and never NULL.
+- **Phones.** One function, `PhoneNumbers.canonicalDigits` (digits only, a leading `+` or `00` removed, 7 to 15 digits, no country
+  logic), feeds both the HMAC and `last4`. The hash is HMAC-SHA-256 under a per-tenant key derived from `app.secret` (`PhoneKeys`),
+  so the key is not in the database. Tasks 5 and 6 must use the same two classes to find a payer from an SMS. Named limit: the same
+  number written with and without a country code is two customers.
+- **Customers** are found or created by phone hash inside the order transaction (an order that is not stored leaves no customer);
+  without a phone each named customer gets a row of their own.
+- **Idempotency.** `UNIQUE (tenant_id, external_id)` with `INSERT ... ON CONFLICT DO NOTHING` is the arbiter. A replay returns the
+  existing order; with different text it returns `DUPLICATE_DIFFERENT_TEXT` and changes nothing.
+- **Database (V014).** `catalog_item` (RLS, application role SELECT only); nullable `orders.total_minor` and `order_line.unit_minor`;
+  new `orders.order_ref` and `orders.delivery_note`; format and length CHECKs on every column that receives message text;
+  `INSERT` (not UPDATE or DELETE) on `orders`, `order_line`, `customer` for the application role.
+- **Logging.** `IngestionEvents` takes ids, enums and counts only. `ParsedOrder`, `Phone`, `OrderRepository.Stored` and the others
+  print no text, name or number. `ExtractionResult.Failure` carries an enum (`FailureReason`), never text.
+
 ### Trade-offs and weakened defenses
 
 | # | Defense weakened or not provided | Why | Compensation |
@@ -581,3 +619,16 @@ The demo credentials go in the Devpost testing field.
 | 17 | Cache-Control is the framework's `no-store` for every response, static files included | There are no static files yet (task 8) | Task 8 must serve versioned static files with their own cache headers and add a test |
 | 18 | Raw non-ASCII bytes and control characters in forms, queries and JSON are refused outright | "Reject, do not guess": servers otherwise repair them silently and two parts of the system then disagree | A client that sends them gets 400; ordinary browsers never do |
 
+| 19 | Raw message text is stored verbatim in `orders.raw_text` and holds names and phone numbers | Needed for audit and requirement 1.5 | Tenant isolation, never logged, never printed by any value type, escaped on output (tested end to end), deletion by requirement 9.6 in a later task (the column is NOT NULL, so deletion will blank it) |
+| 20 | Phone hash is HMAC under a key derived from `app.secret`, not Argon2 and not a salt in the database. If the secret and the database both leak, numbers can be recovered by brute force; rotating the secret changes every hash and needs a rehash job (not built) | A phone number has about 10^9 possibilities, so any hash of it is brute-forceable by someone who holds everything needed to recompute it; the key is the only thing kept out | Key never in the database, per-tenant keys, the number itself never stored, last 4 digits only on display. V003's comment is corrected by `COMMENT ON COLUMN` in V014 |
+| 21 | Same number with and without a country code is two customers; customers without a phone are not merged | No country logic, and no safe key without a phone | Named in the code and tests; tasks 5 and 6 reuse the same function |
+| 22 | Only two message shapes are understood and one unrecognised line (even a greeting) makes the whole message `UNPARSED` | Money must not depend on a loose pattern | The message is kept and shown, never dropped; the optional AI extractor (task 10) is the planned improvement |
+| 23 | "The amount is written in the message" proves presence, not meaning: a price equal to the digits of a phone number would pass | The check is deliberately independent of the parser | The stated-total-versus-lines check, `NEEDS_REVIEW`, and the seller's last word |
+| 24 | Input with bad encoding, NUL, control characters, lone surrogates or over 4,000 characters is refused and not stored (`REJECTED_INPUT`) | PostgreSQL cannot store NUL and such text cannot be stored safely; this is the owner-approved reading of requirement 1.5 | The caller still holds the text and receives a code saying why |
+| 25 | The application role gains INSERT on `orders`, `order_line`, `customer`; the catalog is read-only for it | Ingestion must write; sellers cannot yet edit prices | No UPDATE or DELETE (tested), RLS `WITH CHECK`; the demo seed (task 9) and an operator fill the catalog; a status UPDATE will be a separate named grant in task 6 |
+| 26 | Hard caps: 4,000 characters, 80 lines, 50 items, quantity 9,999, 10^12 minor units, label 100, name 100, note 300 | Bounded work and no overflow | Named constants (`OrderLimits`); larger input becomes `UNPARSED`, not an error |
+| 27 | `externalId` is limited to `A-Z a-z 0-9 . _ : -` and 128 characters | It is stored, indexed and used in lookups | Widen the set on request, never by dropping validation |
+| 28 | The new CHECKs on existing tables are `NOT VALID` | Those tables may hold rows from before | New and changed rows are checked; `VALIDATE CONSTRAINT` once old data is known to fit |
+| 29 | A replay with different text keeps the first order | Requirement 1.3 | The caller is told (`DUPLICATE_DIFFERENT_TEXT`), a fixed-label event is logged, nothing is overwritten |
+| 30 | The pathological-input test has a wall-clock bound, which can be flaky on a slow machine | Timing is the only direct measure | Generous bound plus a deterministic structural scan: the extraction code cannot build a regular expression, format string, class or process from text |
+| 31 | PostgreSQL's own server log can contain the failing row of a constraint violation (message text, names, hashes) and, depending on settings, bound parameters | The application cannot control the database server's log | The application log carries ids and codes only (tested). Deployment (task 13) must set `log_error_verbosity = terse` and `log_statement = none`; the item is in `tasks.md` task 13 |
