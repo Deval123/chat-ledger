@@ -49,7 +49,7 @@ class HandlerCoverageTest {
                 }
             }
         }
-        assertThat(seen).as("the scan found the handlers").contains("HomeController.home", "LoginController.login");
+        assertThat(seen).as("the scan found the handlers").contains("BoardController.board", "LoginController.login");
         assertThat(unprotected).isEmpty();
         assertThat(seen).as("the public list names handlers that exist").containsAll(PUBLIC_HANDLERS);
     }

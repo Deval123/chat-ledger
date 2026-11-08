@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.export})}">
+</head>
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main>
+  <h1 th:text="#{export.title}">Download your records</h1>
+  <p th:text="#{export.note}">Files open in a spreadsheet.</p>
+  <form th:each="file : ${files}" th:if="${file != 'ledger' or canLedger}" method="get" th:action="@{/app/export/{f}.csv(f=${file})}">
+    <h2 th:text="#{${'export.' + file}}">Orders</h2>
+    <label th:for="|from-${file}|" th:text="#{export.from}">From</label>
+    <input type="date" name="from" th:id="|from-${file}|" th:value="${from}" required>
+    <label th:for="|to-${file}|" th:text="#{export.to}">To</label>
+    <input type="date" name="to" th:id="|to-${file}|" th:value="${to}" required>
+    <button type="submit" th:text="#{export.button}">Download</button>
+  </form>
+  <p><a th:href="@{/app}" th:text="#{nav.back}">Back to the board</a></p>
+</main>
+</body>
+</html>

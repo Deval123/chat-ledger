@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.order})}">
+</head>
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main th:with="title=${order.who != null ? @display.text(order.who, 100) : ''}">
+  <h1 th:text="${#strings.isEmpty(title)} ? #{card.unknown.order} : ${title}">Customer</h1>
+  <p class="status" th:text="#{${'status.ORDER.' + order.status}(${@money.format(order.appliedMinor, tenant.scale, order.currency)}, ${order.totalMinor != null ? @money.format(order.totalMinor, tenant.scale, order.currency) : ''})}">Waiting</p>
+  <dl>
+    <dt th:text="#{fact.total}">Total</dt>
+    <dd th:text="${order.totalMinor != null} ? ${@money.format(order.totalMinor, tenant.scale, order.currency)} : #{fact.unknown}">5,000 XAF</dd>
+    <dt th:text="#{fact.balance}">Still to pay</dt>
+    <dd th:text="${@money.format(balance, tenant.scale, order.currency)}">0</dd>
+    <dt th:if="${order.ref != null}" th:text="#{fact.ref}">Order code</dt>
+    <dd th:if="${order.ref != null}" th:text="${@display.text(order.ref, 64)}">A-1</dd>
+    <dt th:if="${order.last4 != null}" th:text="#{fact.phone}">Phone</dt>
+    <dd th:if="${order.last4 != null}"><span aria-hidden="true" th:text="${@phone.display(order.last4)}">1234</span><span class="sr" th:text="${@phone.spoken(order.last4)}">phone ending 1234</span></dd>
+    <dt th:text="#{fact.recorded}">Recorded</dt>
+    <dd th:text="${@times.format(order.at, tenant.zone)}">03 Nov</dd>
+    <dt th:if="${order.deliveryNote != null}" th:text="#{fact.note}">Delivery note</dt>
+    <dd th:if="${order.deliveryNote != null}" class="note" th:text="${@display.block(order.deliveryNote, 300)}">Note</dd>
+  </dl>
+  <h2 th:if="${not #lists.isEmpty(order.lines)}" th:text="#{order.lines}">Items</h2>
+  <ul class="plain" th:if="${not #lists.isEmpty(order.lines)}">
+    <li th:each="line : ${order.lines}" th:text="#{order.line(${line.qty}, ${@display.text(line.label, 100)}, ${line.unitMinor != null ? @money.format(line.unitMinor, tenant.scale, order.currency) : '?'})}">1 x Item</li>
+  </ul>
+  <div th:if="${not #lists.isEmpty(order.flags)}">
+    <h2 th:text="#{detail.flags}">Flags</h2>
+    <th:block th:replace="~{fragments/facts :: flags(${order.flags})}"></th:block>
+  </div>
+  <p th:if="${order.status == 'NEEDS_REVIEW'}">
+    <a class="button" th:if="${canApprove}" th:href="@{/app/orders/{id}/review(id=${order.id})}" th:text="#{action.check}">Check the total</a>
+    <span th:unless="${canApprove}" th:text="#{card.review.seller}">Needs the seller to check.</span>
+  </p>
+  <h2 th:if="${not #lists.isEmpty(shown)}" th:text="#{detail.matches}">Payments</h2>
+  <th:block th:each="s : ${shown}">
+    <th:block th:replace="~{fragments/match :: match(${s}, 'payment')}"></th:block>
+  </th:block>
+  <th:block th:replace="~{fragments/facts :: raw(${raw})}"></th:block>
+  <p><a th:href="@{/app}" th:text="#{nav.back}">Back to the board</a></p>
+</main>
+</body>
+</html>

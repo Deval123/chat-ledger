@@ -81,7 +81,11 @@ public class SecurityConfig {
                 RateLimits.LOGIN_IP, RateRule.parse("login-per-ip", l.loginPerIp()),
                 RateLimits.LOGIN_ACCOUNT, RateRule.parse("login-per-account", l.loginPerAccount()),
                 RateLimits.LOGIN_PAGE_IP, RateRule.parse("login-page-per-ip", l.loginPagePerIp()),
-                RateLimits.INGESTION_TENANT, RateRule.parse("ingestion-per-tenant", l.ingestionPerTenant())),
+                RateLimits.INGESTION_TENANT, RateRule.parse("ingestion-per-tenant", l.ingestionPerTenant()),
+                RateLimits.REMATCH_MINUTE, RateRule.parse("rematch-per-minute", l.rematchPerMinute()),
+                RateLimits.REMATCH_HOUR, RateRule.parse("rematch-per-hour", l.rematchPerHour()),
+                RateLimits.EXPORT_TENANT, RateRule.parse("export-per-tenant", l.exportPerTenant()),
+                RateLimits.ACTIONS_USER, RateRule.parse("actions-per-user", l.actionsPerUser())),
                 100_000, java.time.Duration.ofHours(1));
     }
 
@@ -155,6 +159,8 @@ public class SecurityConfig {
                 .httpStrictTransportSecurity(hsts -> hsts.includeSubDomains(true).maxAgeInSeconds(31_536_000).preload(false)))
             .authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/health", "/actuator/health", "/login", "/error", "/").permitAll()
+                // The stylesheet and the htmx script: the same for everyone, no tenant data. Nothing else lives under /assets.
+                .requestMatchers("/assets/**").permitAll()
                 .requestMatchers("/admin/**").hasRole("SELLER")
                 .requestMatchers("/app/**").authenticated()
                 .anyRequest().denyAll())

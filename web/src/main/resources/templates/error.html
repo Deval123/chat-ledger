@@ -6,7 +6,7 @@
 <main>
   <h1>Something went wrong</h1>
   <!--/* Nothing about the cause: no message, path, exception or version. The status is all the user needs. */-->
-  <p>The request could not be completed (<span th:text="${status}">500</span>).</p>
+  <p id="notice" role="alert">The request could not be completed (<span th:text="${status}">500</span>).</p>
   <p><a th:href="@{/app}">Back to the app</a></p>
 </main>
 </body>

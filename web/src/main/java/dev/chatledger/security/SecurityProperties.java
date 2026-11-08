@@ -21,6 +21,10 @@ import java.time.Duration;
  * app.security.limits.login-per-account=5/15m
  * app.security.limits.login-page-per-ip=30/10m
  * app.security.limits.ingestion-per-tenant=60/1m/30
+ * app.security.limits.rematch-per-minute=3/1m
+ * app.security.limits.rematch-per-hour=20/1h
+ * app.security.limits.export-per-tenant=6/10m
+ * app.security.limits.actions-per-user=120/1m
  * app.security.size.login=4KB
  * app.security.size.json=16KB
  * app.security.size.other=64KB
@@ -46,12 +50,20 @@ public record SecurityProperties(
             @DefaultValue("10/10m") String loginPerIp,
             @DefaultValue("5/15m") String loginPerAccount,
             @DefaultValue("30/10m") String loginPagePerIp,
-            @DefaultValue("60/1m/30") String ingestionPerTenant) {
+            @DefaultValue("60/1m/30") String ingestionPerTenant,
+            @DefaultValue("3/1m") String rematchPerMinute,
+            @DefaultValue("20/1h") String rematchPerHour,
+            @DefaultValue("6/10m") String exportPerTenant,
+            @DefaultValue("120/1m") String actionsPerUser) {
         public Limits {
             RateRule.parse("app.security.limits.login-per-ip", loginPerIp);
             RateRule.parse("app.security.limits.login-per-account", loginPerAccount);
             RateRule.parse("app.security.limits.login-page-per-ip", loginPagePerIp);
             RateRule.parse("app.security.limits.ingestion-per-tenant", ingestionPerTenant);
+            RateRule.parse("app.security.limits.rematch-per-minute", rematchPerMinute);
+            RateRule.parse("app.security.limits.rematch-per-hour", rematchPerHour);
+            RateRule.parse("app.security.limits.export-per-tenant", exportPerTenant);
+            RateRule.parse("app.security.limits.actions-per-user", actionsPerUser);
         }
     }
 

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.column})}">
+</head>
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main>
+  <h1 th:text="#{${'column.' + column.name()}}">Column</h1>
+  <p class="empty" th:if="${#lists.isEmpty(cards)}" th:text="#{${'column.empty.' + column.name()}}">Nothing here.</p>
+  <th:block th:each="card : ${cards}">
+    <th:block th:replace="~{fragments/board :: card(${card})}"></th:block>
+  </th:block>
+  <p th:if="${more}">
+    <a th:href="@{/app/columns/{c}(c=${column.path()}, after=${next}, page=${pageNumber + 1})}" th:text="#{board.more}">Show more</a>
+  </p>
+  <p th:if="${not more and pageNumber >= 5 and next != ''}" th:text="#{board.limit}">That is all this page shows.</p>
+  <p><a th:href="@{/app}" th:text="#{nav.back}">Back to the board</a></p>
+</main>
+</body>
+</html>

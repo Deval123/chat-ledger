@@ -149,7 +149,11 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
     order before it matches automatically, and a flagged pair is suggested instead. Verify with a test per flag code.
   - _Requirements: 5_
 
-- [ ] 8. Board and summary UI
+- [x] 8. Board and summary UI
+  - Done (stop 2, decisions D1 to D22 of `task-8-design-stop.md`): board, columns, detail and check pages, seller actions with and without
+    htmx, approval of a `NEEDS_REVIEW` order with its posting (V018), daily summary, CSV export, books check, rematch, export and action
+    limits; every route tested for anonymous, helper, other tenant, missing and wrong CSRF token; a browser walk at phone size. Notes:
+    `docs/kiro-notes.md`, "Task 8"; register items 76 to 95.
   - Thymeleaf plus HTMX, phone-first layout, five board columns, daily summary, CSV export.
   - **Confirm, reject and unmatch buttons** (task 6) use CSRF and the two permissions: `CONFIRM_OR_OVERRIDE_MATCH` to confirm,
     reject and match by hand, `REVERSE_TRANSACTION` to unmatch. Verify that a HELPER gets 403 on each.
@@ -193,6 +197,9 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
 
 - [ ] 12. Polish and accessibility
   - Visual design pass, keyboard use, contrast, French string scaffolding.
+  - **Cancel, dismiss and correct a total** (task 8, D7): cancel an open order (a `CANCELLED` transition with the reversal of its
+    `ORDER_ACCEPTED` through `reverseWithin`, refused while a match is active), dismiss an unread record, and correct a total stated by
+    the seller (reverse and post again, in one transaction, audited). Seller only, with a check page; until then a wrong total stays.
   - _Requirements: 6.3, 10_
 
 - [ ] 13. Deployment

@@ -260,4 +260,22 @@ public class OrderRepository {
         long value = rs.getLong(column);
         return rs.wasNull() ? null : value;
     }
+
+    /**
+     * Makes a {@code NEEDS_REVIEW} order payable with the total the seller stated, on the caller's connection and in the caller's
+     * transaction. The caller has locked the order and seen it in {@code NEEDS_REVIEW} in this transaction (a status predicate here could
+     * never change the answer, and a mutation test showed it, so there is none). The database allows the total to change only in this move
+     * and requires the order's posting by commit.
+     *
+     * @return the rows changed: 1, or 0 if the order is not this tenant's
+     */
+    public int approveWithin(Connection c, UUID tenantId, UUID orderId, long totalMinor) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE orders SET total_minor = ?, status = 'PENDING_PAYMENT' WHERE tenant_id = ? AND id = ?")) {
+            ps.setLong(1, totalMinor);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, orderId);
+            return ps.executeUpdate();
+        }
+    }
 }

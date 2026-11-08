@@ -1,0 +1,10 @@
+{
+  "name": "chat-ledger-browser-check",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Developer tool: a walk through the board in a real browser. Not part of the Maven build, not run by CI.",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "check": "node check.mjs" },
+  "dependencies": { "puppeteer-core": "25.16.0" }
+}

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.undo})}">
+</head>
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main>
+  <h1 th:text="#{undo.title}">Undo this match?</h1>
+  <p th:text="#{undo.explain(${@money.format(match.amountMinor, tenant.scale, tenant.currency)})}">Undoing reverses the posting.</p>
+  <ul class="plain">
+    <li><a th:href="@{/app/orders/{id}(id=${order.id})}" th:text="#{undo.order(${order.who != null ? @display.text(order.who, 40) : ''}, ${order.ref != null ? @display.text(order.ref, 40) : ''})}">Order</a></li>
+    <li><a th:href="@{/app/payments/{id}(id=${payment.id})}" th:text="#{undo.payment(${payment.who != null ? @display.text(payment.who, 40) : ''}, ${payment.hasAmount ? @money.format(payment.amountMinor, tenant.scale, payment.currency) : ''})}">Payment</a></li>
+  </ul>
+  <form th:action="@{/app/matches/{id}/unmatch(id=${match.id})}" method="post">
+    <button type="submit" th:text="#{undo.button}">Yes, undo this match</button>
+  </form>
+  <p><a th:href="@{/app/orders/{id}(id=${order.id})}" th:text="#{nav.back.order}">Back to the order</a></p>
+</main>
+</body>
+</html>

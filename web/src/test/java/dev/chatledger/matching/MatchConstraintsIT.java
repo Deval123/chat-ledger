@@ -474,7 +474,9 @@ class MatchConstraintsIT {
                     continue;
                 }
                 Work update = c -> MatchWorld.run(c, "UPDATE orders SET status = ? WHERE id = ?", to, from.getValue());
-                if (open.contains(from.getKey()) && open.contains(to)) {
+                // (V018: the one move out of review is to PENDING_PAYMENT; its posting is required at commit and is tested in ApprovalSchemaIT)
+                boolean leavesReview = from.getKey().equals("NEEDS_REVIEW") && to.equals("PENDING_PAYMENT");
+                if ((open.contains(from.getKey()) && open.contains(to)) || leavesReview) {
                     assertThatCode(() -> tryOnly(w, update)).as(from.getKey() + " to " + to).doesNotThrowAnyException();
                 } else {
                     refuses(() -> tryOnly(w, update), "23514", "is not allowed");
@@ -586,7 +588,7 @@ class MatchConstraintsIT {
     // ── What the application role may do ───────────────────────────────────
 
     private static final Map<String, Set<String>> GRANTED_COLUMNS = Map.of(
-            "orders", Set.of("status"),
+            "orders", Set.of("status", "total_minor"),   // total_minor since V018, frozen by a trigger except when an order leaves NEEDS_REVIEW
             "payment", Set.of("status"),
             "match", Set.of("state", "decided_by", "decided_at", "amount_minor", "excess_minor", "ledger_txn_id"));
 

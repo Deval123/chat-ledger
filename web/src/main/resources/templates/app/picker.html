@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.picker})}">
+</head>
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main>
+  <h1 th:text="#{picker.title}">Match this payment to an order</h1>
+  <p th:text="#{picker.payment(${payment.who != null ? @display.text(payment.who, 40) : ''}, ${@money.format(payment.amountMinor, tenant.scale, payment.currency)})}">Payment</p>
+  <p class="empty" th:if="${#lists.isEmpty(orders)}" th:text="#{picker.none}">No open order in this currency.</p>
+  <article class="card" th:each="o : ${orders}">
+    <h3 th:text="${o.customerName != null ? @display.text(o.customerName, 40) : ''}">Customer</h3>
+    <p th:text="#{picker.order(${@money.format(o.balanceMinor(), tenant.scale, o.currency)}, ${@money.format(o.totalMinor, tenant.scale, o.currency)})}">Still to pay</p>
+    <p class="meta"><span th:if="${o.orderRef != null}" th:text="${@display.text(o.orderRef, 40)}">A-1</span>
+      <span th:if="${o.customerLast4 != null}" th:text="${@phone.display(o.customerLast4)}">1234</span>
+      <span th:text="${@times.format(o.createdAt, tenant.zone)}">03 Nov</span></p>
+    <form th:action="@{/app/matches/manual}" method="post">
+      <input type="hidden" name="orderId" th:value="${o.id}">
+      <input type="hidden" name="paymentId" th:value="${payment.id}">
+      <button type="submit" th:text="#{picker.button}">Match to this order</button>
+    </form>
+  </article>
+  <p><a th:href="@{/app/payments/{id}(id=${payment.id})}" th:text="#{nav.back.payment}">Back to the payment</a></p>
+</main>
+</body>
+</html>

@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.review})}">
+</head>
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main>
+  <!--/* The second look before money enters the books: the amount as it will be posted. Nothing has been written yet. */-->
+  <h1 th:text="#{approve.title(${@money.format(totalMinor, tenant.scale, order.currency)})}">Make this order payable?</h1>
+  <p th:text="#{approve.explain}">This records the order in the books.</p>
+  <form th:action="@{/app/orders/{id}/approve(id=${order.id})}" method="post">
+    <input type="hidden" name="total" th:value="${@money.plain(totalMinor, tenant.scale)}">
+    <input type="hidden" name="confirm" value="yes">
+    <button type="submit" th:text="#{approve.button}">Yes, make it payable</button>
+  </form>
+  <p><a th:href="@{/app/orders/{id}/review(id=${order.id})}" th:text="#{approve.back}">No, change the total</a></p>
+</main>
+</body>
+</html>

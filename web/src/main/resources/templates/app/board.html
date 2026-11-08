@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.board})}">
+</head>
+<!--/* Every page under app/ puts the CSRF token on <body> as an hx-headers attribute (an attribute, not a script). */-->
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main>
+  <p class="strip" th:text="#{summary.strip(${@times.day(day)}, ${summary.orders}, ${summary.paid}, ${summary.flagged})}">Tue 03 Nov: 0 orders</p>
+  <p class="strip" th:if="${amounts != null}" th:text="#{summary.strip.money(${@money.format(amounts.outstandingMinor, tenant.scale, tenant.currency)}, ${@money.format(amounts.collectedMinor, tenant.scale, tenant.currency)})}">0 XAF</p>
+
+  <th:block th:replace="~{fragments/board :: paste}"></th:block>
+
+  <th:block th:replace="~{fragments/board :: chips}"></th:block>
+
+  <div class="columns">
+    <section th:each="entry : ${pages}" th:id="|col-${entry.key.path()}|" class="column" th:attr="aria-labelledby=|h-${entry.key.path()}|">
+      <h2 th:id="|h-${entry.key.path()}|" th:text="#{${'column.' + entry.key.name()}}">Column</h2>
+      <p class="hint" th:if="${entry.key.name() == 'FLAGGED'}" th:text="#{column.note.FLAGGED}">Partial until the suspicion rules.</p>
+      <p class="empty" th:if="${#lists.isEmpty(entry.value.cards)}" th:text="#{${'column.empty.' + entry.key.name()}}">Nothing here.</p>
+      <th:block th:each="card : ${entry.value.cards}">
+        <th:block th:replace="~{fragments/board :: card(${card})}"></th:block>
+      </th:block>
+      <p th:if="${entry.value.next != null}">
+        <a th:href="@{/app/columns/{c}(c=${entry.key.path()}, after=${entry.value.next.format()}, page=2)}" th:text="#{board.more}">Show more</a>
+      </p>
+    </section>
+  </div>
+
+  <p th:if="${counts['aside'] > 0}"><a th:href="@{/app/columns/aside}" th:text="#{board.aside(${counts['aside']})}">Set aside</a></p>
+
+  <footer class="foot">
+    <form th:if="${canDecide}" th:action="@{/app/rematch}" method="post">
+      <button type="submit" class="secondary" th:text="#{foot.rematch}">Look again for matches</button>
+    </form>
+    <a th:if="${canLedger}" th:href="@{/app/books}" th:text="${booksState == 'bad'} ? #{foot.books.bad} : #{foot.books}">Check the books</a>
+    <a th:if="${canExport}" th:href="@{/app/export}" th:text="#{foot.export}">Download CSV</a>
+    <a th:href="@{/app}" th:text="#{foot.refresh}">Refresh</a>
+  </footer>
+</main>
+</body>
+</html>

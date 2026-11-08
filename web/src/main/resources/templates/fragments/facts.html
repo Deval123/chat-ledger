@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<body>
+<!--/* The message as received: seller only, inside a closed <details>, phone numbers masked, never a link. */-->
+<details th:fragment="raw(text)" class="raw" th:if="${text != null}">
+  <summary th:text="#{raw.title}">Message as received (not checked)</summary>
+  <p class="rawtext" th:text="${text}">text</p>
+</details>
+<ul th:fragment="flags(flags)" class="reasons" th:if="${not #lists.isEmpty(flags)}">
+  <li th:each="flag : ${flags}" th:text="#{flag.line(${@display.text(flag.reason, 200)}, ${@times.format(flag.at, tenant.zone)})}">Flag</li>
+</ul>
+</body>
+</html>

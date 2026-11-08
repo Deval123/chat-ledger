@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class HtmxContractIT extends AbstractWebIT {
 
-    private static final Pattern HX_HEADERS = Pattern.compile("<body[^>]*hx-headers=\"\\{&quot;([^&]+)&quot;:&quot;([^&]+)&quot;\\}\"");
+    private static final Pattern HX_HEADERS = Pattern.compile("<body[^>]*hx-headers=\"\\{&quot;([^&]+)&quot;:&quot;([^&]+)&quot;(?:,&quot;Accept&quot;:&quot;text/html&quot;)?\\}\"");
 
     @Test
     void the_signed_in_page_carries_a_working_csrf_header_for_htmx() {
@@ -43,7 +43,7 @@ class HtmxContractIT extends AbstractWebIT {
         for (Browser.Response page : new Browser.Response[]{b.get("/app"), browser().get("/login")}) {
             assertThat(page.body()).contains("name=\"htmx-config\"").contains("&quot;allowEval&quot;:false".replace("&quot;", "\""))
                     .contains("\"allowScriptTags\":false").contains("\"includeIndicatorStyles\":false")
-                    .contains("\"selfRequestsOnly\":true");
+                    .contains("\"selfRequestsOnly\":true").contains("\"historyEnabled\":false");
         }
     }
 
@@ -52,6 +52,9 @@ class HtmxContractIT extends AbstractWebIT {
         Workspace w = newWorkspace();
         Browser b = signedIn(w.slug(), w.email(), w.password());
         for (String html : new String[]{b.get("/app").body(), browser().get("/login").body()}) {
+            // The one script is the vendored htmx, from this origin, by its hashed name; anything else would be inline code.
+            assertThat(html).containsPattern("<script src=\"/assets/htmx-2\\.0\\.11\\.min-[0-9a-f]{32}\\.js\" defer></script>");
+            html = html.replaceAll("<script src=\"/assets/htmx-2\\.0\\.11\\.min-[0-9a-f]{32}\\.js\" defer></script>", "");
             assertThat(html).doesNotContain("<!--").doesNotContainIgnoringCase("<script").doesNotContainIgnoringCase("<style")
                     .doesNotContainPattern("(?i)\\sstyle\\s*=").doesNotContainPattern("(?i)\\son[a-z]+\\s*=");
         }

@@ -68,16 +68,18 @@ final class IsolationRegistry {
             "provision_user");            // operator only, via the provisioner role (V013)
 
     /** Every repository class and the test that proves it cannot read another tenant. */
-    static final Map<String, String> REPOSITORY_CONTRACT_TESTS = Map.of(
-            "JdbcLedgerRepository", "dev.chatledger.ledger.LedgerPostgresIT#cross_tenant_reads_return_nothing",
-            "AppUserRepository", "dev.chatledger.security.RepositoryIsolationIT#a_user_of_another_tenant_cannot_be_read",
-            "AuditLogRepository", "dev.chatledger.security.RepositoryIsolationIT#the_audit_trail_of_another_tenant_cannot_be_read",
-            "OrderRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_orders_cannot_be_read_or_written",
-            "CatalogRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_catalog_cannot_be_read",
-            "CustomerRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_customers_cannot_be_read",
-            "TenantRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_row_cannot_be_read",
-            "PaymentRepository", "dev.chatledger.payments.PaymentRepositoryIsolationIT#another_tenants_payments_cannot_be_read_or_written",
-            "MatchRepository", "dev.chatledger.matching.MatchRepositoryIsolationIT#another_tenants_matches_cannot_be_read_or_written");
+    static final Map<String, String> REPOSITORY_CONTRACT_TESTS = Map.ofEntries(
+            Map.entry("JdbcLedgerRepository", "dev.chatledger.ledger.LedgerPostgresIT#cross_tenant_reads_return_nothing"),
+            Map.entry("AppUserRepository", "dev.chatledger.security.RepositoryIsolationIT#a_user_of_another_tenant_cannot_be_read"),
+            Map.entry("AuditLogRepository", "dev.chatledger.security.RepositoryIsolationIT#the_audit_trail_of_another_tenant_cannot_be_read"),
+            Map.entry("OrderRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_orders_cannot_be_read_or_written"),
+            Map.entry("CatalogRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_catalog_cannot_be_read"),
+            Map.entry("CustomerRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_customers_cannot_be_read"),
+            Map.entry("TenantRepository", "dev.chatledger.orders.OrderRepositoriesIsolationIT#another_tenants_row_cannot_be_read"),
+            Map.entry("PaymentRepository", "dev.chatledger.payments.PaymentRepositoryIsolationIT#another_tenants_payments_cannot_be_read_or_written"),
+            Map.entry("MatchRepository", "dev.chatledger.matching.MatchRepositoryIsolationIT#another_tenants_matches_cannot_be_read_or_written"),
+            Map.entry("BoardRepository", "dev.chatledger.matching.BoardRepositoryIsolationIT#another_tenants_board_cannot_be_read"),
+            Map.entry("ExportRepository", "dev.chatledger.matching.BoardRepositoryIsolationIT#another_tenants_rows_cannot_be_exported"));
 
     static final Map<String, TableSpec> TABLES = Map.ofEntries(
             Map.entry("tenant", new TableSpec(Kind.DIRECT, null, true,

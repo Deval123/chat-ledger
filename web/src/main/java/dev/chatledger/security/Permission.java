@@ -18,5 +18,7 @@ public enum Permission {
     VIEW_AUDIT_LOG,
     EXPORT_DATA,
     DELETE_TENANT_DATA,
-    MANAGE_USERS
+    MANAGE_USERS,
+    /** State the total of an order the parser could not price. Money entering the books: seller only. */
+    APPROVE_ORDER_TOTAL
 }
