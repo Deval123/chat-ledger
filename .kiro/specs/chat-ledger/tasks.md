@@ -138,7 +138,7 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
     maximum score is 75 and nothing can reach the auto-match threshold of 85. Verify each with a test.
   - [x] 6.1 Scoring with reasons; thresholds as configuration. (Stop 2a: `MatchScorer`, `NameSimilarity`, `MatchPlanner`, `MatchConfig` with startup
     bounds, V016, `MatchRepository`, `ChartOfAccounts`, `appendWithin`. Design: `task-6-design-stop.md`.)
-  - [ ] 6.2 Auto, suggested, partial, over-payment flows with ledger postings.
+  - [ ] 6.2 Auto, suggested, partial, over-payment flows with ledger postings. (Stop 2b built: `MatchingService`, `Postings`, `MatchTrigger`, V017, the `ORDER_ACCEPTED` posting at ingestion. Not ticked until the owner agrees.)
   - [ ] 6.3 Overrides: confirm, reject, manual match, unmatch with audit log.
   - [ ] 6.4 Property-based tests: idempotency, never over-assign amounts.
   - _Requirements: 3, 4_

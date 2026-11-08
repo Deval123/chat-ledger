@@ -1075,3 +1075,76 @@ thresholds are configuration; the chart of accounts is created by the applicatio
 
 Nine of the twenty first-run survivors were not missing tests but guards that said the same thing twice (a bound implied by another, a filter that changed no result, a predicate implied by a CHECK or a foreign key). Four were deleted,
 which made the code smaller and the remaining checks easier to trust; five are kept and named, because they state what a candidate is and keep every statement naming its tenant, at the price of mutants that no test can kill.
+
+## Task 6, stop 2b - the flows, the postings, the engine and the hook (6.2)
+Design and the owner's answers: `.kiro/specs/chat-ledger/task-6-design-stop.md`. This stop builds `MatchingService.apply` (one transaction), the flows with their ledger postings, the engine runs, the post-commit hook
+in both ingestion services, and the `ORDER_ACCEPTED` posting at ingestion, with V017. `tasks.md` 6.2 carries a note and is **not ticked** (the owner decides). Nothing was committed and no branch was made.
+### What was built
+- `MatchingService` (`apply`, `onPaymentRecorded`, `onOrderRecorded`, the `MatchTrigger` methods), `Postings`, `MatchEvents` (logger `match.events`, ids and codes only), `MatchTrigger` (`NONE`), the within-connection
+  statements of `MatchRepository`, V017 (`idx_audit_log_payment_ingested`), the `ORDER_ACCEPTED` posting in `OrderRepository.insertWithin`, and a `MatchTrigger` parameter on both ingestion services.
+- **Order of one apply:** lock payment, lock order, re-read and re-score, compute `min(payment, balance)` and the excess, ensure the accounts and the order's posting, post `PAYMENT_MATCHED`, write the match, set
+  the order status, set the payment status, retire the other suggestions, append the audit row. A test can fail the transaction after each of the nine steps (`StepHook`).
+### The caller-visible outcome when the `ORDER_ACCEPTED` posting fails inside ingestion
+`OrderIngestionService.ingest` throws `IllegalStateException("Could not post an order to the ledger")` (a bad chart of accounts: `"The chart of accounts is not usable for this tenant"`). The ingestion transaction
+rolls back whole: the order, its lines, the customer link and the audit row are not stored, and no event or matcher call is made. A retry with the same external id starts from nothing and succeeds; the unique index
+`uq_ledger_txn_posting` (one posting per business event) makes a double posting impossible. Proof: `OrderPostingIT` (`if_the_posting_fails_...`, `sixteen_threads_retrying_after_a_failure_post_the_order_once`,
+`sixteen_simultaneous_submissions_of_one_message_make_one_order_and_one_posting`, `an_unusable_chart_of_accounts_...`).
+### Where the Recorder comes from, and how a helper's payment becomes suggestion-only
+It is read from the audit trail, never from a caller: the append-only `PAYMENT_INGESTED` entry (subject = the payment id) joined to `app_user.role`. No actor is `MACHINE`; the exact word `SELLER` is `SELLER`; any
+other role, or no entry, is `HELPER`. The earliest entry of the tenant wins (`ORDER BY a.at, a.id`), so a later forged entry cannot raise trust. `HELPER` fails one of the seven floors of `MatchScorer`, so the plan for a
+helper's payment is "suggest" at best; and `apply` in `AUTO` mode re-scores under the lock and returns `DEGRADED_TO_SUGGESTION` even when called directly (`MatchingFlowsIT`).
+### The 16-thread tests (real PostgreSQL, the application role)
+`MatchingConcurrencyIT`: sixteen threads matching one payment to sixteen orders make one match and one posting; sixteen payments into one order never apply more than its total; sixteen large payments apply the total once
+and record only the excess of the payment that crosses it; the engine run twice for one payment at once makes one match; sixteen payments for sixteen orders each find their own; random pairs from many threads in every order never
+deadlock and keep every invariant. `OrderPostingIT`: sixteen simultaneous submissions of one message; sixteen threads retrying after a failure. The chart-of-accounts test of 2a (sixteen callers) still runs.
+### An injected failure after each step leaves nothing
+`MatchingRollbackIT` fails the transaction after each of the nine steps, in the seller's path and in the automatic path. After every one, the ledger, the accounts, the transactions, the matches (with their decided times),
+both statuses and the audit rows are exactly as before (one comparable snapshot), and the same call without the failure then posts once. It also covers a posting the database refuses, an audit row it refuses, the commit-time
+triggers refusing inconsistent books, a refused chart of accounts, and the engine swallowing a failure.
+### Defects and gaps found by my own tests and mutation checks
+- **A scanner rule I broke.** To share the recorder subselect I put it in a Java constant; `SourceRulesTest` (no SQL built from anything but literals) failed in the unit phase. I kept the rule and went back to two literal
+  copies, and added a test that reads the recorder through both the list and the lock and compares (a mutant on the copy in the lock was first missed, then caught by a case with a later forged entry).
+- **Guards that said the same thing twice** (deleted, as before): the not-found check on the payment and the order (an order is only looked for when the payment exists); the two null checks on amount and total (the CHECKs
+  `chk_payment_by_status` and `chk_orders_total_by_status` already say so); `auto ? null : actor` (an automatic match has no actor, checked at the top); the service's own null check of the tenant (`TenantScope` refuses it by name);
+  and `reverses_txn_id IS NULL` in the "order is posted" lookup (reversals have kind `REVERSAL`).
+- **Tests that did not test what they said.** The order-open test used orders with no total, so the status check was never alone; now orders in `PAID`, `CANCELLED` and `NEEDS_REVIEW` with a total. The "another tenant's audit
+  entry" test ran as the application role, where row-level security hides the row anyway; now the recorder is also checked as the schema owner, with a foreign actor, another action, a tie at the same instant and a later forged entry.
+- **The 2a claim "equivalent" was wrong for three predicates.** The tenant on the applied-amount subselect and on the two customer joins looked redundant because of the composite foreign keys. With the keys and triggers off
+  (superuser, `session_replication_role = replica`) a match or a customer of another tenant can be pointed at; a new test shows the queries still do not follow it. They are no longer called equivalent.
+- **The index tests were weak.** A plan on a nearly empty table named the index even when it was on the wrong column or not partial. The definitions are now pinned (`pg_indexes`), plus the plan check that each exists and serves the query shape.
+- **Not covered at all:** a confirmation whose suggestion was decided meanwhile (now: the write changes 0 rows, the transaction stops and leaves nothing), an automatic decision overturned by the locked data (now stored as a suggestion,
+  with the run reporting it), and the log lines of those branches.
+### Mutation checks (each guard broken on purpose; file restored from a copy, compared, touched)
+First run: **171 mutants, 126 caught, 45 survived.** Of the 45: **4 equivalent** (kept, named below), **6 redundant guards deleted** (above), **35 caught after new or stronger tests**. Rerun after the fixes: 41 mutants
+(every survivor and every mutant whose source had changed), all caught except the equivalents; after going back to two literal copies of the recorder query, the 20 recorder mutants were run again on both copies (19 caught, 1 more
+case added, caught). Final state: no surviving mutant except these four.
+| Group | Mutants | Result |
+|---|---|---|
+| `MatchingService` (actor and mode check, not-found, payment free, order open, currency, balance, auto degrade, min and excess, order posted, suggestion supersede and confirm, order status, payment status, supersedes, audit action and actor, state label, decided-by and at, engine branches, trigger catches, null checks, `expectOne`, nine hooks, three events) | 61 | all caught; 1 equivalent (below) |
+| `Postings` (swapped sides, wrong accounts, clearing amount, excess entry condition and account, kinds, ref ids) | 9 | all caught |
+| `OrderRepository` posting (condition, message, catch, amount, chart) | 6 | all caught |
+| Ingestion hooks (order and payment conditions, every catch) | 8 | all caught |
+| `MatchRepository`: tenant on 16 statements, 3 joins and subselect; both `FOR UPDATE` clauses; recorder pieces on both copies (tenant, user tenant, action, subject, order, tie-break, default, machine, null test, limit); suggested and decided filters; applied states; posting lookup; shared reference | 58 | all caught; 3 equivalent (below) |
+| The **three new V016 indexes and the V017 index**: dropped (4), wrong column (3), not on `upper(...)` (1), not partial (1) | 9 | all caught (dropped: by the plan test; the rest: by the pinned definitions) |
+| **The redacting `toString` methods skipped in 2a**: `MatchRepository.Stored`, `PaymentCandidate`, `LockedPayment`, `LockedOrder`, `NewActive`, `OrderFacts`, `PaymentFacts`, `PaymentRepository.NewPayment`, `PaymentRepository.Stored`, `ParsedPayment`, each made to print a name, reference, hash, transaction id, raw text or the stored reasons | 20 | all caught in the unit phase; two (the stored reasons of a match) needed `AMOUNT_EXACT` added to what the redaction test forbids |
+The four equivalents, said plainly: `rows < 1` instead of `rows != 1` in `expectOne` (every write there is keyed by a primary key, so it cannot change two rows); counting `SUGGESTED` rows in the applied amount (two statements: a
+CHECK gives a suggestion no amount); and `state IN ('REJECTED','SUGGESTED')` in the "was rejected" lookup (a CHECK gives a suggestion no decider). Not mutated: the choice of lock order applied consistently in both statements
+(an equivalent change), and the log wording.
+### What the unit phase proves (verified with Docker stopped: 433 tests, all modules, was 430)
+31 + 156 + 31 + 62 + 3 + 150. Adds `MatchingRedactionTest` (every record that carries a field of a message prints only its identity and status). Not proved by the unit phase: everything that needs PostgreSQL, which is the **406**
+integration tests (was 331): the flows, the rollbacks, the concurrency, the posting at ingestion, the trigger, the recorder and the tenant scoping of every new statement.
+### Defenses weakened or traded off (design register items 60 to 66)
+The hook is best effort (a missed match waits for the next event or the stop 3 `rematch`); trust comes from the audit trail, which the application role can append to (the earliest entry wins); a posting failure fails the order's
+ingestion; a stale suggestion can be stored for a payment matched meanwhile (a confirmation refuses it); the tie margin is read outside the lock; the lock order is one convention in one place; the index tests use query shapes.
+### Not verified
+- Stop 3 is not built: no confirm, reject, manual match, unmatch or `rematch` entry point exists, so nothing yet calls `apply` in `CONFIRM` mode except tests, and no screen shows a suggestion.
+- A real race between the engine's read and `apply` was simulated (a repository that describes the order wrongly; a second connection that retires a suggestion from inside a hook), not produced by timing.
+- Sixteen threads is a sample, not a proof of freedom from deadlock; the random-pairs test passed every run but cannot show absence.
+- The index tests check definitions and a plan on an empty table; they do not show that the queries are fast at scale.
+- `ORDER_ACCEPTED` for an order that leaves `NEEDS_REVIEW` is task 8; until then such an order is posted by the matcher before its first match, which no flow reaches yet.
+- PostgreSQL 16.4 only. No new dependency, so the dependency scan was not re-run.
+- Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.
+### One honest remark
+The mutation run found fewer gaps in the code than in the tests: of 45 survivors, six were guards to delete and four equivalents, but 35 were behaviours (an overturned automatic decision, a suggestion decided mid-confirmation, an
+audit lookup under a tenant that the database would have hidden anyway) that my first tests described but did not exercise. Several were hidden by row-level security or a foreign key that the test, by running as the application role
+or with consistent data, never took away.

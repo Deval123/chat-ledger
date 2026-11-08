@@ -1,0 +1,315 @@
+package dev.chatledger.matching;
+
+import dev.chatledger.ledger.LedgerException;
+import dev.chatledger.ledger.LedgerTransaction;
+import dev.chatledger.ledger.jdbc.JdbcLedgerRepository;
+import dev.chatledger.security.AuditLogRepository;
+import dev.chatledger.tenancy.TenantScope;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+
+/**
+ * Matches payments to orders. Two parts.
+ *
+ * <p><b>The engine</b> ({@link #onPaymentRecorded}, {@link #onOrderRecorded}, and the {@link MatchTrigger} calls the ingestion services
+ * make after they commit) scores the open candidates with the pure scorer, turns the scores into a plan, and either applies an automatic
+ * match or stores suggestions. A suggestion changes nothing else: no posting, no status.
+ *
+ * <p><b>{@link #apply}</b> is the only place that creates an active match, and it is <b>one database transaction</b>:
+ * <ol>
+ *   <li>lock the payment, then the order (always in that order, so two operations cannot deadlock);</li>
+ *   <li>re-read everything under the lock and refuse if the payment is no longer free, the order no longer open, or nothing is left to pay;
+ *       an automatic match is re-scored on the locked data and becomes a suggestion if it no longer qualifies;</li>
+ *   <li>compute what is applied ({@code min(payment, balance)}) and the excess from the locked balance;</li>
+ *   <li>make sure the four accounts and the order's {@code ORDER_ACCEPTED} posting exist;</li>
+ *   <li>post the payment (debit clearing; credit receivable; credit customer credit for an excess) through
+ *       {@link JdbcLedgerRepository#appendWithin}, write the match, move the order and payment statuses, retire the other open
+ *       suggestions, append the audit row;</li>
+ *   <li>commit: the deferred database triggers re-check the sums, the statuses and the posting.</li>
+ * </ol>
+ * Any failure at any step, including a refusal by those triggers, rolls everything back: no match, no posting, no status change, no
+ * audit row. The payment stays free and the order open, and the unique indexes make a retry safe.
+ *
+ * <p>Who recorded a payment (the {@link Recorder}) is read from the append-only audit trail of its ingestion, never from a caller.
+ */
+@Service
+public class MatchingService implements MatchTrigger {
+
+    /** How a match comes to be: by the engine, or by the seller's decision. */
+    public enum Mode { AUTO, CONFIRM }
+
+    public enum Outcome { APPLIED, DEGRADED_TO_SUGGESTION, NOT_APPLICABLE }
+
+    public enum Reason { NOT_FOUND, PAYMENT_NOT_FREE, ORDER_NOT_OPEN, CURRENCY_MISMATCH, NOTHING_LEFT_TO_PAY, AUTO_NOT_ELIGIBLE }
+
+    /** The steps of {@link #apply}, in order. A test can fail the transaction after any of them. */
+    public enum ApplyStep { LOCKED, ACCOUNTS, ORDER_POSTED, MATCH_POSTED, MATCH_WRITTEN, ORDER_STATUS, PAYMENT_STATUS, SUPERSEDED, AUDIT }
+
+    /** Called after each step with the transaction's connection. Production uses {@link #NONE}; a test throws from it to prove a rollback. */
+    @FunctionalInterface
+    public interface StepHook {
+        StepHook NONE = (step, connection) -> {
+        };
+
+        void after(ApplyStep step, Connection connection) throws SQLException;
+    }
+
+    /** What {@link #apply} did. Ids, amounts and codes only. */
+    public record ApplyResult(Outcome outcome, UUID matchId, long appliedMinor, long excessMinor, String orderStatus, Reason reason) {
+        static ApplyResult notApplicable(Reason reason) {
+            return new ApplyResult(Outcome.NOT_APPLICABLE, null, 0, 0, null, reason);
+        }
+    }
+
+    public enum RunKind { APPLIED, SUGGESTED, NOTHING, SKIPPED }
+
+    /** What an engine run did. */
+    public record Run(RunKind kind, UUID matchId, int suggestions) {
+    }
+
+    private static final Set<String> FREE_PAYMENT = Set.of("RECEIVED", "UNVERIFIED");
+    private static final Set<String> OPEN_ORDER = Set.of("PENDING_PAYMENT", "PARTIALLY_PAID");
+
+    private final TenantScope scope;
+    private final JdbcLedgerRepository ledger;
+    private final MatchRepository matches;
+    private final MatchConfig config;
+    private final MatchEvents events;
+    private final Clock clock;
+    private final StepHook hook;
+
+    @Autowired
+    public MatchingService(DataSource dataSource, MatchRepository matches, MatchConfig config, MatchEvents events, Clock clock) {
+        this(dataSource, matches, config, events, clock, StepHook.NONE);
+    }
+
+    MatchingService(DataSource dataSource, MatchRepository matches, MatchConfig config, MatchEvents events, Clock clock, StepHook hook) {
+        this.scope = new TenantScope(dataSource);
+        this.ledger = new JdbcLedgerRepository(scope);
+        this.matches = matches;
+        this.config = config;
+        this.events = events;
+        this.clock = clock;
+        this.hook = hook;
+    }
+
+    // ── The engine ─────────────────────────────────────────────────────────
+
+    @Override
+    public void paymentStored(UUID tenantId, UUID paymentId) {
+        try {
+            onPaymentRecorded(tenantId, paymentId);
+        } catch (RuntimeException e) {
+            events.failed(tenantId, "payment", paymentId);   // the payment stays stored and unmatched; nothing from the failure is logged
+        }
+    }
+
+    @Override
+    public void orderStored(UUID tenantId, UUID orderId) {
+        try {
+            onOrderRecorded(tenantId, orderId);
+        } catch (RuntimeException e) {
+            events.failed(tenantId, "order", orderId);
+        }
+    }
+
+    /** Scores the open orders against a new payment, then applies an automatic match or stores suggestions. */
+    public Run onPaymentRecorded(UUID tenantId, UUID paymentId) {
+        Optional<MatchRepository.PaymentCandidate> candidate = matches.paymentCandidate(tenantId, paymentId);
+        if (candidate.isEmpty()) {
+            return new Run(RunKind.SKIPPED, null, 0);
+        }
+        PaymentFacts payment = candidate.get().facts();
+        Recorder recorder = candidate.get().recorder();
+        List<ScoredPair> scored = matches.openOrders(tenantId, payment.currency(), config.candidateCap()).stream()
+                .map(order -> MatchScorer.score(order, payment, recorder, config)).toList();
+        MatchPlanner.Plan plan = MatchPlanner.plan(scored, config);
+        switch (plan.kind()) {
+            case AUTO -> {
+                ApplyResult result = apply(tenantId, plan.auto().orderId(), paymentId, Mode.AUTO, null);
+                return switch (result.outcome()) {
+                    case APPLIED -> new Run(RunKind.APPLIED, result.matchId(), 0);
+                    case DEGRADED_TO_SUGGESTION -> new Run(RunKind.SUGGESTED, null, storeSuggestions(tenantId, List.of(plan.auto())));
+                    case NOT_APPLICABLE -> new Run(RunKind.SKIPPED, null, 0);
+                };
+            }
+            case SUGGEST -> {
+                return new Run(RunKind.SUGGESTED, null, storeSuggestions(tenantId, plan.suggestions()));
+            }
+            default -> {
+                return new Run(RunKind.NOTHING, null, 0);
+            }
+        }
+    }
+
+    /**
+     * Scores the open payments against a new order. If the best payment would be matched automatically, the decision is taken from that
+     * payment's side too (the payment may fit another order better), so an order can never take a payment that is clearer elsewhere.
+     */
+    public Run onOrderRecorded(UUID tenantId, UUID orderId) {
+        Optional<OrderFacts> found = matches.openOrder(tenantId, orderId);
+        if (found.isEmpty()) {
+            return new Run(RunKind.SKIPPED, null, 0);
+        }
+        OrderFacts order = found.get();
+        List<ScoredPair> scored = matches.openPaymentCandidates(tenantId, order.currency(), config.candidateCap()).stream()
+                .map(candidate -> MatchScorer.score(order, candidate.facts(), candidate.recorder(), config)).toList();
+        MatchPlanner.Plan plan = MatchPlanner.plan(scored, config);
+        return switch (plan.kind()) {
+            case AUTO -> onPaymentRecorded(tenantId, plan.auto().paymentId());
+            case SUGGEST -> new Run(RunKind.SUGGESTED, null, storeSuggestions(tenantId, plan.suggestions()));
+            case NONE -> new Run(RunKind.NOTHING, null, 0);
+        };
+    }
+
+    private int storeSuggestions(UUID tenantId, List<ScoredPair> pairs) {
+        int stored = 0;
+        for (ScoredPair pair : pairs) {
+            if (matches.wasRejected(tenantId, pair.orderId(), pair.paymentId())) {
+                continue;   // the seller said no to this pair; it is not proposed again
+            }
+            if (matches.insertSuggestion(tenantId, pair.orderId(), pair.paymentId(), pair.score(), pair.reasonsJson()).isPresent()) {
+                stored++;
+            }
+        }
+        if (stored > 0) {
+            events.suggested(tenantId, stored);
+        }
+        return stored;
+    }
+
+    // ── The atomic step ────────────────────────────────────────────────────
+
+    /**
+     * Applies one match in one transaction (see the class comment).
+     *
+     * @param mode  {@link Mode#AUTO} from the engine, which re-checks every floor on the locked data; {@link Mode#CONFIRM} for the seller's decision.
+     * @param actor who decided, required for {@link Mode#CONFIRM} and null for {@link Mode#AUTO}.
+     */
+    public ApplyResult apply(UUID tenantId, UUID orderId, UUID paymentId, Mode mode, UUID actor) {
+        // (a missing tenant is refused by name by TenantScope, so it is not checked a second time here)
+        Objects.requireNonNull(orderId, "orderId");
+        Objects.requireNonNull(paymentId, "paymentId");
+        Objects.requireNonNull(mode, "mode");
+        if ((mode == Mode.CONFIRM) != (actor != null)) {
+            throw new IllegalArgumentException("a confirmation names who decided; an automatic match names nobody");
+        }
+        ApplyResult result;
+        try {
+            result = scope.call(tenantId, c -> applyWithin(c, tenantId, orderId, paymentId, mode, actor));
+        } catch (SQLException | LedgerException e) {
+            throw new IllegalStateException("Could not apply a match", e);
+        }
+        switch (result.outcome()) {
+            case APPLIED -> events.applied(tenantId, result.matchId(), mode, result.appliedMinor(), result.excessMinor(), result.orderStatus());
+            case DEGRADED_TO_SUGGESTION -> events.degraded(tenantId, orderId, paymentId);
+            case NOT_APPLICABLE -> events.notApplicable(tenantId, orderId, paymentId, result.reason());
+        }
+        return result;
+    }
+
+    private ApplyResult applyWithin(Connection c, UUID tenantId, UUID orderId, UUID paymentId, Mode mode, UUID actor) throws SQLException {
+        // 1. Lock the payment, then the order. Never the other way round.
+        Optional<MatchRepository.LockedPayment> lockedPayment = matches.lockPayment(c, tenantId, paymentId);
+        Optional<MatchRepository.LockedOrder> lockedOrder = lockedPayment.isPresent() ? matches.lockOrder(c, tenantId, orderId) : Optional.empty();
+        if (lockedOrder.isEmpty()) {   // an order is only looked for when the payment exists, so this covers a missing payment too
+            return ApplyResult.notApplicable(Reason.NOT_FOUND);
+        }
+        hook.after(ApplyStep.LOCKED, c);
+
+        // 2. Re-read everything under the lock. (A payment that is free, and an order that is open, always have an amount and a total:
+        //    the CHECK constraints chk_payment_by_status and chk_orders_total_by_status say so, so they are not tested again here.)
+        MatchRepository.LockedPayment pay = lockedPayment.orElseThrow();
+        MatchRepository.LockedOrder ord = lockedOrder.get();
+        if (!FREE_PAYMENT.contains(pay.status())) {
+            return ApplyResult.notApplicable(Reason.PAYMENT_NOT_FREE);
+        }
+        if (!OPEN_ORDER.contains(ord.status())) {
+            return ApplyResult.notApplicable(Reason.ORDER_NOT_OPEN);
+        }
+        if (!pay.currency().equals(ord.currency())) {
+            return ApplyResult.notApplicable(Reason.CURRENCY_MISMATCH);
+        }
+        long total = ord.totalMinor();
+        long alreadyApplied = matches.appliedWithin(c, tenantId, orderId);
+        long balance = total - alreadyApplied;
+        if (balance <= 0) {
+            return ApplyResult.notApplicable(Reason.NOTHING_LEFT_TO_PAY);
+        }
+        OrderFacts orderFacts = new OrderFacts(ord.id(), total, alreadyApplied, ord.currency(), ord.createdAt(), ord.orderRef(), ord.customerName(),
+                ord.customerPhoneHash(), ord.customerLast4(), matches.referenceSharedWithin(c, tenantId, ord.orderRef()));
+        PaymentFacts paymentFacts = new PaymentFacts(pay.id(), pay.amountMinor(), pay.currency(), pay.hasTransactionId(), pay.reference(),
+                pay.senderName(), pay.senderPhoneHash(), pay.senderLast4(), pay.paidAt());
+        ScoredPair scored = MatchScorer.score(orderFacts, paymentFacts, pay.recorder(), config);
+        if (mode == Mode.AUTO && !scored.autoEligible()) {
+            return new ApplyResult(Outcome.DEGRADED_TO_SUGGESTION, null, 0, 0, null, Reason.AUTO_NOT_ELIGIBLE);
+        }
+
+        // 3. What is applied and what is over.
+        long applied = Math.min(pay.amountMinor(), balance);
+        long excess = pay.amountMinor() - applied;
+        Instant now = clock.instant();
+
+        // 4. Accounts and the order's own posting.
+        ChartOfAccounts.Accounts accounts = ChartOfAccounts.ensure(c, tenantId);
+        hook.after(ApplyStep.ACCOUNTS, c);
+        if (!matches.orderPostedWithin(c, tenantId, orderId)) {
+            ledger.appendWithin(c, Postings.orderAccepted(tenantId, orderId, total, accounts, now));
+        }
+        hook.after(ApplyStep.ORDER_POSTED, c);
+
+        // 5. The posting, the match, the statuses, the other suggestions, the audit row.
+        Optional<UUID> suggestion = matches.suggestionWithin(c, tenantId, orderId, paymentId);
+        boolean confirmSuggestion = mode == Mode.CONFIRM && suggestion.isPresent();
+        if (suggestion.isPresent() && !confirmSuggestion) {
+            expectOne(matches.supersedeWithin(c, tenantId, suggestion.get(), now));   // an automatic match replaces its own earlier suggestion
+        }
+        UUID matchId = confirmSuggestion ? suggestion.get() : UUID.randomUUID();
+        LedgerTransaction posting = Postings.paymentMatched(tenantId, matchId, applied, excess, accounts, now);
+        ledger.appendWithin(c, posting);
+        hook.after(ApplyStep.MATCH_POSTED, c);
+
+        if (confirmSuggestion) {
+            expectOne(matches.confirmSuggestionWithin(c, tenantId, matchId, actor, now, applied, excess, posting.id()));
+        } else {
+            boolean auto = mode == Mode.AUTO;
+            expectOne(matches.insertActiveWithin(c, tenantId, new MatchRepository.NewActive(matchId, orderId, paymentId, auto ? "AUTO" : "CONFIRMED",
+                    applied, excess, scored.score(), scored.reasonsJson(), posting.id(), actor, auto ? null : now)));   // actor is null for AUTO (checked at the top)
+        }
+        hook.after(ApplyStep.MATCH_WRITTEN, c);
+
+        String orderStatus = alreadyApplied + applied >= total ? "PAID" : "PARTIALLY_PAID";
+        expectOne(matches.setOrderStatusWithin(c, tenantId, orderId, orderStatus));
+        hook.after(ApplyStep.ORDER_STATUS, c);
+        expectOne(matches.setPaymentStatusWithin(c, tenantId, paymentId, "MATCHED"));
+        hook.after(ApplyStep.PAYMENT_STATUS, c);
+
+        matches.supersedeForPaymentWithin(c, tenantId, paymentId, matchId, now);
+        if ("PAID".equals(orderStatus)) {
+            matches.supersedeForOrderWithin(c, tenantId, orderId, matchId, now);
+        }
+        hook.after(ApplyStep.SUPERSEDED, c);
+
+        AuditLogRepository.appendWithin(c, tenantId, actor, mode == Mode.AUTO ? "MATCH_AUTO" : "MATCH_CONFIRMED", matchId.toString());
+        hook.after(ApplyStep.AUDIT, c);
+        return new ApplyResult(Outcome.APPLIED, matchId, applied, excess, orderStatus, null);
+    }
+
+    /** A write that changed no row, or several, means the locked state was not what we believed: stop and roll back. */
+    private static void expectOne(int rows) {
+        if (rows != 1) {
+            throw new IllegalStateException("a write changed " + rows + " rows instead of one");
+        }
+    }
+}

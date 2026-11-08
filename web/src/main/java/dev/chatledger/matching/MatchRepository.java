@@ -4,9 +4,11 @@ import dev.chatledger.tenancy.TenantScope;
 import org.springframework.stereotype.Repository;
 
 import javax.sql.DataSource;
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -179,10 +181,20 @@ public class MatchRepository {
 
     /**
      * The tenant's open orders in {@code currency}, most recent first, at most {@code limit}: status {@code PENDING_PAYMENT} or
-     * {@code PARTIALLY_PAID} (which always have a total), something left to pay. Parsed fields only. {@code referenceShared} is true when another open
-     * order has the same reference key.
+     * {@code PARTIALLY_PAID} (which always have a total), something left to pay. Parsed fields only. {@code referenceShared} is true when
+     * another open order has the same reference key.
      */
     public List<OrderFacts> openOrders(UUID tenantId, String currency, int limit) {
+        return orders(tenantId, currency, null, limit);
+    }
+
+    /** One open order of the tenant (the same rules as {@link #openOrders}), or empty if it is not open. */
+    public Optional<OrderFacts> openOrder(UUID tenantId, UUID orderId) {
+        List<OrderFacts> rows = orders(tenantId, null, orderId, 1);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
+    private List<OrderFacts> orders(UUID tenantId, String currency, UUID orderId, int limit) {
         try {
             return scope.call(tenantId, c -> {
                 try (PreparedStatement ps = c.prepareStatement(
@@ -192,12 +204,16 @@ public class MatchRepository {
                                 + "AND m.state IN ('AUTO', 'CONFIRMED')), 0) AS applied, "
                                 + "CASE WHEN o.order_ref IS NULL THEN 1 ELSE COUNT(*) OVER (PARTITION BY upper(o.order_ref)) END AS ref_n "
                                 + "FROM orders o WHERE o.tenant_id = ? AND o.status IN ('PENDING_PAYMENT', 'PARTIALLY_PAID') "
-                                + "AND o.currency = ?) x "
+                                + "AND (CAST(? AS CHAR(3)) IS NULL OR o.currency = ?)) x "
                                 + "LEFT JOIN customer cu ON cu.id = x.customer_id AND cu.tenant_id = x.tenant_id "
-                                + "WHERE x.applied < x.total_minor ORDER BY x.created_at DESC, x.id LIMIT ?")) {
+                                + "WHERE x.applied < x.total_minor AND (CAST(? AS UUID) IS NULL OR x.id = ?) "
+                                + "ORDER BY x.created_at DESC, x.id LIMIT ?")) {
                     ps.setObject(1, tenantId);
                     ps.setString(2, currency);
-                    ps.setInt(3, limit);
+                    ps.setString(3, currency);
+                    setUuid(ps, 4, orderId);
+                    setUuid(ps, 5, orderId);
+                    ps.setInt(6, limit);
                     try (ResultSet rs = ps.executeQuery()) {
                         List<OrderFacts> out = new ArrayList<>();
                         while (rs.next()) {
@@ -216,26 +232,60 @@ public class MatchRepository {
         }
     }
 
+    /** A free payment with who recorded it, as scoring needs them. */
+    public record PaymentCandidate(PaymentFacts facts, Recorder recorder) {
+        @Override
+        public String toString() {
+            return "PaymentCandidate[" + facts.id() + ", " + recorder + "]";
+        }
+    }
+
     /** The tenant's payments free to be matched ({@code RECEIVED} or {@code UNVERIFIED}) in {@code currency}, most recent first, at most {@code limit}. */
     public List<PaymentFacts> openPayments(UUID tenantId, String currency, int limit) {
+        return openPaymentCandidates(tenantId, currency, limit).stream().map(PaymentCandidate::facts).toList();
+    }
+
+    /**
+     * The same, with the {@link Recorder} of each: taken from the append-only audit trail of the payment's ingestion, never from a caller.
+     * If there were ever two such entries the earliest counts, so a later entry cannot raise the trust of a payment.
+     */
+    public List<PaymentCandidate> openPaymentCandidates(UUID tenantId, String currency, int limit) {
+        return payments(tenantId, currency, null, limit);
+    }
+
+    /** One free payment of the tenant with its recorder, or empty if it is not free to be matched. */
+    public Optional<PaymentCandidate> paymentCandidate(UUID tenantId, UUID paymentId) {
+        List<PaymentCandidate> rows = payments(tenantId, null, paymentId, 1);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
+    private List<PaymentCandidate> payments(UUID tenantId, String currency, UUID paymentId, int limit) {
         try {
             return scope.call(tenantId, c -> {
                 try (PreparedStatement ps = c.prepareStatement(
                         "SELECT p.id, p.amount_minor, p.currency, p.tx_id IS NOT NULL AS has_tx, p.reference, p.sender_name, p.sender_phone_hash, "
-                                + "p.sender_last4, p.paid_at FROM payment p WHERE p.tenant_id = ? AND p.status IN ('RECEIVED', 'UNVERIFIED') "
-                                + "AND p.currency = ? ORDER BY p.created_at DESC, p.id LIMIT ?")) {
+                                + "p.sender_last4, p.paid_at, COALESCE((SELECT CASE WHEN a.actor IS NULL THEN 'MACHINE' ELSE u.role END FROM audit_log a "
+                                + "LEFT JOIN app_user u ON u.id = a.actor AND u.tenant_id = a.tenant_id WHERE a.tenant_id = p.tenant_id "
+                                + "AND a.action = 'PAYMENT_INGESTED' AND a.subject = p.id::text ORDER BY a.at, a.id LIMIT 1), 'HELPER') AS recorded_by "
+                                + "FROM payment p WHERE p.tenant_id = ? AND p.status IN ('RECEIVED', 'UNVERIFIED') "
+                                + "AND (CAST(? AS CHAR(3)) IS NULL OR p.currency = ?) AND (CAST(? AS UUID) IS NULL OR p.id = ?) "
+                                + "ORDER BY p.created_at DESC, p.id LIMIT ?")) {
                     ps.setObject(1, tenantId);
                     ps.setString(2, currency);
-                    ps.setInt(3, limit);
+                    ps.setString(3, currency);
+                    setUuid(ps, 4, paymentId);
+                    setUuid(ps, 5, paymentId);
+                    ps.setInt(6, limit);
                     try (ResultSet rs = ps.executeQuery()) {
-                        List<PaymentFacts> out = new ArrayList<>();
+                        List<PaymentCandidate> out = new ArrayList<>();
                         while (rs.next()) {
                             String last4 = rs.getString("sender_last4");
                             OffsetDateTime paidAt = rs.getObject("paid_at", OffsetDateTime.class);
-                            out.add(new PaymentFacts(rs.getObject("id", UUID.class), rs.getLong("amount_minor"), rs.getString("currency").strip(),
+                            PaymentFacts facts = new PaymentFacts(rs.getObject("id", UUID.class), rs.getLong("amount_minor"), rs.getString("currency").strip(),
                                     rs.getBoolean("has_tx"), rs.getString("reference"), rs.getString("sender_name"),
                                     rs.getString("sender_phone_hash"), last4 == null ? null : last4.strip(),
-                                    paidAt == null ? null : paidAt.toInstant()));
+                                    paidAt == null ? null : paidAt.toInstant());
+                            out.add(new PaymentCandidate(facts, recorderOf(rs.getString("recorded_by"))));
                         }
                         return out;
                     }
@@ -243,6 +293,254 @@ public class MatchRepository {
             });
         } catch (SQLException e) {
             throw new IllegalStateException("Could not read open payments", e);
+        }
+    }
+
+    /** Anything that is not clearly a seller or the machine feed is a helper: the least trusted reading. */
+    static Recorder recorderOf(String stored) {
+        if ("SELLER".equals(stored)) {
+            return Recorder.SELLER;
+        }
+        if ("MACHINE".equals(stored)) {
+            return Recorder.MACHINE;
+        }
+        return Recorder.HELPER;
+    }
+
+    private static void setUuid(PreparedStatement ps, int index, UUID value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, Types.OTHER);
+        } else {
+            ps.setObject(index, value);
+        }
+    }
+
+    // ── Inside the caller's transaction (the atomic apply of a match) ───────
+    //
+    // These run on a connection that is already inside a TenantScope for the tenant, so they commit or roll back with everything else the
+    // caller wrote. Each statement names the tenant; each write returns the number of rows it changed so that the caller can refuse a
+    // write that touched nothing (a row of another tenant, or a row in the wrong state).
+
+    /** A payment row locked for the transaction, with the fields the apply step needs. */
+    public record LockedPayment(UUID id, String status, Long amountMinor, String currency, boolean hasTransactionId, String reference,
+                                String senderName, String senderPhoneHash, String senderLast4, Instant paidAt, Recorder recorder) {
+        @Override
+        public String toString() {
+            return "LockedPayment[id=" + id + ", status=" + status + "]";
+        }
+    }
+
+    /** An order row locked for the transaction, with its customer's fields. */
+    public record LockedOrder(UUID id, String status, Long totalMinor, String currency, Instant createdAt, String orderRef,
+                              String customerName, String customerPhoneHash, String customerLast4) {
+        @Override
+        public String toString() {
+            return "LockedOrder[id=" + id + ", status=" + status + "]";
+        }
+    }
+
+    /**
+     * Locks the payment row (FOR UPDATE). Always lock the payment first and the order second. The "recorded_by" subselect is the same
+     * text as in {@link #payments}: SQL is only ever written as literals here (a source scan enforces it), so it is repeated, and a
+     * test reads the recorder through both and compares.
+     */
+    public Optional<LockedPayment> lockPayment(Connection c, UUID tenantId, UUID paymentId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT p.id, p.status, p.amount_minor, p.currency, p.tx_id IS NOT NULL AS has_tx, p.reference, p.sender_name, p.sender_phone_hash, "
+                        + "p.sender_last4, p.paid_at, COALESCE((SELECT CASE WHEN a.actor IS NULL THEN 'MACHINE' ELSE u.role END FROM audit_log a "
+                        + "LEFT JOIN app_user u ON u.id = a.actor AND u.tenant_id = a.tenant_id WHERE a.tenant_id = p.tenant_id "
+                        + "AND a.action = 'PAYMENT_INGESTED' AND a.subject = p.id::text ORDER BY a.at, a.id LIMIT 1), 'HELPER') AS recorded_by "
+                        + "FROM payment p WHERE p.tenant_id = ? AND p.id = ? FOR UPDATE OF p")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, paymentId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                long amount = rs.getLong("amount_minor");
+                Long amountMinor = rs.wasNull() ? null : amount;
+                String last4 = rs.getString("sender_last4");
+                OffsetDateTime paidAt = rs.getObject("paid_at", OffsetDateTime.class);
+                return Optional.of(new LockedPayment(rs.getObject("id", UUID.class), rs.getString("status"), amountMinor,
+                        rs.getString("currency").strip(), rs.getBoolean("has_tx"), rs.getString("reference"), rs.getString("sender_name"),
+                        rs.getString("sender_phone_hash"), last4 == null ? null : last4.strip(), paidAt == null ? null : paidAt.toInstant(),
+                        recorderOf(rs.getString("recorded_by"))));
+            }
+        }
+    }
+
+    /** Locks the order row (FOR UPDATE), after the payment's. */
+    public Optional<LockedOrder> lockOrder(Connection c, UUID tenantId, UUID orderId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT o.id, o.status, o.total_minor, o.currency, o.created_at, o.order_ref, cu.display_name, cu.phone_hash, cu.phone_last4 "
+                        + "FROM orders o LEFT JOIN customer cu ON cu.id = o.customer_id AND cu.tenant_id = o.tenant_id "
+                        + "WHERE o.tenant_id = ? AND o.id = ? FOR UPDATE OF o")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                long total = rs.getLong("total_minor");
+                Long totalMinor = rs.wasNull() ? null : total;
+                String last4 = rs.getString("phone_last4");
+                return Optional.of(new LockedOrder(rs.getObject("id", UUID.class), rs.getString("status"), totalMinor,
+                        rs.getString("currency").strip(), rs.getObject("created_at", OffsetDateTime.class).toInstant(), rs.getString("order_ref"),
+                        rs.getString("display_name"), rs.getString("phone_hash"), last4 == null ? null : last4.strip()));
+            }
+        }
+    }
+
+    /** The sum of the order's active matches, inside the transaction. */
+    public long appliedWithin(Connection c, UUID tenantId, UUID orderId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT COALESCE(SUM(amount_minor), 0) FROM match WHERE tenant_id = ? AND order_id = ? AND state IN ('AUTO', 'CONFIRMED')")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getLong(1);
+            }
+        }
+    }
+
+    /** True if another open order of the tenant has the same reference key as this reference. */
+    public boolean referenceSharedWithin(Connection c, UUID tenantId, String orderRef) throws SQLException {
+        if (orderRef == null) {
+            return false;
+        }
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT count(*) FROM orders WHERE tenant_id = ? AND upper(order_ref) = upper(?) AND status IN ('PENDING_PAYMENT', 'PARTIALLY_PAID')")) {
+            ps.setObject(1, tenantId);
+            ps.setString(2, orderRef);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getLong(1) > 1;
+            }
+        }
+    }
+
+    /** The id of the open suggestion for this pair, if there is one. */
+    public Optional<UUID> suggestionWithin(Connection c, UUID tenantId, UUID orderId, UUID paymentId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT id FROM match WHERE tenant_id = ? AND order_id = ? AND payment_id = ? AND state = 'SUGGESTED'")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            ps.setObject(3, paymentId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(rs.getObject(1, UUID.class)) : Optional.<UUID>empty();
+            }
+        }
+    }
+
+    /** True if the order's {@code ORDER_ACCEPTED} posting exists. */
+    public boolean orderPostedWithin(Connection c, UUID tenantId, UUID orderId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT 1 FROM ledger_txn WHERE tenant_id = ? AND kind = 'ORDER_ACCEPTED' AND ref_id = ?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /** What to store for an active match. {@code decidedBy} is null for an automatic one. */
+    public record NewActive(UUID id, UUID orderId, UUID paymentId, String state, long amountMinor, long excessMinor, int score,
+                            String reasonsJson, UUID ledgerTxnId, UUID decidedBy, Instant decidedAt) {
+        @Override
+        public String toString() {
+            return "NewActive[id=" + id + ", state=" + state + "]";
+        }
+    }
+
+    public int insertActiveWithin(Connection c, UUID tenantId, NewActive m) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO match(id, tenant_id, order_id, payment_id, amount_minor, excess_minor, score, reasons_json, state, ledger_txn_id, "
+                        + "decided_by, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            ps.setObject(1, m.id());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, m.orderId());
+            ps.setObject(4, m.paymentId());
+            ps.setLong(5, m.amountMinor());
+            ps.setLong(6, m.excessMinor());
+            ps.setInt(7, m.score());
+            ps.setString(8, m.reasonsJson());
+            ps.setString(9, m.state());
+            ps.setObject(10, m.ledgerTxnId());
+            setUuid(ps, 11, m.decidedBy());
+            ps.setObject(12, m.decidedAt() == null ? null : m.decidedAt().atOffset(java.time.ZoneOffset.UTC));
+            return ps.executeUpdate();
+        }
+    }
+
+    /** Turns a suggestion into a confirmed match with its amounts (the one move that may set them). */
+    public int confirmSuggestionWithin(Connection c, UUID tenantId, UUID matchId, UUID decidedBy, Instant decidedAt, long amountMinor,
+                                       long excessMinor, UUID ledgerTxnId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE match SET state = 'CONFIRMED', decided_by = ?, decided_at = ?, amount_minor = ?, excess_minor = ?, ledger_txn_id = ? "
+                        + "WHERE tenant_id = ? AND id = ? AND state = 'SUGGESTED'")) {
+            ps.setObject(1, decidedBy);
+            ps.setObject(2, decidedAt.atOffset(java.time.ZoneOffset.UTC));
+            ps.setLong(3, amountMinor);
+            ps.setLong(4, excessMinor);
+            ps.setObject(5, ledgerTxnId);
+            ps.setObject(6, tenantId);
+            ps.setObject(7, matchId);
+            return ps.executeUpdate();
+        }
+    }
+
+    /** The system retires one open suggestion (no decider): it has been overtaken. */
+    public int supersedeWithin(Connection c, UUID tenantId, UUID matchId, Instant at) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE match SET state = 'REJECTED', decided_at = ? WHERE tenant_id = ? AND id = ? AND state = 'SUGGESTED'")) {
+            ps.setObject(1, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(2, tenantId);
+            ps.setObject(3, matchId);
+            return ps.executeUpdate();
+        }
+    }
+
+    /** The system retires every other open suggestion for this payment: it is matched now. */
+    public int supersedeForPaymentWithin(Connection c, UUID tenantId, UUID paymentId, UUID exceptMatchId, Instant at) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE match SET state = 'REJECTED', decided_at = ? WHERE tenant_id = ? AND payment_id = ? AND state = 'SUGGESTED' AND id <> ?")) {
+            ps.setObject(1, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(2, tenantId);
+            ps.setObject(3, paymentId);
+            ps.setObject(4, exceptMatchId);
+            return ps.executeUpdate();
+        }
+    }
+
+    /** The system retires every other open suggestion for this order: it is paid in full. */
+    public int supersedeForOrderWithin(Connection c, UUID tenantId, UUID orderId, UUID exceptMatchId, Instant at) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE match SET state = 'REJECTED', decided_at = ? WHERE tenant_id = ? AND order_id = ? AND state = 'SUGGESTED' AND id <> ?")) {
+            ps.setObject(1, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(2, tenantId);
+            ps.setObject(3, orderId);
+            ps.setObject(4, exceptMatchId);
+            return ps.executeUpdate();
+        }
+    }
+
+    public int setOrderStatusWithin(Connection c, UUID tenantId, UUID orderId, String status) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("UPDATE orders SET status = ? WHERE tenant_id = ? AND id = ?")) {
+            ps.setString(1, status);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, orderId);
+            return ps.executeUpdate();
+        }
+    }
+
+    public int setPaymentStatusWithin(Connection c, UUID tenantId, UUID paymentId, String status) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("UPDATE payment SET status = ? WHERE tenant_id = ? AND id = ?")) {
+            ps.setString(1, status);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, paymentId);
+            return ps.executeUpdate();
         }
     }
 

@@ -659,7 +659,21 @@ Full proposal and the owner's answers: `task-6-design-stop.md`. Stop 2b adds the
 - **Ledger.** `JdbcLedgerRepository.appendWithin` posts on the caller's connection, so a posting can commit together with a match and a status change; the account and overflow
   checks are one shared class (`LedgerChecks`) used by both paths. `ChartOfAccounts` creates the four fixed accounts of a tenant idempotently inside the caller's transaction.
 
-### Trade-offs and weakened defenses (task 6, so far): register items 51 to 59, below.
+- **Stop 2b: `MatchingService.apply` is the only place an active match is created, in one database transaction** (`TenantScope`). It locks the payment row, then the order row (always
+  in that order), re-reads both under the lock, re-scores an automatic match on the locked data (an automatic match that no longer qualifies is stored as a suggestion), applies
+  `min(payment, balance)` and posts the rest as customer credit, ensures the four accounts and the order's `ORDER_ACCEPTED` posting, posts `PAYMENT_MATCHED` with `appendWithin`, writes
+  the match, moves the order (`PAID` or `PARTIALLY_PAID`) and payment (`MATCHED`) statuses, retires the other open suggestions, and appends the audit row (`MATCH_AUTO` with no actor,
+  or `MATCH_CONFIRMED` with the seller). Any failure rolls back all of it; the deferred triggers of V016 re-check the sums at commit. `StepHook` lets a test fail the transaction after
+  each of the nine steps.
+- **The engine.** `onPaymentRecorded` scores the open orders (at most `candidateCap`), plans, and either applies or stores suggestions (never for a pair the seller rejected).
+  `onOrderRecorded` scores the open payments; if the plan is automatic it hands the decision to `onPaymentRecorded` for the best payment, so the choice is also made from the payment's
+  side. Both ingestion services call a `MatchTrigger` after their own commit, best effort: a failure is logged by id and never changes what ingestion returns.
+- **`ORDER_ACCEPTED` is posted in the order's ingestion transaction** (`OrderRepository.insertWithin`) when the order is `PENDING_PAYMENT`. If the posting fails, the caller gets an
+  `IllegalStateException` ("Could not post an order to the ledger"), nothing is stored, and a retry with the same external id starts from nothing (one posting per order is a unique index).
+- **Who recorded a payment (`Recorder`) is read from the append-only audit entry `PAYMENT_INGESTED`** (subject = the payment id) joined to `app_user.role`: no actor is the machine feed,
+  `SELLER` is the seller, anything else or no entry is a helper. The earliest entry of the tenant wins. A helper's payment is never automatic: it is stored as a suggestion.
+- **V017** adds a partial index for that lookup. The matching switch `app.matching.auto-enabled` stays on by default.
+### Trade-offs and weakened defenses (task 6, so far): register items 51 to 66, below.
 
 ## Testing strategy
 
@@ -730,3 +744,10 @@ The demo credentials go in the Devpost testing field.
 | 57 | The four accounts are created by the application role at first use | A tenant has no chart of accounts otherwise (provisioning does not create one) | Fixed codes, unique per tenant, idempotent; the role already held `INSERT` on `account`; a wrong type under one of the codes stops posting |
 | 58 | Postings made on the caller's connection do not go through `LedgerService` | A posting must commit with the match and the status change | One shared check class used by both paths; a reversal cannot be posted this way (until the unmatch flow adds its own method); the deferred balance trigger still fires |
 | 59 | The new CHECKs on `match` are `NOT VALID`; the transition triggers apply to every role, including the owner | The table may hold rows from before; a status move must be deliberate | New and changed rows are checked; `VALIDATE CONSTRAINT` once old data is known to fit |
+| 60 | The post-commit trigger is best effort. A payment or order that was stored but whose matching failed (or was never run) stays unmatched until the next event for the same candidates, or until the stop 3 `rematch` | The ingestion transaction must not depend on matching, and a match failure must not lose a payment | The failure is logged with ids only; `apply` is idempotent in effect (unique indexes); nothing is lost, only delayed |
+| 61 | The recorder (trust) comes from the audit trail, and the application role can append audit rows. A later forged `PAYMENT_INGESTED` entry could claim a seller | There is no other record of who ingested a payment | The earliest entry of the tenant wins, so a forged one cannot raise trust; no entry means helper; a role other than the exact words means helper. Not defended: a forged entry written before the real one (needs the application role's privileges at the moment of ingestion) |
+| 62 | `ORDER_ACCEPTED` is posted at ingestion, so a posting failure fails the order's ingestion | The order is a receivable from the moment it is accepted (requirement 4.1), and an order without its posting cannot exist | The caller sees a clear exception, nothing is stored, a retry is safe and cannot post twice. A `NEEDS_REVIEW` order is posted later (task 8); `apply` posts it if it is still missing |
+| 63 | A stale suggestion can be stored for a payment that was matched meanwhile (the suggestion is written after the engine's read, outside the apply transaction) | Suggestions change nothing and need no lock | A confirmation re-reads everything under the lock and refuses a payment that is no longer free; the other suggestions of a matched payment are retired by the match |
+| 64 | The tie margin between candidates is evaluated on the engine's read, not again under the lock | The lock covers the two rows, not the other candidates | Under the lock every floor and the threshold are re-checked; the margin is the only part decided on the unlocked read, and a match moves no money and can be reversed |
+| 65 | `apply` locks the payment first and the order second, in every path. A different order in any new code could deadlock | Two orderings are possible and one is needed | One place (`applyWithin`); a test with 16 threads in random pairs finishes without a deadlock; swapping the order in both statements consistently is an equivalent change and is not defended |
+| 66 | The index tests use the shapes of the matcher's queries, not the queries themselves, and the index definitions are pinned as text | `EXPLAIN` of a nearly empty table says little | If a real query drifts, the test does not notice; the pinned definitions and a plan that names each index catch a dropped or re-columned index |

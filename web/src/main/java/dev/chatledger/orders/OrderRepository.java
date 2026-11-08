@@ -1,6 +1,10 @@
 package dev.chatledger.orders;
 
 import dev.chatledger.ingestion.OrderDecider;
+import dev.chatledger.ledger.LedgerException;
+import dev.chatledger.ledger.jdbc.JdbcLedgerRepository;
+import dev.chatledger.matching.ChartOfAccounts;
+import dev.chatledger.matching.Postings;
 import dev.chatledger.security.AuditLogRepository;
 import dev.chatledger.tenancy.TenantScope;
 import org.springframework.stereotype.Repository;
@@ -66,9 +70,11 @@ public class OrderRepository {
     public static final String UNKNOWN_CUSTOMER = "Unknown customer";
 
     private final TenantScope scope;
+    private final JdbcLedgerRepository ledger;
 
     public OrderRepository(DataSource dataSource) {
         this.scope = new TenantScope(dataSource);
+        this.ledger = new JdbcLedgerRepository(scope);
     }
 
     /** The new order's id, or empty if this tenant already has an order with that external id (nothing was written). */
@@ -79,6 +85,10 @@ public class OrderRepository {
             return Optional.empty();
         } catch (SQLException e) {
             throw new IllegalStateException("Could not store an order", e);
+        } catch (LedgerException e) {
+            // The posting failed, so the whole transaction rolled back: the order is not stored. The caller gets this exception, and a retry
+            // with the same external id starts from nothing (and cannot post twice: one posting per order is a unique index).
+            throw new IllegalStateException("Could not post an order to the ledger", e);
         }
     }
 
@@ -128,6 +138,12 @@ public class OrderRepository {
                 }
                 ps.executeBatch();
             }
+        }
+        if (draft.status() == OrderDecider.Status.PENDING_PAYMENT) {
+            // The order is a receivable from this moment (requirement 4.1): debit Accounts receivable, credit Sales revenue. In the same
+            // transaction as the order, so an order without its posting, or a posting without its order, cannot exist.
+            ChartOfAccounts.Accounts accounts = ChartOfAccounts.ensure(c, tenantId);
+            ledger.appendWithin(c, Postings.orderAccepted(tenantId, orderId, draft.totalMinor(), accounts, java.time.Instant.now()));
         }
         AuditLogRepository.appendWithin(c, tenantId, order.actor(), "ORDER_INGESTED", orderId.toString());
         return orderId;

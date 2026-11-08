@@ -470,7 +470,7 @@ class PaymentIngestionIT {
         UUID tenant = f.tenant();
         CustomerRepository customers = new CustomerRepository(PaymentFixture.DB.appDataSource());
         OrderIngestionService orders = new OrderIngestionService(f.tenants, new CatalogRepository(PaymentFixture.DB.appDataSource()),
-                new OrderRepository(PaymentFixture.DB.appDataSource()), f.limits, f.phoneKeys, new IngestionEvents());
+                new OrderRepository(PaymentFixture.DB.appDataSource()), f.limits, f.phoneKeys, new IngestionEvents(), dev.chatledger.matching.MatchTrigger.NONE);
         assertThat(orders.ingest(tenant, null, "order-" + UUID.randomUUID(), "Name: Ana\nPhone: 00 999-000-000-1234\n1 x rice @ 500").stored())
                 .isTrue();
         assertThat(customers.count(tenant)).isEqualTo(1);
@@ -515,7 +515,7 @@ class PaymentIngestionIT {
         UUID a = small.tenant();
         UUID b = small.tenant();
         OrderIngestionService orders = new OrderIngestionService(small.tenants, new CatalogRepository(PaymentFixture.DB.appDataSource()),
-                new OrderRepository(PaymentFixture.DB.appDataSource()), small.limits, small.phoneKeys, new IngestionEvents());
+                new OrderRepository(PaymentFixture.DB.appDataSource()), small.limits, small.phoneKeys, new IngestionEvents(), dev.chatledger.matching.MatchTrigger.NONE);
         assertThat(small.ingest(a, id(), small.sms(txId())).outcome()).isEqualTo(Outcome.CREATED);
         assertThat(orders.ingest(a, null, "order-" + UUID.randomUUID(), "1 x rice @ 5").stored()).isTrue();
         assertThat(small.ingest(a, id(), small.sms(txId())).outcome()).isEqualTo(Outcome.CREATED);

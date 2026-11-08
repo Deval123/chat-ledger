@@ -198,6 +198,29 @@ final class MatchWorld {
         return id;
     }
 
+    /** Work done on a superuser connection. */
+    @FunctionalInterface
+    interface Work {
+        void run(Connection c) throws SQLException;
+    }
+
+    /**
+     * Runs the work as the superuser with triggers (and so foreign keys) switched off for the transaction: it writes rows the application
+     * and the schema would refuse, to show that the queries do not trust them anyway.
+     */
+    static void forced(Work work) {
+        try (Connection c = DB.superDataSource().getConnection()) {
+            c.setAutoCommit(false);
+            try (java.sql.Statement s = c.createStatement()) {
+                s.execute("SET LOCAL session_replication_role = replica");
+            }
+            work.run(c);
+            c.commit();
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     void run(String sql, Object... params) {
         try (Connection c = owner.getConnection()) {
             run(c, sql, params);
