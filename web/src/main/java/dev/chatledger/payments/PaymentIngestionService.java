@@ -8,6 +8,7 @@ import dev.chatledger.ingestion.InputChecks;
 import dev.chatledger.ingestion.PaymentDecider;
 import dev.chatledger.ingestion.PaymentPipeline;
 import dev.chatledger.ingestion.RejectReason;
+import dev.chatledger.matching.MatchTrigger;
 import dev.chatledger.orders.PhoneKeys;
 import dev.chatledger.orders.TenantMoney;
 import dev.chatledger.orders.TenantRepository;
@@ -47,9 +48,10 @@ public class PaymentIngestionService {
     private final PhoneKeys phoneKeys;
     private final PaymentEvents events;
     private final Clock clock;
+    private final MatchTrigger matcher;
 
     public PaymentIngestionService(TenantRepository tenants, PaymentRepository payments, PaymentTemplates templates,
-                                   RateLimits limits, PhoneKeys phoneKeys, PaymentEvents events, Clock clock) {
+                                   RateLimits limits, PhoneKeys phoneKeys, PaymentEvents events, Clock clock, MatchTrigger matcher) {
         this.tenants = tenants;
         this.payments = payments;
         this.templates = templates;
@@ -57,6 +59,7 @@ public class PaymentIngestionService {
         this.phoneKeys = phoneKeys;
         this.events = events;
         this.clock = clock;
+        this.matcher = matcher;
     }
 
     /**
@@ -105,6 +108,14 @@ public class PaymentIngestionService {
             if (id.isPresent()) {
                 PaymentIngestionResult.Outcome outcome = outcome(toStore.status());
                 events.created(tenantId, id.get(), outcome, draft.reason(), parsed == null ? null : parsed.templateId());
+                if (outcome == PaymentIngestionResult.Outcome.CREATED || outcome == PaymentIngestionResult.Outcome.CREATED_UNVERIFIED) {
+                    // After the commit, and best effort: a failure here is logged by the matcher and never changes what this method returns.
+                    try {
+                        matcher.paymentStored(tenantId, id.get());
+                    } catch (RuntimeException ignored) {
+                        // the matcher logs its own failures; the payment stays stored and unmatched
+                    }
+                }
                 return new PaymentIngestionResult(outcome, id.get(), duplicateOf, draft.reason(), null, 0);
             }
             Optional<PaymentRepository.Stored> winner = payments.findByExternalId(tenantId, externalId);

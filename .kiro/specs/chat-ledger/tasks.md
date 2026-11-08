@@ -2,7 +2,7 @@
 
 Work top to bottom. Each task ends with passing tests. Reference the requirement in the commit message.
 
-- [ ] 1. Project skeleton
+- [x] 1. Project skeleton
   - Maven multi-module (`ledger-core`, `extraction`, `matching`, `suspicion`, `web`), Java 21, Spring Boot, Flyway, PostgreSQL via Docker Compose.
   - Public repo files: LICENSE (Apache-2.0), README (English), `.kiro` committed and not ignored.
   - _Requirements: 4, 9_
@@ -129,25 +129,38 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
   - [x] 5.3 Duplicate and UNVERIFIED detection; idempotent ingestion by external id; UNPARSED fallback.
   - _Requirements: 2, 8_
 
-- [ ] 6. Matching engine
+- [x] 6. Matching engine
   - Finding a payer from an SMS uses `PhoneNumbers.canonicalDigits` and `PhoneKeys` (see task 5); no new phone
     normalisation anywhere.
   - **An `UNVERIFIED` payment is never auto-matched** (suggested at most; the seller decides). **A `DUPLICATE` payment is never
     posted to the ledger** (requirement 2.4). **Matching uses `payment.reference`** (the order code the payer wrote), compared with
     the order's `order_ref` through `ReferenceKeys.key` (extraction module), the same key function on both sides; without it the
     maximum score is 75 and nothing can reach the auto-match threshold of 85. Verify each with a test.
-  - [ ] 6.1 Scoring with reasons; thresholds as configuration.
-  - [ ] 6.2 Auto, suggested, partial, over-payment flows with ledger postings.
-  - [ ] 6.3 Overrides: confirm, reject, manual match, unmatch with audit log.
-  - [ ] 6.4 Property-based tests: idempotency, never over-assign amounts.
+  - [x] 6.1 Scoring with reasons; thresholds as configuration. (Stop 2a: `MatchScorer`, `NameSimilarity`, `MatchPlanner`, `MatchConfig` with startup
+    bounds, V016, `MatchRepository`, `ChartOfAccounts`, `appendWithin`. Design: `task-6-design-stop.md`.)
+  - [x] 6.2 Auto, suggested, partial, over-payment flows with ledger postings. (Stop 2b: `MatchingService`, `Postings`, `MatchTrigger`, V017, the `ORDER_ACCEPTED` posting at ingestion.)
+  - [x] 6.3 Overrides: confirm, reject, manual match, unmatch with audit log. (Stop 3: `confirm`, `reject`, `matchManually`, `unmatch` with `reverseWithin`, `markUnmatched`, `reopen`, `rematch`; seller only, who and when audited.)
+  - [x] 6.4 Property-based tests: idempotency, never over-assign amounts. (`MatchingBooksPropertyIT` with `MatchInvariants`.)
   - _Requirements: 3, 4_
 
 - [ ] 7. Suspicion rules
   - One class per rule, one table of examples per rule, plain-language reasons.
+  - **An open flag blocks an automatic match** (task 6 design, D17): the matcher must ask for open flags on the payment and the
+    order before it matches automatically, and a flagged pair is suggested instead. Verify with a test per flag code.
   - _Requirements: 5_
 
 - [ ] 8. Board and summary UI
   - Thymeleaf plus HTMX, phone-first layout, five board columns, daily summary, CSV export.
+  - **Confirm, reject and unmatch buttons** (task 6) use CSRF and the two permissions: `CONFIRM_OR_OVERRIDE_MATCH` to confirm,
+    reject and match by hand, `REVERSE_TRANSACTION` to unmatch. Verify that a HELPER gets 403 on each.
+  - **Set aside, take back and rematch** (task 6, stop 3) get the same CSRF and `CONFIRM_OR_OVERRIDE_MATCH` check; **`rematch` must be rate-limited per
+    tenant** at the endpoint (the service bounds one call to `candidateCap` payments but has no limit of its own). The service already refuses a user who is
+    not an enabled seller of the tenant (design register item 68); the endpoint is a second wall, not the only one.
+  - **An order that leaves `NEEDS_REVIEW` and gets its total must post `ORDER_ACCEPTED` at that moment** (same transaction as the
+    status change; the posting is idempotent, one per order). The status-transition trigger of V016 allows no move out of
+    `NEEDS_REVIEW` for the application role, so that task adds its own named transition and a test for it.
+  - Optional: a **reconciliation check** on the board: accounts receivable equals the order totals minus the active matches, and the
+    trial balance is zero; a mismatch is shown plainly, never hidden.
   - **CSV export must neutralise formula injection**: any cell that starts with `=`, `+`, `-`, `@`, tab or carriage
     return (labels, customer and sender names, notes come from untrusted text) is prefixed so a spreadsheet
     reads it as text. Verify with hostile cells from `HostileCorpus` (task 4).
@@ -158,6 +171,10 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
   - **Simulators generate timestamps inside the payment plausibility window relative to the current time** (not more than 15
     minutes ahead, not more than 35 days back; `PaymentLimits`), in each template's own time zone and date format, so demo payments
     are not `UNPARSED`. Verify that every generated demo payment is accepted.
+  - **The demo seed must exercise every matching flow**: auto, suggested, partial, over-payment, duplicate, unverified and unparsed,
+    with order references and customer names that make the score work (for example a payment whose reference equals its order's
+    code and whose sender name agrees with the customer, for the automatic case), and timestamps inside the plausibility window.
+    Verify with a test that the seed produces each outcome.
   - **Demo catalog seed**: the application role has SELECT only on `catalog_item` (task 4), so the demo tenant's
     catalog (synthetic items and prices, English and French names) is created by the seed/reset job running as
     the owner or an operator command, never by the web application. Verify the demo orders compute totals from it.
@@ -169,6 +186,9 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
 
 - [ ] 11. Signed machine API
   - HMAC verification, idempotency keys, OpenAPI description.
+  - **Trust for the machine feed starts here.** Until this task, a payment recorded with no actor is a `HELPER` payment (suggestion only; design register item 67). This task
+    must record an **explicit machine identity** in the `PAYMENT_INGESTED` audit entry (not a NULL actor), add its own branch to `MatchRepository.recorderOf` and to the two
+    recorder subselects, and add the tests that make `Recorder.MACHINE` reachable only through that path (a NULL or unknown actor must stay a helper).
   - _Requirements: 9.3_
 
 - [ ] 12. Polish and accessibility

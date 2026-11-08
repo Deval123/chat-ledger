@@ -325,7 +325,10 @@ class PaymentConstraintsIT {
     @Test
     void the_application_role_can_insert_payments_through_the_service_but_cannot_update_or_delete_them() {
         assertThat(F.ingest(tenant, PaymentFixture.id(), F.sms(PaymentFixture.txId())).stored()).isTrue();
-        for (String sql : new String[]{"UPDATE payment SET status = status", "UPDATE payment SET amount_minor = 1", "DELETE FROM payment"}) {
+        // The application role may change a status since V016 (UPDATE (status), tested in MatchConstraintsIT with every other column), but
+        // no other column and never delete.
+        for (String sql : new String[]{"UPDATE payment SET raw_text = raw_text", "UPDATE payment SET amount_minor = 1", "UPDATE payment SET tx_id = tx_id",
+                "DELETE FROM payment"}) {
             assertThatThrownBy(() -> asApp(sql)).as(sql).isInstanceOfSatisfying(SQLException.class, e -> {
                 assertThat(e.getSQLState()).isEqualTo("42501");
                 assertThat(e.getMessage()).contains("permission denied for table payment");

@@ -50,7 +50,7 @@ final class PaymentFixture {
     PaymentFixture(String ingestionRule) {
         limits = new RateLimits(new InMemoryRateLimiter(clock,
                 Map.of(RateLimits.INGESTION_TENANT, RateRule.parse("test", ingestionRule)), 10_000, Duration.ofHours(1)));
-        service = new PaymentIngestionService(tenants, payments, TEMPLATES, limits, phoneKeys, new PaymentEvents(), clock);
+        service = new PaymentIngestionService(tenants, payments, TEMPLATES, limits, phoneKeys, new PaymentEvents(), clock, dev.chatledger.matching.MatchTrigger.NONE);
     }
 
     UUID tenant() {

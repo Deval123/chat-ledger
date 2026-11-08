@@ -1,6 +1,7 @@
 package dev.chatledger.payments;
 
 import dev.chatledger.security.AuditLogRepository;
+import dev.chatledger.tenancy.DbTime;
 import dev.chatledger.tenancy.TenantScope;
 import org.springframework.stereotype.Repository;
 
@@ -94,7 +95,7 @@ public class PaymentRepository {
             ps.setString(10, p.senderPhoneHash());
             ps.setString(11, p.senderLast4());
             ps.setString(12, p.reference());
-            ps.setObject(13, p.paidAt() == null ? null : p.paidAt().atOffset(ZoneOffset.UTC));
+            ps.setObject(13, p.paidAt() == null ? null : DbTime.utc(p.paidAt()));
             ps.setString(14, p.status());
             ps.setString(15, p.rawText());
             ps.setObject(16, p.duplicateOf());

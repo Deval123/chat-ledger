@@ -66,22 +66,22 @@ class TenancyIntegrityIT {
     @Test
     void a_match_cannot_link_an_order_to_another_tenants_payment() {
         expectViolation("23503", "fk_match_payment_same_tenant", c -> update(c,
-                "INSERT INTO match(id, tenant_id, order_id, payment_id, amount_minor, score, state) VALUES (?, ?, ?, ?, 1, 90, 'AUTO')",
+                "INSERT INTO match(id, tenant_id, order_id, payment_id, score, state, decided_at) VALUES (?, ?, ?, ?, 90, 'REJECTED', now())",
                 UUID.randomUUID(), a.tenantId(), a.orderId(), b.paymentId()));
     }
 
     @Test
     void a_match_cannot_link_another_tenants_order_to_a_payment() {
         expectViolation("23503", "fk_match_order_same_tenant", c -> update(c,
-                "INSERT INTO match(id, tenant_id, order_id, payment_id, amount_minor, score, state) VALUES (?, ?, ?, ?, 1, 90, 'AUTO')",
+                "INSERT INTO match(id, tenant_id, order_id, payment_id, score, state, decided_at) VALUES (?, ?, ?, ?, 90, 'REJECTED', now())",
                 UUID.randomUUID(), a.tenantId(), b.orderId(), a.paymentId()));
     }
 
     @Test
     void a_match_cannot_be_decided_by_another_tenants_user() {
         expectViolation("23503", "fk_match_decided_by_same_tenant", c -> update(c,
-                "INSERT INTO match(id, tenant_id, order_id, payment_id, amount_minor, score, state, decided_by)"
-                        + " VALUES (?, ?, ?, ?, 1, 90, 'CONFIRMED', ?)",
+                "INSERT INTO match(id, tenant_id, order_id, payment_id, score, state, decided_by, decided_at)"
+                        + " VALUES (?, ?, ?, ?, 90, 'REJECTED', ?, now())",
                 UUID.randomUUID(), a.tenantId(), a.orderId(), a.paymentId(), b.userId()));
     }
 
@@ -96,8 +96,8 @@ class TenancyIntegrityIT {
     void the_same_references_inside_one_tenant_are_accepted() throws SQLException {
         // The seed itself links order, customer, payment, match, user and audit entry inside each tenant.
         try (Connection c = DB.migrateDataSource().getConnection()) {
-            update(c, "INSERT INTO match(id, tenant_id, order_id, payment_id, amount_minor, score, state, decided_by)"
-                            + " VALUES (?, ?, ?, ?, 1, 90, 'CONFIRMED', ?)",
+            update(c, "INSERT INTO match(id, tenant_id, order_id, payment_id, score, state, decided_by, decided_at)"
+                            + " VALUES (?, ?, ?, ?, 90, 'REJECTED', ?, now())",
                     UUID.randomUUID(), a.tenantId(), a.orderId(), a.paymentId(), a.userId());
         }
     }

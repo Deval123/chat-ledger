@@ -6,6 +6,7 @@ import dev.chatledger.ingestion.InputChecks;
 import dev.chatledger.ingestion.OrderDecider;
 import dev.chatledger.ingestion.OrderPipeline;
 import dev.chatledger.ingestion.RejectReason;
+import dev.chatledger.matching.MatchTrigger;
 import dev.chatledger.security.RateDecision;
 import dev.chatledger.security.RateLimits;
 import org.springframework.stereotype.Service;
@@ -37,15 +38,17 @@ public class OrderIngestionService {
     private final RateLimits limits;
     private final PhoneKeys phoneKeys;
     private final IngestionEvents events;
+    private final MatchTrigger matcher;
 
     public OrderIngestionService(TenantRepository tenants, CatalogRepository catalog, OrderRepository orders,
-                                 RateLimits limits, PhoneKeys phoneKeys, IngestionEvents events) {
+                                 RateLimits limits, PhoneKeys phoneKeys, IngestionEvents events, MatchTrigger matcher) {
         this.tenants = tenants;
         this.catalog = catalog;
         this.orders = orders;
         this.limits = limits;
         this.phoneKeys = phoneKeys;
         this.events = events;
+        this.matcher = matcher;
     }
 
     /**
@@ -102,6 +105,14 @@ public class OrderIngestionService {
             case UNPARSED -> IngestionResult.Outcome.CREATED_UNPARSED;
         };
         events.created(tenantId, id.get(), outcome, draft.reason(), draft.lines().size());
+        if (outcome == IngestionResult.Outcome.CREATED) {
+            // After the commit, and best effort: a failure here is logged by the matcher and never changes what this method returns.
+            try {
+                matcher.orderStored(tenantId, id.get());
+            } catch (RuntimeException ignored) {
+                // the matcher logs its own failures; the order stays stored and unmatched
+            }
+        }
         return IngestionResult.created(outcome, id.get(), draft.reason());
     }
 

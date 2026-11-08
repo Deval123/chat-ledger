@@ -14,14 +14,19 @@
   <artifactId>matching</artifactId>
   <name>matching</name>
   <description>
-    Scoring engine, match thresholds, partial and over-payment flows, overrides,
-    and ledger posting triggers. Depends on ledger-core.
+    Scoring (pure), match thresholds and the plan that turns scores into an automatic match or
+    suggestions. Depends on ledger-core and extraction.
   </description>
 
   <dependencies>
     <dependency>
       <groupId>dev.chatledger</groupId>
       <artifactId>ledger-core</artifactId>
+    </dependency>
+    <!-- TextKeys (accent-insensitive keys) and ReferenceKeys (the one comparison of order codes) -->
+    <dependency>
+      <groupId>dev.chatledger</groupId>
+      <artifactId>extraction</artifactId>
     </dependency>
 
     <!-- jqwik for property-based tests -->
