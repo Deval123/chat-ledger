@@ -82,14 +82,6 @@ class MatchingFlowsIT {
     }
 
     @Test
-    void a_machine_feed_payment_is_trusted_like_a_sellers() {
-        UUID order = order("A-1042", "Ana Kamga", PHONE, 5000);
-        PaymentIngestionResult payment = payment(null, f.sms(5000, "Ana Kamga", PHONE, "A-1042"));
-        assertThat(MatchingFixture.status("orders", order)).isEqualTo("PAID");
-        assertThat(f.repository.forPayment(tenant, payment.paymentId()).get(0).state()).isEqualTo("AUTO");
-    }
-
-    @Test
     void a_payment_recorded_by_a_helper_is_only_ever_suggested() {
         UUID helper = MatchingFixture.user(tenant, "HELPER");
         UUID order = order("A-1042", "Ana Kamga", PHONE, 5000);
@@ -172,7 +164,7 @@ class MatchingFlowsIT {
         PaymentIngestionResult payment = quiet.payments.ingest(tenant, seller, id(), quiet.sms(5000, "Ana Kamga", PHONE, null));
         w.rejected(order, payment.paymentId(), true);
         MatchingService.Run run = f.matcher.onPaymentRecorded(tenant, payment.paymentId());
-        assertThat(run.kind()).isEqualTo(MatchingService.RunKind.SUGGESTED);
+        assertThat(run.kind()).as("a pair the seller rejected is not even a candidate").isEqualTo(MatchingService.RunKind.NOTHING);
         assertThat(run.suggestions()).isZero();
         assertThat(matches("SUGGESTED")).isZero();
     }

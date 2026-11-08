@@ -12,8 +12,10 @@ import java.sql.Types;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -144,22 +146,49 @@ public class MatchRepository {
         }
     }
 
-    /** True if the seller rejected this pair before: the matcher does not suggest it again. */
-    public boolean wasRejected(UUID tenantId, UUID orderId, UUID paymentId) {
+    /**
+     * The orders the seller has said no to for this payment: a suggestion they rejected, or a match they reversed. The engine never
+     * proposes or applies these pairs again; the seller can still match one by hand. A suggestion retired by the system (no decider) is
+     * not a decision of the seller and is not listed.
+     */
+    public Set<UUID> declinedOrders(UUID tenantId, UUID paymentId) {
         try {
             return scope.call(tenantId, c -> {
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT 1 FROM match WHERE tenant_id = ? AND order_id = ? AND payment_id = ? AND state = 'REJECTED' AND decided_by IS NOT NULL")) {
+                        "SELECT order_id FROM match WHERE tenant_id = ? AND payment_id = ? AND state IN ('REJECTED', 'REVERSED') AND decided_by IS NOT NULL")) {
                     ps.setObject(1, tenantId);
-                    ps.setObject(2, orderId);
-                    ps.setObject(3, paymentId);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        return rs.next();
-                    }
+                    ps.setObject(2, paymentId);
+                    return readIds(ps);
                 }
             });
         } catch (SQLException e) {
             throw new IllegalStateException("Could not read matches", e);
+        }
+    }
+
+    /** The payments the seller has said no to for this order (see {@link #declinedOrders}). */
+    public Set<UUID> declinedPayments(UUID tenantId, UUID orderId) {
+        try {
+            return scope.call(tenantId, c -> {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT payment_id FROM match WHERE tenant_id = ? AND order_id = ? AND state IN ('REJECTED', 'REVERSED') AND decided_by IS NOT NULL")) {
+                    ps.setObject(1, tenantId);
+                    ps.setObject(2, orderId);
+                    return readIds(ps);
+                }
+            });
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not read matches", e);
+        }
+    }
+
+    private static Set<UUID> readIds(PreparedStatement ps) throws SQLException {
+        try (ResultSet rs = ps.executeQuery()) {
+            Set<UUID> out = new HashSet<>();
+            while (rs.next()) {
+                out.add(rs.getObject(1, UUID.class));
+            }
+            return Set.copyOf(out);
         }
     }
 
@@ -264,7 +293,7 @@ public class MatchRepository {
             return scope.call(tenantId, c -> {
                 try (PreparedStatement ps = c.prepareStatement(
                         "SELECT p.id, p.amount_minor, p.currency, p.tx_id IS NOT NULL AS has_tx, p.reference, p.sender_name, p.sender_phone_hash, "
-                                + "p.sender_last4, p.paid_at, COALESCE((SELECT CASE WHEN a.actor IS NULL THEN 'MACHINE' ELSE u.role END FROM audit_log a "
+                                + "p.sender_last4, p.paid_at, COALESCE((SELECT u.role FROM audit_log a "
                                 + "LEFT JOIN app_user u ON u.id = a.actor AND u.tenant_id = a.tenant_id WHERE a.tenant_id = p.tenant_id "
                                 + "AND a.action = 'PAYMENT_INGESTED' AND a.subject = p.id::text ORDER BY a.at, a.id LIMIT 1), 'HELPER') AS recorded_by "
                                 + "FROM payment p WHERE p.tenant_id = ? AND p.status IN ('RECEIVED', 'UNVERIFIED') "
@@ -296,15 +325,13 @@ public class MatchRepository {
         }
     }
 
-    /** Anything that is not clearly a seller or the machine feed is a helper: the least trusted reading. */
+    /**
+     * Only the exact word SELLER is trusted. Anything else is a helper, the least trusted reading, and that includes a missing actor
+     * and the word MACHINE: the signed machine feed does not exist before task 11, which will record an explicit machine identity in
+     * the audit entry and add its own branch here. Until then no stored value can produce {@link Recorder#MACHINE}.
+     */
     static Recorder recorderOf(String stored) {
-        if ("SELLER".equals(stored)) {
-            return Recorder.SELLER;
-        }
-        if ("MACHINE".equals(stored)) {
-            return Recorder.MACHINE;
-        }
-        return Recorder.HELPER;
+        return "SELLER".equals(stored) ? Recorder.SELLER : Recorder.HELPER;
     }
 
     private static void setUuid(PreparedStatement ps, int index, UUID value) throws SQLException {
@@ -339,18 +366,24 @@ public class MatchRepository {
         }
     }
 
+    // Every row lock here is FOR NO KEY UPDATE, never FOR UPDATE. Inserting a match takes a "key share" lock on the order and the payment it
+    // refers to (PostgreSQL's foreign-key check), and FOR UPDATE waits for a key share: the engine storing a suggestion (key share on the
+    // order, then on the payment) could wait for a seller's decision (lock on the payment, then wait for the order) and the reverse, for ever.
+    // These locks never change a key column, so the weaker lock is enough, serialises the matcher's own operations exactly as before, and
+    // does not wait for a key share (ForeignKeyChecksDoNotBlockIT).
+
     /**
-     * Locks the payment row (FOR UPDATE). Always lock the payment first and the order second. The "recorded_by" subselect is the same
+     * Locks the payment row (FOR NO KEY UPDATE). Always lock the payment first and the order second. The "recorded_by" subselect is the same
      * text as in {@link #payments}: SQL is only ever written as literals here (a source scan enforces it), so it is repeated, and a
      * test reads the recorder through both and compares.
      */
     public Optional<LockedPayment> lockPayment(Connection c, UUID tenantId, UUID paymentId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT p.id, p.status, p.amount_minor, p.currency, p.tx_id IS NOT NULL AS has_tx, p.reference, p.sender_name, p.sender_phone_hash, "
-                        + "p.sender_last4, p.paid_at, COALESCE((SELECT CASE WHEN a.actor IS NULL THEN 'MACHINE' ELSE u.role END FROM audit_log a "
+                        + "p.sender_last4, p.paid_at, COALESCE((SELECT u.role FROM audit_log a "
                         + "LEFT JOIN app_user u ON u.id = a.actor AND u.tenant_id = a.tenant_id WHERE a.tenant_id = p.tenant_id "
                         + "AND a.action = 'PAYMENT_INGESTED' AND a.subject = p.id::text ORDER BY a.at, a.id LIMIT 1), 'HELPER') AS recorded_by "
-                        + "FROM payment p WHERE p.tenant_id = ? AND p.id = ? FOR UPDATE OF p")) {
+                        + "FROM payment p WHERE p.tenant_id = ? AND p.id = ? FOR NO KEY UPDATE OF p")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, paymentId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -369,12 +402,12 @@ public class MatchRepository {
         }
     }
 
-    /** Locks the order row (FOR UPDATE), after the payment's. */
+    /** Locks the order row (FOR NO KEY UPDATE), after the payment's. */
     public Optional<LockedOrder> lockOrder(Connection c, UUID tenantId, UUID orderId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT o.id, o.status, o.total_minor, o.currency, o.created_at, o.order_ref, cu.display_name, cu.phone_hash, cu.phone_last4 "
                         + "FROM orders o LEFT JOIN customer cu ON cu.id = o.customer_id AND cu.tenant_id = o.tenant_id "
-                        + "WHERE o.tenant_id = ? AND o.id = ? FOR UPDATE OF o")) {
+                        + "WHERE o.tenant_id = ? AND o.id = ? FOR NO KEY UPDATE OF o")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, orderId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -420,10 +453,13 @@ public class MatchRepository {
         }
     }
 
-    /** The id of the open suggestion for this pair, if there is one. */
+    /**
+     * The id of the open suggestion for this pair, if there is one, with its row locked (after the payment's and the order's). A seller
+     * who rejects it at the same moment is therefore either seen (no suggestion any more) or waited for, never overtaken half way.
+     */
     public Optional<UUID> suggestionWithin(Connection c, UUID tenantId, UUID orderId, UUID paymentId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT id FROM match WHERE tenant_id = ? AND order_id = ? AND payment_id = ? AND state = 'SUGGESTED'")) {
+                "SELECT id FROM match WHERE tenant_id = ? AND order_id = ? AND payment_id = ? AND state = 'SUGGESTED' FOR NO KEY UPDATE")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, orderId);
             ps.setObject(3, paymentId);
@@ -540,6 +576,112 @@ public class MatchRepository {
             ps.setString(1, status);
             ps.setObject(2, tenantId);
             ps.setObject(3, paymentId);
+            return ps.executeUpdate();
+        }
+    }
+
+    // ── The seller's actions (inside the caller's transaction) ──────────────
+
+    /** A match row as the seller's actions need it. {@code toString} prints the id and the state only. */
+    public record MatchRow(UUID id, UUID orderId, UUID paymentId, String state, UUID ledgerTxnId) {
+        @Override
+        public String toString() {
+            return "MatchRow[id=" + id + ", state=" + state + "]";
+        }
+    }
+
+    private static Optional<MatchRow> readMatchRow(PreparedStatement ps) throws SQLException {
+        try (ResultSet rs = ps.executeQuery()) {
+            return rs.next()
+                    ? Optional.of(new MatchRow(rs.getObject("id", UUID.class), rs.getObject("order_id", UUID.class), rs.getObject("payment_id", UUID.class),
+                            rs.getString("state"), rs.getObject("ledger_txn_id", UUID.class)))
+                    : Optional.<MatchRow>empty();
+        }
+    }
+
+    /**
+     * A match, without a lock: used to learn which payment and order to lock first (they never change). The state read here is only a
+     * hint; the caller must read it again with {@link #lockMatchWithin} once it holds the payment and order locks.
+     */
+    public Optional<MatchRow> matchWithin(Connection c, UUID tenantId, UUID matchId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT id, order_id, payment_id, state, ledger_txn_id FROM match WHERE tenant_id = ? AND id = ?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, matchId);
+            return readMatchRow(ps);
+        }
+    }
+
+    /** Locks a match row (FOR NO KEY UPDATE) after the payment's and the order's, and reads its current state. */
+    public Optional<MatchRow> lockMatchWithin(Connection c, UUID tenantId, UUID matchId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT id, order_id, payment_id, state, ledger_txn_id FROM match WHERE tenant_id = ? AND id = ? FOR NO KEY UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, matchId);
+            return readMatchRow(ps);
+        }
+    }
+
+    /**
+     * True if the user is an enabled SELLER of this tenant, read now from the user table. A seller's action trusts no role passed in by
+     * a caller: whoever calls the service, the database says who may decide.
+     */
+    public boolean isSellerWithin(Connection c, UUID tenantId, UUID userId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT 1 FROM app_user WHERE tenant_id = ? AND id = ? AND role = 'SELLER' AND disabled_at IS NULL")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, userId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /** True if the seller said no to this pair before (see {@link #declinedOrders}). */
+    public boolean wasDeclinedWithin(Connection c, UUID tenantId, UUID orderId, UUID paymentId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT 1 FROM match WHERE tenant_id = ? AND order_id = ? AND payment_id = ? AND state IN ('REJECTED', 'REVERSED') AND decided_by IS NOT NULL")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            ps.setObject(3, paymentId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /** The seller rejects one open suggestion. */
+    public int rejectWithin(Connection c, UUID tenantId, UUID matchId, UUID decidedBy, Instant at) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE match SET state = 'REJECTED', decided_by = ?, decided_at = ? WHERE tenant_id = ? AND id = ? AND state = 'SUGGESTED'")) {
+            ps.setObject(1, decidedBy);
+            ps.setObject(2, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(3, tenantId);
+            ps.setObject(4, matchId);
+            return ps.executeUpdate();
+        }
+    }
+
+    /** The seller says a payment belongs to no order: every open suggestion for it is rejected, by them. */
+    public int rejectOpenForPaymentWithin(Connection c, UUID tenantId, UUID paymentId, UUID decidedBy, Instant at) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE match SET state = 'REJECTED', decided_by = ?, decided_at = ? WHERE tenant_id = ? AND payment_id = ? AND state = 'SUGGESTED'")) {
+            ps.setObject(1, decidedBy);
+            ps.setObject(2, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(3, tenantId);
+            ps.setObject(4, paymentId);
+            return ps.executeUpdate();
+        }
+    }
+
+    /** The seller reverses an active match (the caller has already posted the reversal of its posting). */
+    public int reverseMatchWithin(Connection c, UUID tenantId, UUID matchId, UUID decidedBy, Instant at) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE match SET state = 'REVERSED', decided_by = ?, decided_at = ? WHERE tenant_id = ? AND id = ? AND state IN ('AUTO', 'CONFIRMED')")) {
+            ps.setObject(1, decidedBy);
+            ps.setObject(2, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(3, tenantId);
+            ps.setObject(4, matchId);
             return ps.executeUpdate();
         }
     }

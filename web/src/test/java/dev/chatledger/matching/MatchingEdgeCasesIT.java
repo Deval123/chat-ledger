@@ -39,6 +39,29 @@ class MatchingEdgeCasesIT {
     }
 
     @Test
+    void a_payment_recorded_with_no_actor_is_suggestion_only_it_is_not_the_machine() {
+        UUID order = order("A-1042", "Ana Kamga", PHONE, 5000);
+        UUID control = order("A-2000", "Bea Nkomo", "+999 000 000 5678", 5000);
+        // identical payments, identical evidence: one recorded by a seller, one with the actor missing (a caller that passed null)
+        PaymentIngestionResult noActor = f.payments.ingest(tenant, null, id(), f.sms(5000, "Ana Kamga", PHONE, "A-1042"));
+        PaymentIngestionResult bySeller = f.payments.ingest(tenant, seller, id(), f.sms(5000, "Bea Nkomo", "+999 000 000 5678", "A-2000"));
+
+        assertThat(f.repository.paymentCandidate(tenant, noActor.paymentId()).orElse(null)).isNotNull()
+                .extracting(MatchRepository.PaymentCandidate::recorder).isEqualTo(Recorder.HELPER);
+        assertThat(f.repository.forPayment(tenant, noActor.paymentId())).extracting(MatchRepository.Stored::state)
+                .contains("SUGGESTED").doesNotContain("AUTO", "CONFIRMED");
+        assertThat(MatchingFixture.status("payment", noActor.paymentId())).isEqualTo("RECEIVED");
+        assertThat(MatchingFixture.status("orders", order)).isEqualTo("PENDING_PAYMENT");
+        // and not even when the automatic path is called directly
+        assertThat(f.matcher.apply(tenant, order, noActor.paymentId(), MatchingService.Mode.AUTO, null).outcome())
+                .isEqualTo(MatchingService.Outcome.DEGRADED_TO_SUGGESTION);
+        assertThat(MatchingFixture.ledger(tenant)).as("only the seller's payment posted").containsExactly("ORDER_ACCEPTED 1100 D5000",
+                "ORDER_ACCEPTED 1100 D5000", "ORDER_ACCEPTED 4000 C5000", "ORDER_ACCEPTED 4000 C5000", "PAYMENT_MATCHED 1000 D5000", "PAYMENT_MATCHED 1100 C5000");
+        assertThat(f.repository.forPayment(tenant, bySeller.paymentId())).extracting(MatchRepository.Stored::state).containsExactly("AUTO");
+        assertThat(MatchingFixture.status("orders", control)).isEqualTo("PAID");
+    }
+
+    @Test
     void a_missing_argument_is_refused_by_name_before_anything_is_read() {
         UUID order = UUID.randomUUID();
         UUID payment = UUID.randomUUID();
@@ -106,29 +129,35 @@ class MatchingEdgeCasesIT {
     }
 
     @Test
-    void a_pair_the_seller_rejected_is_not_proposed_again_and_nothing_is_logged_as_stored() {
+    void running_the_engine_again_stores_no_second_suggestion_and_logs_nothing_as_stored() {
         UUID order = order("A-1042", "Ana Kamga", PHONE, 5000);
         PaymentIngestionResult payment = quiet.payments.ingest(tenant, seller, id(), quiet.forwarded(5000, "Ana Kamga", "1234"));
-        w.rejected(order, payment.paymentId(), true);
-        try (LogCapture logs = new LogCapture()) {
+        try (LogCapture first = new LogCapture()) {
+            MatchingService.Run run = f.matcher.onPaymentRecorded(tenant, payment.paymentId());
+            assertThat(run.suggestions()).isEqualTo(1);
+            assertThat(first.text()).contains("match suggestions stored");
+        }
+        try (LogCapture again = new LogCapture()) {
             MatchingService.Run run = f.matcher.onPaymentRecorded(tenant, payment.paymentId());
             assertThat(run.kind()).isEqualTo(MatchingService.RunKind.SUGGESTED);
-            assertThat(run.suggestions()).isZero();
-            assertThat(logs.text()).doesNotContain("match suggestions stored");
+            assertThat(run.suggestions()).as("the pair already has its open suggestion").isZero();
+            assertThat(again.text()).doesNotContain("match suggestions stored");
         }
-        assertThat(matches("SUGGESTED")).isZero();
+        assertThat(f.repository.forOrder(tenant, order)).hasSize(1);
     }
 
     @Test
-    void a_suggestion_decided_while_a_confirmation_runs_stops_the_confirmation_and_leaves_nothing() {
+    void a_suggestion_that_changes_state_under_a_confirmation_stops_it_and_leaves_nothing() {
         UUID order = order("A-1042", "Ana Kamga", PHONE, 5000);
         PaymentIngestionResult payment = f.payments.ingest(tenant, seller, id(), f.forwarded(5000, "Ana Kamga", "1234"));
         UUID suggestion = f.repository.forPayment(tenant, payment.paymentId()).get(0).id();
         AtomicReference<UUID> toReject = new AtomicReference<>(suggestion);
-        // Between reading the suggestion and confirming it, another request (another connection) retires it.
+        // Between reading the suggestion and confirming it, the row stops being a suggestion. The row is locked by the confirmation, so no
+        // other request can do this (a test with real threads shows that); the seam does it on the confirmation's own connection, to prove
+        // that a write that finds the row in another state stops the transaction instead of carrying on.
         MatchingFixture hooked = new MatchingFixture(MatchConfig.defaults(), (step, c) -> {
             if (step == MatchingService.ApplyStep.MATCH_POSTED) {
-                w.run("UPDATE match SET state = 'REJECTED', decided_at = now() WHERE id = ?", toReject.get());
+                MatchWorld.run(c, "UPDATE match SET state = 'REJECTED', decided_at = now() WHERE id = ?", toReject.get());
             }
         }, false);
         assertThatThrownBy(() -> hooked.matcher.apply(tenant, order, payment.paymentId(), MatchingService.Mode.CONFIRM, seller))
@@ -138,6 +167,6 @@ class MatchingEdgeCasesIT {
         assertThat(MatchingFixture.ledger(tenant)).as("no payment posting").containsExactly("ORDER_ACCEPTED 1100 D5000", "ORDER_ACCEPTED 4000 C5000");
         assertThat(count("SELECT count(*) FROM audit_log WHERE tenant_id = ? AND action LIKE 'MATCH_%'", tenant, null)).isZero();
         assertThat(matches("CONFIRMED")).isZero();
-        assertThat(matches("REJECTED")).as("the other request's decision stands").isEqualTo(1);
+        assertThat(matches("SUGGESTED")).as("the rollback undid the change too").isEqualTo(1);
     }
 }

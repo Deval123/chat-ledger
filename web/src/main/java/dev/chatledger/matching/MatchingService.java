@@ -41,6 +41,11 @@ import java.util.UUID;
  * Any failure at any step, including a refusal by those triggers, rolls everything back: no match, no posting, no status change, no
  * audit row. The payment stays free and the order open, and the unique indexes make a retry safe.
  *
+ * <p><b>The seller's decisions</b> ({@link #confirm}, {@link #reject}, {@link #matchManually}, {@link #unmatch}, {@link #markUnmatched},
+ * {@link #reopen}, {@link #rematch}) are each one transaction too, with the same lock order (payment, order, match), and each begins by
+ * asking the database whether the user is an enabled seller of the tenant. An unmatch posts the reversal of the match's posting, never
+ * an edit. The seller has the last word: a pair the seller rejected or reversed is never matched automatically again.
+ *
  * <p>Who recorded a payment (the {@link Recorder}) is read from the append-only audit trail of its ingestion, never from a caller.
  */
 @Service
@@ -51,10 +56,45 @@ public class MatchingService implements MatchTrigger {
 
     public enum Outcome { APPLIED, DEGRADED_TO_SUGGESTION, NOT_APPLICABLE }
 
-    public enum Reason { NOT_FOUND, PAYMENT_NOT_FREE, ORDER_NOT_OPEN, CURRENCY_MISMATCH, NOTHING_LEFT_TO_PAY, AUTO_NOT_ELIGIBLE }
+    /**
+     * Why something was not done. The last five belong to the seller's actions: the user is not an enabled seller of the tenant, the
+     * match is not an open suggestion, the match is not active, the seller had already said no to the pair (an automatic match never
+     * overrides that), the payment is not in a status the action starts from.
+     */
+    public enum Reason {
+        NOT_FOUND, PAYMENT_NOT_FREE, ORDER_NOT_OPEN, CURRENCY_MISMATCH, NOTHING_LEFT_TO_PAY, AUTO_NOT_ELIGIBLE,
+        NOT_A_SELLER, NOT_SUGGESTED, NOT_ACTIVE, SELLER_DECLINED, PAYMENT_STATUS_NOT_ALLOWED
+    }
 
     /** The steps of {@link #apply}, in order. A test can fail the transaction after any of them. */
-    public enum ApplyStep { LOCKED, ACCOUNTS, ORDER_POSTED, MATCH_POSTED, MATCH_WRITTEN, ORDER_STATUS, PAYMENT_STATUS, SUPERSEDED, AUDIT }
+    public enum ApplyStep { PAYMENT_LOCKED, LOCKED, ACCOUNTS, ORDER_POSTED, MATCH_POSTED, MATCH_WRITTEN, ORDER_STATUS, PAYMENT_STATUS, SUPERSEDED, AUDIT }
+
+    /** The steps of the seller's actions other than a match (reverse, reject, move a payment), in order. */
+    public enum ActionStep { PAYMENT_LOCKED, LOCKED, REVERSAL_POSTED, MATCH_REVERSED, ORDER_STATUS, PAYMENT_STATUS, MATCH_REJECTED, SUGGESTIONS_REJECTED, AUDIT }
+
+    /** The same seam for {@link ActionStep}. */
+    @FunctionalInterface
+    public interface ActionHook {
+        ActionHook NONE = (step, connection) -> {
+        };
+
+        void after(ActionStep step, Connection connection) throws SQLException;
+    }
+
+    /** What a seller's action did: done, or refused with a reason. {@code orderStatus} is set by an unmatch. Ids and codes only. */
+    public record Decision(boolean done, UUID subjectId, Reason reason, String orderStatus) {
+        static Decision done(UUID subjectId, String orderStatus) {
+            return new Decision(true, subjectId, null, orderStatus);
+        }
+
+        static Decision refused(Reason reason) {
+            return new Decision(false, null, reason, null);
+        }
+    }
+
+    /** What a rematch did. {@code refusal} is null unless the user was not a seller. */
+    public record RematchResult(Reason refusal, int examined, int applied, int suggested) {
+    }
 
     /** Called after each step with the transaction's connection. Production uses {@link #NONE}; a test throws from it to prove a rollback. */
     @FunctionalInterface
@@ -81,6 +121,7 @@ public class MatchingService implements MatchTrigger {
     private static final Set<String> FREE_PAYMENT = Set.of("RECEIVED", "UNVERIFIED");
     private static final Set<String> OPEN_ORDER = Set.of("PENDING_PAYMENT", "PARTIALLY_PAID");
 
+    private final DataSource dataSource;
     private final TenantScope scope;
     private final JdbcLedgerRepository ledger;
     private final MatchRepository matches;
@@ -88,13 +129,20 @@ public class MatchingService implements MatchTrigger {
     private final MatchEvents events;
     private final Clock clock;
     private final StepHook hook;
+    private final ActionHook actions;
 
     @Autowired
     public MatchingService(DataSource dataSource, MatchRepository matches, MatchConfig config, MatchEvents events, Clock clock) {
-        this(dataSource, matches, config, events, clock, StepHook.NONE);
+        this(dataSource, matches, config, events, clock, StepHook.NONE, ActionHook.NONE);
     }
 
     MatchingService(DataSource dataSource, MatchRepository matches, MatchConfig config, MatchEvents events, Clock clock, StepHook hook) {
+        this(dataSource, matches, config, events, clock, hook, ActionHook.NONE);
+    }
+
+    MatchingService(DataSource dataSource, MatchRepository matches, MatchConfig config, MatchEvents events, Clock clock, StepHook hook,
+                    ActionHook actions) {
+        this.dataSource = dataSource;
         this.scope = new TenantScope(dataSource);
         this.ledger = new JdbcLedgerRepository(scope);
         this.matches = matches;
@@ -102,6 +150,7 @@ public class MatchingService implements MatchTrigger {
         this.events = events;
         this.clock = clock;
         this.hook = hook;
+        this.actions = actions;
     }
 
     // ── The engine ─────────────────────────────────────────────────────────
@@ -132,7 +181,9 @@ public class MatchingService implements MatchTrigger {
         }
         PaymentFacts payment = candidate.get().facts();
         Recorder recorder = candidate.get().recorder();
+        Set<UUID> declined = matches.declinedOrders(tenantId, paymentId);   // the seller said no to these: never proposed or applied again
         List<ScoredPair> scored = matches.openOrders(tenantId, payment.currency(), config.candidateCap()).stream()
+                .filter(order -> !declined.contains(order.id()))
                 .map(order -> MatchScorer.score(order, payment, recorder, config)).toList();
         MatchPlanner.Plan plan = MatchPlanner.plan(scored, config);
         switch (plan.kind()) {
@@ -163,7 +214,9 @@ public class MatchingService implements MatchTrigger {
             return new Run(RunKind.SKIPPED, null, 0);
         }
         OrderFacts order = found.get();
+        Set<UUID> declined = matches.declinedPayments(tenantId, orderId);
         List<ScoredPair> scored = matches.openPaymentCandidates(tenantId, order.currency(), config.candidateCap()).stream()
+                .filter(candidate -> !declined.contains(candidate.facts().id()))
                 .map(candidate -> MatchScorer.score(order, candidate.facts(), candidate.recorder(), config)).toList();
         MatchPlanner.Plan plan = MatchPlanner.plan(scored, config);
         return switch (plan.kind()) {
@@ -176,9 +229,6 @@ public class MatchingService implements MatchTrigger {
     private int storeSuggestions(UUID tenantId, List<ScoredPair> pairs) {
         int stored = 0;
         for (ScoredPair pair : pairs) {
-            if (matches.wasRejected(tenantId, pair.orderId(), pair.paymentId())) {
-                continue;   // the seller said no to this pair; it is not proposed again
-            }
             if (matches.insertSuggestion(tenantId, pair.orderId(), pair.paymentId(), pair.score(), pair.reasonsJson()).isPresent()) {
                 stored++;
             }
@@ -195,7 +245,8 @@ public class MatchingService implements MatchTrigger {
      * Applies one match in one transaction (see the class comment).
      *
      * @param mode  {@link Mode#AUTO} from the engine, which re-checks every floor on the locked data; {@link Mode#CONFIRM} for the seller's decision.
-     * @param actor who decided, required for {@link Mode#CONFIRM} and null for {@link Mode#AUTO}.
+     * @param actor who decided, required for {@link Mode#CONFIRM} and null for {@link Mode#AUTO}. For {@code CONFIRM} the database is asked
+     *              whether the actor is an enabled seller of the tenant; the answer is {@link Reason#NOT_A_SELLER} otherwise.
      */
     public ApplyResult apply(UUID tenantId, UUID orderId, UUID paymentId, Mode mode, UUID actor) {
         // (a missing tenant is refused by name by TenantScope, so it is not checked a second time here)
@@ -205,12 +256,9 @@ public class MatchingService implements MatchTrigger {
         if ((mode == Mode.CONFIRM) != (actor != null)) {
             throw new IllegalArgumentException("a confirmation names who decided; an automatic match names nobody");
         }
-        ApplyResult result;
-        try {
-            result = scope.call(tenantId, c -> applyWithin(c, tenantId, orderId, paymentId, mode, actor));
-        } catch (SQLException | LedgerException e) {
-            throw new IllegalStateException("Could not apply a match", e);
-        }
+        ApplyResult result = inTransaction(tenantId, c -> mode == Mode.CONFIRM && !matches.isSellerWithin(c, tenantId, actor)
+                ? ApplyResult.notApplicable(Reason.NOT_A_SELLER)
+                : applyWithin(c, tenantId, orderId, paymentId, mode, actor, null));
         switch (result.outcome()) {
             case APPLIED -> events.applied(tenantId, result.matchId(), mode, result.appliedMinor(), result.excessMinor(), result.orderStatus());
             case DEGRADED_TO_SUGGESTION -> events.degraded(tenantId, orderId, paymentId);
@@ -219,9 +267,53 @@ public class MatchingService implements MatchTrigger {
         return result;
     }
 
-    private ApplyResult applyWithin(Connection c, UUID tenantId, UUID orderId, UUID paymentId, Mode mode, UUID actor) throws SQLException {
+    /**
+     * The seller confirms a suggestion. Everything is decided inside one transaction on the locked data: the suggestion must still be
+     * open (a suggestion rejected or retired meanwhile is {@link Reason#NOT_SUGGESTED}, never turned into a match by the back door), the
+     * payment still free, the order still open with something to pay; the amounts are computed now, not taken from when it was suggested.
+     */
+    public ApplyResult confirm(UUID tenantId, UUID matchId, UUID actor) {
+        Objects.requireNonNull(matchId, "matchId");
+        Objects.requireNonNull(actor, "actor");
+        ApplyResult result = inTransaction(tenantId, c -> {
+            if (!matches.isSellerWithin(c, tenantId, actor)) {
+                return ApplyResult.notApplicable(Reason.NOT_A_SELLER);
+            }
+            Optional<MatchRepository.MatchRow> row = matches.matchWithin(c, tenantId, matchId);
+            return row.isEmpty() ? ApplyResult.notApplicable(Reason.NOT_FOUND)
+                    : applyWithin(c, tenantId, row.get().orderId(), row.get().paymentId(), Mode.CONFIRM, actor, matchId);
+        });
+        if (result.outcome() == Outcome.APPLIED) {
+            events.applied(tenantId, result.matchId(), Mode.CONFIRM, result.appliedMinor(), result.excessMinor(), result.orderStatus());
+        } else {
+            events.refused(tenantId, "CONFIRM", matchId, result.reason());
+        }
+        return result;
+    }
+
+    /**
+     * The seller matches a payment to an order of their choice, whether or not the engine proposed it. If the engine had proposed the
+     * pair, that suggestion is the one confirmed; otherwise a new confirmed match is made. A pair the seller rejected before can be
+     * matched this way: only an automatic match is barred from overriding a rejection.
+     */
+    public ApplyResult matchManually(UUID tenantId, UUID orderId, UUID paymentId, UUID actor) {
+        Objects.requireNonNull(actor, "actor");
+        return apply(tenantId, orderId, paymentId, Mode.CONFIRM, actor);
+    }
+
+    private ApplyResult inTransaction(UUID tenantId, TenantScope.SqlWork<ApplyResult> work) {
+        try {
+            return scope.call(tenantId, work);
+        } catch (SQLException | LedgerException e) {
+            throw new IllegalStateException("Could not apply a match", e);
+        }
+    }
+
+    private ApplyResult applyWithin(Connection c, UUID tenantId, UUID orderId, UUID paymentId, Mode mode, UUID actor, UUID requiredSuggestion)
+            throws SQLException {
         // 1. Lock the payment, then the order. Never the other way round.
         Optional<MatchRepository.LockedPayment> lockedPayment = matches.lockPayment(c, tenantId, paymentId);
+        hook.after(ApplyStep.PAYMENT_LOCKED, c);
         Optional<MatchRepository.LockedOrder> lockedOrder = lockedPayment.isPresent() ? matches.lockOrder(c, tenantId, orderId) : Optional.empty();
         if (lockedOrder.isEmpty()) {   // an order is only looked for when the payment exists, so this covers a missing payment too
             return ApplyResult.notApplicable(Reason.NOT_FOUND);
@@ -247,6 +339,13 @@ public class MatchingService implements MatchTrigger {
         if (balance <= 0) {
             return ApplyResult.notApplicable(Reason.NOTHING_LEFT_TO_PAY);
         }
+        Optional<UUID> suggestion = matches.suggestionWithin(c, tenantId, orderId, paymentId);
+        if (requiredSuggestion != null && !suggestion.equals(Optional.of(requiredSuggestion))) {
+            return ApplyResult.notApplicable(Reason.NOT_SUGGESTED);
+        }
+        if (mode == Mode.AUTO && matches.wasDeclinedWithin(c, tenantId, orderId, paymentId)) {
+            return ApplyResult.notApplicable(Reason.SELLER_DECLINED);   // the seller has the last word: an automatic match never overrides a no
+        }
         OrderFacts orderFacts = new OrderFacts(ord.id(), total, alreadyApplied, ord.currency(), ord.createdAt(), ord.orderRef(), ord.customerName(),
                 ord.customerPhoneHash(), ord.customerLast4(), matches.referenceSharedWithin(c, tenantId, ord.orderRef()));
         PaymentFacts paymentFacts = new PaymentFacts(pay.id(), pay.amountMinor(), pay.currency(), pay.hasTransactionId(), pay.reference(),
@@ -270,7 +369,6 @@ public class MatchingService implements MatchTrigger {
         hook.after(ApplyStep.ORDER_POSTED, c);
 
         // 5. The posting, the match, the statuses, the other suggestions, the audit row.
-        Optional<UUID> suggestion = matches.suggestionWithin(c, tenantId, orderId, paymentId);
         boolean confirmSuggestion = mode == Mode.CONFIRM && suggestion.isPresent();
         if (suggestion.isPresent() && !confirmSuggestion) {
             expectOne(matches.supersedeWithin(c, tenantId, suggestion.get(), now));   // an automatic match replaces its own earlier suggestion
@@ -301,9 +399,195 @@ public class MatchingService implements MatchTrigger {
         }
         hook.after(ApplyStep.SUPERSEDED, c);
 
-        AuditLogRepository.appendWithin(c, tenantId, actor, mode == Mode.AUTO ? "MATCH_AUTO" : "MATCH_CONFIRMED", matchId.toString());
+        String action = mode == Mode.AUTO ? "MATCH_AUTO" : confirmSuggestion ? "MATCH_CONFIRMED" : "MATCH_MANUAL";
+        AuditLogRepository.appendWithin(c, tenantId, actor, action, matchId.toString());
         hook.after(ApplyStep.AUDIT, c);
         return new ApplyResult(Outcome.APPLIED, matchId, applied, excess, orderStatus, null);
+    }
+
+    // ── The seller's other decisions ───────────────────────────────────────
+    //
+    // Every one is a single transaction and asks the database, first, whether the user is an enabled seller of the tenant. Locks are taken
+    // in the one order used everywhere: payment, then order, then match. (A rejection locks the match alone, which cannot deadlock: it
+    // holds that one lock and waits for no other.)
+
+    private static final Set<String> ACTIVE_MATCH = Set.of("AUTO", "CONFIRMED");
+
+    /** The seller rejects a suggestion. The pair is remembered: the engine does not propose or apply it again. */
+    public Decision reject(UUID tenantId, UUID matchId, UUID actor) {
+        Objects.requireNonNull(matchId, "matchId");
+        Objects.requireNonNull(actor, "actor");
+        Decision decision = decide(tenantId, c -> {
+            if (!matches.isSellerWithin(c, tenantId, actor)) {
+                return Decision.refused(Reason.NOT_A_SELLER);
+            }
+            Optional<MatchRepository.MatchRow> row = matches.lockMatchWithin(c, tenantId, matchId);
+            if (row.isEmpty()) {
+                return Decision.refused(Reason.NOT_FOUND);
+            }
+            actions.after(ActionStep.LOCKED, c);
+            if (!"SUGGESTED".equals(row.get().state())) {
+                return Decision.refused(Reason.NOT_SUGGESTED);
+            }
+            expectOne(matches.rejectWithin(c, tenantId, matchId, actor, clock.instant()));
+            actions.after(ActionStep.MATCH_REJECTED, c);
+            AuditLogRepository.appendWithin(c, tenantId, actor, "MATCH_REJECTED", matchId.toString());
+            actions.after(ActionStep.AUDIT, c);
+            return Decision.done(matchId, null);
+        });
+        if (decision.done()) {
+            events.rejected(tenantId, matchId);
+        } else {
+            events.refused(tenantId, "REJECT", matchId, decision.reason());
+        }
+        return decision;
+    }
+
+    /**
+     * The seller undoes an active match: the posting is reversed (a new transaction that mirrors it, the original untouched), the match
+     * becomes {@code REVERSED} with who and when, the order status is recomputed from its remaining matches and the payment is free
+     * again. The pair is remembered as declined. All in one transaction; a second unmatch of the same match is refused.
+     */
+    public Decision unmatch(UUID tenantId, UUID matchId, UUID actor) {
+        Objects.requireNonNull(matchId, "matchId");
+        Objects.requireNonNull(actor, "actor");
+        Decision decision = decide(tenantId, c -> unmatchWithin(c, tenantId, matchId, actor));
+        if (decision.done()) {
+            events.reversed(tenantId, matchId, decision.orderStatus());
+        } else {
+            events.refused(tenantId, "UNMATCH", matchId, decision.reason());
+        }
+        return decision;
+    }
+
+    private Decision unmatchWithin(Connection c, UUID tenantId, UUID matchId, UUID actor) throws SQLException {
+        if (!matches.isSellerWithin(c, tenantId, actor)) {
+            return Decision.refused(Reason.NOT_A_SELLER);
+        }
+        Optional<MatchRepository.MatchRow> hint = matches.matchWithin(c, tenantId, matchId);   // only to learn what to lock first
+        if (hint.isEmpty()) {
+            return Decision.refused(Reason.NOT_FOUND);
+        }
+        MatchRepository.LockedPayment pay = matches.lockPayment(c, tenantId, hint.get().paymentId()).orElseThrow();
+        actions.after(ActionStep.PAYMENT_LOCKED, c);
+        matches.lockOrder(c, tenantId, hint.get().orderId()).orElseThrow();
+        MatchRepository.MatchRow match = matches.lockMatchWithin(c, tenantId, matchId).orElseThrow();   // read again, now that the locks are held
+        actions.after(ActionStep.LOCKED, c);
+        if (!ACTIVE_MATCH.contains(match.state())) {
+            return Decision.refused(Reason.NOT_ACTIVE);
+        }
+        Instant now = clock.instant();
+        ledger.reverseWithin(c, tenantId, match.ledgerTxnId(), UUID.randomUUID(), now);
+        actions.after(ActionStep.REVERSAL_POSTED, c);
+        expectOne(matches.reverseMatchWithin(c, tenantId, matchId, actor, now));
+        actions.after(ActionStep.MATCH_REVERSED, c);
+        // The order was consistent, so its active matches added up to at most its total; one of them, of at least 1, is gone: what is left
+        // is below the total, and the order is either untouched or partly paid. It cannot be paid.
+        long stillApplied = matches.appliedWithin(c, tenantId, match.orderId());
+        String orderStatus = stillApplied == 0 ? "PENDING_PAYMENT" : "PARTIALLY_PAID";
+        expectOne(matches.setOrderStatusWithin(c, tenantId, match.orderId(), orderStatus));
+        actions.after(ActionStep.ORDER_STATUS, c);
+        expectOne(matches.setPaymentStatusWithin(c, tenantId, pay.id(), pay.hasTransactionId() ? "RECEIVED" : "UNVERIFIED"));
+        actions.after(ActionStep.PAYMENT_STATUS, c);
+        AuditLogRepository.appendWithin(c, tenantId, actor, "MATCH_REVERSED", matchId.toString());
+        actions.after(ActionStep.AUDIT, c);
+        return Decision.done(matchId, orderStatus);
+    }
+
+    /**
+     * The seller says a received payment belongs to no order: its status becomes {@code UNMATCHED} and every open suggestion for it is
+     * rejected, by them (so none is proposed again). Only the seller sets this status; the engine never does. Only a {@code RECEIVED}
+     * payment can be set aside.
+     */
+    public Decision markUnmatched(UUID tenantId, UUID paymentId, UUID actor) {
+        return movePayment(tenantId, paymentId, actor, "RECEIVED", "UNMATCHED", "PAYMENT_UNMATCHED");
+    }
+
+    /** The seller takes a payment back from {@code UNMATCHED} to {@code RECEIVED}, so that it can be matched again. */
+    public Decision reopen(UUID tenantId, UUID paymentId, UUID actor) {
+        return movePayment(tenantId, paymentId, actor, "UNMATCHED", "RECEIVED", "PAYMENT_REOPENED");
+    }
+
+    private Decision movePayment(UUID tenantId, UUID paymentId, UUID actor, String from, String to, String auditAction) {
+        Objects.requireNonNull(paymentId, "paymentId");
+        Objects.requireNonNull(actor, "actor");
+        Decision decision = decide(tenantId, c -> {
+            if (!matches.isSellerWithin(c, tenantId, actor)) {
+                return Decision.refused(Reason.NOT_A_SELLER);
+            }
+            Optional<MatchRepository.LockedPayment> payment = matches.lockPayment(c, tenantId, paymentId);
+            if (payment.isEmpty()) {
+                return Decision.refused(Reason.NOT_FOUND);
+            }
+            actions.after(ActionStep.LOCKED, c);
+            if (!from.equals(payment.get().status())) {
+                return Decision.refused(Reason.PAYMENT_STATUS_NOT_ALLOWED);
+            }
+            expectOne(matches.setPaymentStatusWithin(c, tenantId, paymentId, to));
+            actions.after(ActionStep.PAYMENT_STATUS, c);
+            if ("UNMATCHED".equals(to)) {
+                matches.rejectOpenForPaymentWithin(c, tenantId, paymentId, actor, clock.instant());
+                actions.after(ActionStep.SUGGESTIONS_REJECTED, c);
+            }
+            AuditLogRepository.appendWithin(c, tenantId, actor, auditAction, paymentId.toString());
+            actions.after(ActionStep.AUDIT, c);
+            return Decision.done(paymentId, null);
+        });
+        if (decision.done()) {
+            events.paymentMoved(tenantId, paymentId, to);
+        } else {
+            events.refused(tenantId, auditAction, paymentId, decision.reason());
+        }
+        return decision;
+    }
+
+    private Decision decide(UUID tenantId, TenantScope.SqlWork<Decision> work) {
+        try {
+            return scope.call(tenantId, work);
+        } catch (SQLException | LedgerException e) {
+            throw new IllegalStateException("Could not complete a seller's action", e);
+        }
+    }
+
+    /**
+     * The seller asks the engine to look again at the tenant's open payments (the most recent {@code candidateCap}), for the case where
+     * a trigger was missed. Each payment is its own run, exactly as when it arrives: it can be matched automatically if everything
+     * holds, suggested, or left alone; a pair the seller rejected or reversed is never touched. A failure on one payment is logged and
+     * does not stop the others. A pass can only add matches and suggestions, never undo one; because a match made late in a pass can
+     * clear a rival for an earlier payment, a second pass may add more, and the passes stop changing things after at most as many passes as
+     * there are free payments (a property test checks this).
+     */
+    public RematchResult rematch(UUID tenantId, UUID actor) {
+        Objects.requireNonNull(actor, "actor");
+        boolean seller;
+        try {
+            seller = scope.call(tenantId, c -> matches.isSellerWithin(c, tenantId, actor));
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not check the user", e);
+        }
+        if (!seller) {
+            events.refused(tenantId, "REMATCH", tenantId, Reason.NOT_A_SELLER);
+            return new RematchResult(Reason.NOT_A_SELLER, 0, 0, 0);
+        }
+        AuditLogRepository audit = new AuditLogRepository(dataSource);
+        audit.append(tenantId, actor, "REMATCH", tenantId.toString());
+        int examined = 0;
+        int applied = 0;
+        int suggested = 0;
+        for (MatchRepository.PaymentCandidate candidate : matches.openPaymentCandidates(tenantId, null, config.candidateCap())) {
+            examined++;
+            try {
+                Run run = onPaymentRecorded(tenantId, candidate.facts().id());
+                if (run.kind() == RunKind.APPLIED) {
+                    applied++;
+                }
+                suggested += run.suggestions();
+            } catch (RuntimeException e) {
+                events.failed(tenantId, "payment", candidate.facts().id());
+            }
+        }
+        events.rematched(tenantId, examined, applied, suggested);
+        return new RematchResult(null, examined, applied, suggested);
     }
 
     /** A write that changed no row, or several, means the locked state was not what we believed: stop and roll back. */

@@ -137,7 +137,7 @@ CREATE TRIGGER trg_match_update_rules
     FOR EACH ROW EXECUTE FUNCTION match_update_rules();
 
 -- ── 2c. Consistency at commit (deferred, like the ledger balance check) ─────
--- Fires for a match that is, or was, active. Locks the order row, so that two transactions adding matches to one order check their sums
+-- Fires for a match that is, or was, active. Locks the order row (FOR NO KEY UPDATE, like every lock the matcher takes), so that two transactions adding matches to one order check their sums
 -- one after the other (the second sees the first's committed row) and cannot both pass. The application has already locked the
 -- payment and then the order, in that order, so this adds no new lock order and cannot deadlock with it.
 CREATE OR REPLACE FUNCTION match_assert_invariants()
@@ -169,7 +169,7 @@ BEGIN
         RAISE EXCEPTION 'match %: payment not found for this tenant', NEW.id USING ERRCODE = 'check_violation';
     END IF;
     SELECT total_minor, status, currency INTO v_ord_total, v_ord_status, v_ord_cur
-      FROM orders WHERE id = NEW.order_id AND tenant_id = NEW.tenant_id FOR UPDATE;
+      FROM orders WHERE id = NEW.order_id AND tenant_id = NEW.tenant_id FOR NO KEY UPDATE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'match %: order not found for this tenant', NEW.id USING ERRCODE = 'check_violation';
     END IF;

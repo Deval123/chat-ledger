@@ -39,7 +39,8 @@ class MatchRepositoryIsolationIT {
         assertThat(repository.forPayment(t.b.tenant, t.paymentB)).hasSize(1);
         assertThat(repository.forOrder(t.b.tenant, t.orderB)).hasSize(1);
         assertThat(repository.appliedMinor(t.b.tenant, t.orderB)).isEqualTo(5000);
-        assertThat(repository.wasRejected(t.b.tenant, t.openOrderB, t.openPaymentB)).isTrue();
+        assertThat(repository.declinedOrders(t.b.tenant, t.openPaymentB)).containsExactly(t.openOrderB);
+        assertThat(repository.declinedPayments(t.b.tenant, t.openOrderB)).containsExactly(t.openPaymentB);
         assertThat(repository.count(t.b.tenant)).isEqualTo(2);
         assertThat(repository.openOrders(t.b.tenant, "XAF", 100)).extracting(o -> o.id()).containsExactly(t.openOrderB);
         assertThat(repository.openPayments(t.b.tenant, "XAF", 100)).extracting(p -> p.id()).containsExactly(t.openPaymentB);
@@ -51,7 +52,8 @@ class MatchRepositoryIsolationIT {
         assertThat(repository.forPayment(t.a.tenant, t.paymentB)).isEmpty();
         assertThat(repository.forOrder(t.a.tenant, t.orderB)).isEmpty();
         assertThat(repository.appliedMinor(t.a.tenant, t.orderB)).isZero();
-        assertThat(repository.wasRejected(t.a.tenant, t.openOrderB, t.openPaymentB)).isFalse();
+        assertThat(repository.declinedOrders(t.a.tenant, t.openPaymentB)).isEmpty();
+        assertThat(repository.declinedPayments(t.a.tenant, t.openOrderB)).isEmpty();
         assertThat(repository.openOrders(t.a.tenant, "XAF", 100)).extracting(o -> o.id()).containsExactly(t.orderA);
         assertThat(repository.openPayments(t.a.tenant, "XAF", 100)).extracting(p -> p.id()).containsExactly(t.paymentA);
     }

@@ -8,7 +8,7 @@ Status: **approved by the owner** on all seventeen decisions as recommended, wit
 4. **Task 8** gets an optional line: a reconciliation check on the board.
 5. **D6:** the kill switch stays on by default.
 
-Progress: **stop 2a done** (6.1; see `docs/kiro-notes.md`, "Task 6, stop 2a"). **Stop 2b done, waiting for the owner to review and commit** (6.2: `MatchingService.apply`, the flows and postings, the engine, the hook in both ingestion services, the `ORDER_ACCEPTED` posting; see "Task 6, stop 2b"). Stop 3 (overrides, `rematch`, property tests) waits for the owner's go.
+Progress: **stop 2a done** (6.1; see `docs/kiro-notes.md`, "Task 6, stop 2a"). **Stop 2b done, waiting for the owner to review and commit** (6.2: `MatchingService.apply`, the flows and postings, the engine, the hook in both ingestion services, the `ORDER_ACCEPTED` posting; see "Task 6, stop 2b"). **Stop 3 done, waiting for the owner to review and commit** (6.3 and 6.4; see "Task 6, stop 3"). Tasks 6.1 to 6.4 are ticked.
 
 Implementation notes that refine the text below: the sender's last-four bonus (3 points) applies only when the name already agrees; the planner (`MatchPlanner`) is part of 6.1 and is pure; the insert-state trigger is dropped (the CHECKs and the consistency triggers cover it); the upper bound of the suggestion threshold (90) is not a separate check, it follows from the automatic threshold being at most 100 and at least 10 above it; the commit-time check locks the order row only (the application locks payment then order, so a second lock in the trigger added nothing); apostrophes are dropped from names (`N'Diaye` is `ndiaye`).
 

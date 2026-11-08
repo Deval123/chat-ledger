@@ -36,14 +36,14 @@ class MatchRepositoryWithinIT {
         UUID helper = MatchingFixture.user(w.tenant, "HELPER");
         UUID bySeller = f.payments.ingest(w.tenant, seller, id(), f.sms(1000, "Ana Kamga", MatchingFixture.PHONE, null)).paymentId();
         UUID byHelper = f.payments.ingest(w.tenant, helper, id(), f.sms(1001, "Ana Kamga", MatchingFixture.PHONE, null)).paymentId();
-        UUID byMachine = f.payments.ingest(w.tenant, null, id(), f.sms(1002, "Ana Kamga", MatchingFixture.PHONE, null)).paymentId();
+        UUID withoutActor = f.payments.ingest(w.tenant, null, id(), f.sms(1002, "Ana Kamga", MatchingFixture.PHONE, null)).paymentId();
         UUID unknown = w.payment(1003, "RECEIVED");   // written by hand: no audit entry
         assertThat(repository.paymentCandidate(w.tenant, bySeller).orElseThrow().recorder()).isEqualTo(Recorder.SELLER);
         assertThat(repository.paymentCandidate(w.tenant, byHelper).orElseThrow().recorder()).isEqualTo(Recorder.HELPER);
-        assertThat(repository.paymentCandidate(w.tenant, byMachine).orElseThrow().recorder()).isEqualTo(Recorder.MACHINE);
+        assertThat(repository.paymentCandidate(w.tenant, withoutActor).orElseThrow().recorder()).as("no actor is not the machine").isEqualTo(Recorder.HELPER);
         assertThat(repository.paymentCandidate(w.tenant, unknown).orElseThrow().recorder()).as("no trail, no trust").isEqualTo(Recorder.HELPER);
         assertThat(repository.openPaymentCandidates(w.tenant, "XAF", 100)).extracting(MatchRepository.PaymentCandidate::recorder)
-                .containsExactlyInAnyOrder(Recorder.SELLER, Recorder.HELPER, Recorder.MACHINE, Recorder.HELPER);
+                .containsExactlyInAnyOrder(Recorder.SELLER, Recorder.HELPER, Recorder.HELPER, Recorder.HELPER);
     }
 
     @Test
@@ -110,26 +110,26 @@ class MatchRepositoryWithinIT {
         assertThat(owner.paymentCandidate(w.tenant, helped).orElseThrow().recorder()).as("another tenant's entry").isEqualTo(Recorder.HELPER);
         assertThat(owner.paymentCandidate(w.tenant, foreignActor).orElseThrow().recorder()).as("an actor of another tenant").isEqualTo(Recorder.HELPER);
         assertThat(owner.paymentCandidate(w.tenant, otherAction).orElseThrow().recorder()).as("another action").isEqualTo(Recorder.HELPER);
-        assertThat(owner.paymentCandidate(w.tenant, tie).orElseThrow().recorder()).as("a tie is broken by the id").isEqualTo(Recorder.MACHINE);
+        assertThat(owner.paymentCandidate(w.tenant, tie).orElseThrow().recorder()).as("a tie is broken by the id (the smaller id has no actor: a helper)").isEqualTo(Recorder.HELPER);
         assertThat(owner.paymentCandidate(w.tenant, late).orElseThrow().recorder()).as("the first entry stands").isEqualTo(Recorder.HELPER);
         assertThat(owner.openPaymentCandidates(w.tenant, "XAF", 100)).extracting(MatchRepository.PaymentCandidate::recorder)
-                .containsExactlyInAnyOrder(Recorder.HELPER, Recorder.HELPER, Recorder.HELPER, Recorder.HELPER, Recorder.MACHINE);
+                .containsOnly(Recorder.HELPER);
 
         // The lock reads the same recorder as the list.
         new TenantScope(MatchWorld.DB.migrateDataSource()).call(w.tenant, c -> {
             assertThat(owner.lockPayment(c, w.tenant, helped).orElseThrow().recorder()).isEqualTo(Recorder.HELPER);
             assertThat(owner.lockPayment(c, w.tenant, foreignActor).orElseThrow().recorder()).isEqualTo(Recorder.HELPER);
             assertThat(owner.lockPayment(c, w.tenant, otherAction).orElseThrow().recorder()).isEqualTo(Recorder.HELPER);
-            assertThat(owner.lockPayment(c, w.tenant, tie).orElseThrow().recorder()).isEqualTo(Recorder.MACHINE);
+            assertThat(owner.lockPayment(c, w.tenant, tie).orElseThrow().recorder()).isEqualTo(Recorder.HELPER);
             assertThat(owner.lockPayment(c, w.tenant, late).orElseThrow().recorder()).isEqualTo(Recorder.HELPER);
             return null;
         });
-        // and the seller and the machine are still trusted when the trail is honest
+        // and the seller is still trusted when the trail is honest
         UUID bySeller = f.payments.ingest(w.tenant, seller, id(), f.sms(1004, "Ana Kamga", MatchingFixture.PHONE, null)).paymentId();
-        UUID byMachine = f.payments.ingest(w.tenant, null, id(), f.sms(1005, "Ana Kamga", MatchingFixture.PHONE, null)).paymentId();
+        UUID withoutActor = f.payments.ingest(w.tenant, null, id(), f.sms(1005, "Ana Kamga", MatchingFixture.PHONE, null)).paymentId();
         new TenantScope(MatchWorld.DB.migrateDataSource()).call(w.tenant, c -> {
             assertThat(owner.lockPayment(c, w.tenant, bySeller).orElseThrow().recorder()).isEqualTo(Recorder.SELLER);
-            assertThat(owner.lockPayment(c, w.tenant, byMachine).orElseThrow().recorder()).isEqualTo(Recorder.MACHINE);
+            assertThat(owner.lockPayment(c, w.tenant, withoutActor).orElseThrow().recorder()).as("no actor is not the machine").isEqualTo(Recorder.HELPER);
             return null;
         });
     }
@@ -137,7 +137,7 @@ class MatchRepositoryWithinIT {
     @Test
     void only_the_exact_words_seller_and_machine_raise_trust() {
         assertThat(MatchRepository.recorderOf("SELLER")).isEqualTo(Recorder.SELLER);
-        assertThat(MatchRepository.recorderOf("MACHINE")).isEqualTo(Recorder.MACHINE);
+        assertThat(MatchRepository.recorderOf("MACHINE")).as("no stored word makes the machine before task 11").isEqualTo(Recorder.HELPER);
         assertThat(MatchRepository.recorderOf("HELPER")).isEqualTo(Recorder.HELPER);
         for (String other : new String[]{null, "", "seller", "machine", "ADMIN", "SELLER ", "OWNER"}) {
             assertThat(MatchRepository.recorderOf(other)).as(String.valueOf(other)).isEqualTo(Recorder.HELPER);
@@ -232,11 +232,18 @@ class MatchRepositoryWithinIT {
         final UUID freeB = b.payment(1000, "RECEIVED");
 
         UUID suggestionB;
+        UUID secondSuggestionB;
+        UUID thirdSuggestionB;
+        UUID activeB;
 
         Two() {
             // 2,000 of the 5,000 are paid through the real service, so the order is posted, partly paid, and has an active match.
             f.matcher.apply(b.tenant, orderB, paidB, MatchingService.Mode.CONFIRM, sellerB);
             suggestionB = b.suggested(orderB, freeB);
+            secondSuggestionB = b.suggested(twinB, freeB);
+            thirdSuggestionB = b.suggested(b.order(3000, "PENDING_PAYMENT", "TH-1", null), freeB);
+            activeB = f.repository.forPayment(b.tenant, paidB).get(0).id();
+            b.rejected(twinB, paidB, true);   // the seller said no to this pair
         }
     }
 
@@ -254,6 +261,10 @@ class MatchRepositoryWithinIT {
                 assertThat(asOwner.referenceSharedWithin(c, t.b.tenant, "SHARED-1")).isTrue();
                 assertThat(asOwner.suggestionWithin(c, t.b.tenant, t.orderB, t.freeB)).contains(t.suggestionB);
                 assertThat(asOwner.orderPostedWithin(c, t.b.tenant, t.orderB)).isTrue();
+                assertThat(asOwner.matchWithin(c, t.b.tenant, t.suggestionB)).isPresent();
+                assertThat(asOwner.lockMatchWithin(c, t.b.tenant, t.suggestionB)).isPresent();
+                assertThat(asOwner.isSellerWithin(c, t.b.tenant, t.sellerB)).isTrue();
+                assertThat(asOwner.wasDeclinedWithin(c, t.b.tenant, t.twinB, t.paidB)).isTrue();
 
                 // Tenant A asks for B's rows by their exact ids.
                 assertThat(asOwner.lockPayment(c, t.a.tenant, t.freeB)).isEmpty();
@@ -262,6 +273,10 @@ class MatchRepositoryWithinIT {
                 assertThat(asOwner.referenceSharedWithin(c, t.a.tenant, "SHARED-1")).isFalse();
                 assertThat(asOwner.suggestionWithin(c, t.a.tenant, t.orderB, t.freeB)).isEmpty();
                 assertThat(asOwner.orderPostedWithin(c, t.a.tenant, t.orderB)).isFalse();
+                assertThat(asOwner.matchWithin(c, t.a.tenant, t.suggestionB)).isEmpty();
+                assertThat(asOwner.lockMatchWithin(c, t.a.tenant, t.suggestionB)).isEmpty();
+                assertThat(asOwner.isSellerWithin(c, t.a.tenant, t.sellerB)).as("a seller of another tenant").isFalse();
+                assertThat(asOwner.wasDeclinedWithin(c, t.a.tenant, t.twinB, t.paidB)).isFalse();
 
                 // And A cannot change B's rows: every write touches nothing.
                 Instant now = Instant.now();
@@ -271,8 +286,17 @@ class MatchRepositoryWithinIT {
                 assertThat(asOwner.supersedeForPaymentWithin(c, t.a.tenant, t.freeB, UUID.randomUUID(), now)).isZero();
                 assertThat(asOwner.supersedeForOrderWithin(c, t.a.tenant, t.orderB, UUID.randomUUID(), now)).isZero();
                 assertThat(asOwner.confirmSuggestionWithin(c, t.a.tenant, t.suggestionB, t.a.user, now, 1000, 0, UUID.randomUUID())).isZero();
+                assertThat(asOwner.rejectWithin(c, t.a.tenant, t.suggestionB, t.a.user, now)).isZero();
+                assertThat(asOwner.rejectOpenForPaymentWithin(c, t.a.tenant, t.freeB, t.a.user, now)).isZero();
+                assertThat(asOwner.reverseMatchWithin(c, t.a.tenant, t.activeB, t.a.user, now)).isZero();
                 // Controls for the writes: B itself can (the rows are changed, then rolled back).
                 assertThat(asOwner.supersedeWithin(c, t.b.tenant, t.suggestionB, now)).isEqualTo(1);
+                assertThat(asOwner.rejectWithin(c, t.b.tenant, t.thirdSuggestionB, t.sellerB, now)).isEqualTo(1);
+                assertThat(asOwner.rejectWithin(c, t.b.tenant, t.thirdSuggestionB, t.sellerB, now)).as("only an open suggestion").isZero();
+                assertThat(asOwner.rejectOpenForPaymentWithin(c, t.b.tenant, t.freeB, t.sellerB, now)).as("the one still open").isEqualTo(1);
+                assertThat(asOwner.rejectOpenForPaymentWithin(c, t.b.tenant, t.freeB, t.sellerB, now)).as("nothing open is left for it").isZero();
+                assertThat(asOwner.reverseMatchWithin(c, t.b.tenant, t.suggestionB, t.sellerB, now)).as("only an active match").isZero();
+                assertThat(asOwner.reverseMatchWithin(c, t.b.tenant, t.activeB, t.sellerB, now)).isEqualTo(1);
             } finally {
                 c.rollback();
             }
@@ -349,40 +373,10 @@ class MatchRepositoryWithinIT {
     }
 
     // ── The indexes the matcher relies on ──────────────────────────────────
-
-    /** The plan of a query with sequential scans switched off, so an index that exists and fits is the one the plan names. */
-    private static String plan(String query) throws SQLException {
-        try (Connection c = MatchWorld.DB.migrateDataSource().getConnection()) {
-            c.setAutoCommit(false);
-            try (Statement s = c.createStatement()) {
-                s.execute("SET LOCAL enable_seqscan = off");
-                StringBuilder plan = new StringBuilder();
-                try (ResultSet rs = s.executeQuery("EXPLAIN " + query)) {
-                    while (rs.next()) {
-                        plan.append(rs.getString(1)).append('\n');
-                    }
-                }
-                return plan.toString();
-            } finally {
-                c.rollback();
-            }
-        }
-    }
-
-    @Test
-    void the_candidate_queries_and_the_lookups_have_their_indexes() throws SQLException {
-        UUID t = UUID.randomUUID();
-        // These are the shapes of the matcher's queries (the tenant and status filters, the ordering, the reference key, the audit lookup).
-        // Each plan names the index (a planner on a nearly empty table says little more, so the definitions are pinned in the next test).
-        assertThat(plan("SELECT o.id FROM orders o WHERE o.tenant_id = '" + t + "' AND o.status IN ('PENDING_PAYMENT', 'PARTIALLY_PAID') "
-                + "ORDER BY o.created_at DESC LIMIT 200")).contains("idx_orders_tenant_status");
-        assertThat(plan("SELECT p.id FROM payment p WHERE p.tenant_id = '" + t + "' AND p.status IN ('RECEIVED', 'UNVERIFIED') "
-                + "ORDER BY p.created_at DESC LIMIT 200")).contains("idx_payment_tenant_status");
-        assertThat(plan("SELECT count(*) FROM orders WHERE tenant_id = '" + t + "' AND upper(order_ref) = upper('A-1') "
-                + "AND status IN ('PENDING_PAYMENT', 'PARTIALLY_PAID')")).contains("idx_orders_ref_upper");
-        assertThat(plan("SELECT a.actor FROM audit_log a WHERE a.tenant_id = '" + t + "' AND a.action = 'PAYMENT_INGESTED' AND a.subject = '" + UUID.randomUUID() + "' "
-                + "ORDER BY a.at, a.id LIMIT 1")).contains("idx_audit_log_payment_ingested");
-    }
+    //
+    // Their definitions are pinned. A plan on a nearly empty table says little and changes with whatever else the database holds (it
+    // chose another index as soon as other tests had written rows), so no test claims that the planner uses an index; that is a named
+    // limitation (design register item 66).
 
     private static String indexDef(String name) throws SQLException {
         try (Connection c = MatchWorld.DB.migrateDataSource().getConnection(); Statement s = c.createStatement();

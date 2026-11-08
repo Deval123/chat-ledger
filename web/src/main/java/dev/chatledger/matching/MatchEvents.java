@@ -31,6 +31,27 @@ public class MatchEvents {
         LOG.info("match suggestions stored tenant={} count={}", tenantId, count);
     }
 
+    /** A seller's action that was refused, with the action's name (a constant of ours), the id it was about and a code. */
+    public void refused(UUID tenantId, String action, UUID subject, MatchingService.Reason reason) {
+        LOG.info("seller action refused tenant={} action={} subject={} reason={}", tenantId, action, subject, reason);
+    }
+
+    public void rejected(UUID tenantId, UUID matchId) {
+        LOG.info("suggestion rejected tenant={} match={}", tenantId, matchId);
+    }
+
+    public void reversed(UUID tenantId, UUID matchId, String orderStatus) {
+        LOG.info("match reversed tenant={} match={} order={}", tenantId, matchId, orderStatus);
+    }
+
+    public void paymentMoved(UUID tenantId, UUID paymentId, String status) {
+        LOG.info("payment status set by the seller tenant={} payment={} status={}", tenantId, paymentId, status);
+    }
+
+    public void rematched(UUID tenantId, int examined, int applied, int suggested) {
+        LOG.info("rematch finished tenant={} examined={} applied={} suggested={}", tenantId, examined, applied, suggested);
+    }
+
     public void failed(UUID tenantId, String subject, UUID id) {
         LOG.warn("matching failed, the record stays unmatched tenant={} {}={}", tenantId, subject, id);
     }

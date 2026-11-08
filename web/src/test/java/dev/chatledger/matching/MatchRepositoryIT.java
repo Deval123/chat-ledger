@@ -193,18 +193,22 @@ class MatchRepositoryIT {
     }
 
     @Test
-    void a_pair_the_seller_rejected_is_remembered_but_one_the_system_superseded_is_not() {
+    void a_pair_the_seller_rejected_or_reversed_is_remembered_but_one_the_system_superseded_is_not() {
         UUID order = w.order(5000, "PENDING_PAYMENT", null, null);
         UUID bySeller = w.payment(5000, "RECEIVED");
         UUID bySystem = w.payment(5000, "RECEIVED");
         UUID neither = w.payment(5000, "RECEIVED");
+        UUID reversed = w.payment(1000, "RECEIVED");
         w.rejected(order, bySeller, true);
         w.rejected(order, bySystem, false);
-        assertThat(repository.wasRejected(w.tenant, order, bySeller)).isTrue();
-        assertThat(repository.wasRejected(w.tenant, order, bySystem)).isFalse();
-        assertThat(repository.wasRejected(w.tenant, order, neither)).isFalse();
-        assertThat(repository.wasRejected(w.tenant, UUID.randomUUID(), bySeller)).isFalse();
-        // after a rejection the same pair can be proposed again by hand or by a later run; the repository does not forbid it
+        w.reversedMatch(order, reversed, 1000);
+        assertThat(repository.declinedPayments(w.tenant, order)).containsExactlyInAnyOrder(bySeller, reversed);
+        assertThat(repository.declinedOrders(w.tenant, bySeller)).containsExactly(order);
+        assertThat(repository.declinedOrders(w.tenant, reversed)).containsExactly(order);
+        assertThat(repository.declinedOrders(w.tenant, bySystem)).isEmpty();
+        assertThat(repository.declinedOrders(w.tenant, neither)).isEmpty();
+        assertThat(repository.declinedPayments(w.tenant, UUID.randomUUID())).isEmpty();
+        // after a rejection the same pair can be proposed again by hand; the repository does not forbid it
         assertThat(repository.insertSuggestion(w.tenant, order, bySeller, 70, "[]")).isPresent();
     }
 

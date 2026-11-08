@@ -45,12 +45,12 @@ final class MatchingFixture {
 
     final MutableClock clock = new MutableClock();
     final PhoneKeys phoneKeys = new PhoneKeys(new KeyedHasher(UUID.randomUUID() + "" + UUID.randomUUID()));
-    final MatchRepository repository = new MatchRepository(DB.appDataSource());
+    final MatchRepository repository;
     final MatchingService matcher;
     final OrderIngestionService orders;
     final PaymentIngestionService payments;
-    final OrderRepository orderRepository = new OrderRepository(DB.appDataSource());
-    final PaymentRepository paymentRepository = new PaymentRepository(DB.appDataSource());
+    final OrderRepository orderRepository;
+    final PaymentRepository paymentRepository;
 
     MatchingFixture() {
         this(MatchConfig.defaults(), MatchingService.StepHook.NONE, true);
@@ -63,17 +63,38 @@ final class MatchingFixture {
 
     /** Ingestion calls the given trigger instead of the matcher (null means the matcher itself). */
     MatchingFixture(MatchTrigger custom) {
-        this(MatchConfig.defaults(), MatchingService.StepHook.NONE, custom);
+        this(MatchConfig.defaults(), MatchingService.StepHook.NONE, custom, MatchingService.ActionHook.NONE);
+    }
+
+    /** No trigger from ingestion; the given hook runs after each step of the seller's reverse, reject and payment actions. */
+    MatchingFixture(MatchingService.ActionHook actions) {
+        this(MatchConfig.defaults(), MatchingService.StepHook.NONE, MatchTrigger.NONE, actions);
     }
 
     private MatchingFixture(MatchConfig config, MatchingService.StepHook hook, MatchTrigger custom) {
-        matcher = new MatchingService(DB.appDataSource(), repository, config, new MatchEvents(), clock, hook);
+        this(config, hook, custom, MatchingService.ActionHook.NONE);
+    }
+
+    private MatchingFixture(MatchConfig config, MatchingService.StepHook hook, MatchTrigger custom, MatchingService.ActionHook actions) {
+        this(DB.appDataSource(), config, hook, custom, actions);
+    }
+
+    /** The engine runs at ingestion, as in production, over the given (for example pooled) data source of the application role. */
+    MatchingFixture(javax.sql.DataSource appDataSource) {
+        this(appDataSource, MatchConfig.defaults(), MatchingService.StepHook.NONE, null, MatchingService.ActionHook.NONE);
+    }
+
+    private MatchingFixture(javax.sql.DataSource ds, MatchConfig config, MatchingService.StepHook hook, MatchTrigger custom, MatchingService.ActionHook actions) {
+        repository = new MatchRepository(ds);
+        orderRepository = new OrderRepository(ds);
+        paymentRepository = new PaymentRepository(ds);
+        matcher = new MatchingService(ds, repository, config, new MatchEvents(), clock, hook, actions);
         RateLimits limits = new RateLimits(new InMemoryRateLimiter(clock,
                 Map.of(RateLimits.INGESTION_TENANT, RateRule.parse("test", "1000000/1m")), 10_000, Duration.ofHours(1)));
         MatchTrigger t = custom == null ? matcher : custom;
-        orders = new OrderIngestionService(new TenantRepository(DB.appDataSource()), new CatalogRepository(DB.appDataSource()), orderRepository, limits,
+        orders = new OrderIngestionService(new TenantRepository(ds), new CatalogRepository(ds), orderRepository, limits,
                 phoneKeys, new IngestionEvents(), t);
-        payments = new PaymentIngestionService(new TenantRepository(DB.appDataSource()), paymentRepository, TEMPLATES, limits, phoneKeys,
+        payments = new PaymentIngestionService(new TenantRepository(ds), paymentRepository, TEMPLATES, limits, phoneKeys,
                 new PaymentEvents(), clock, t);
     }
 

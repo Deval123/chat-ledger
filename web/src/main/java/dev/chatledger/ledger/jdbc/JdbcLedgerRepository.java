@@ -133,6 +133,41 @@ public final class JdbcLedgerRepository implements LedgerRepository {
         write(c, txn);
     }
 
+    /**
+     * Posts the reversal of a transaction of the tenant on the caller's connection, in the caller's transaction (an unmatch reverses the
+     * posting of its match and changes the match, the order and the payment together). The original is read, never changed; the reversal
+     * is its mirror, linked to it. The same checks as {@code LedgerService.reverse}: the original must exist for this tenant, must not
+     * itself be a reversal, and must not already be reversed (a second reversal is also refused by the unique index, which is the
+     * guard against a race; a database error would abort the caller's transaction, so the explicit check comes first).
+     *
+     * @throws AlreadyReversedException if it was reversed before
+     * @throws LedgerException if it does not exist for this tenant, or is itself a reversal
+     */
+    public LedgerTransaction reverseWithin(Connection c, UUID tenantId, UUID txnId, UUID reversalId, Instant at) {
+        try {
+            LedgerTransaction original = readTransaction(c, tenantId, txnId)
+                    .orElseThrow(() -> new LedgerException("Transaction not found for this tenant: " + txnId));
+            LedgerTransaction reversal = original.reverse(reversalId, at);
+            if (reversedWithin(c, tenantId, txnId)) {
+                throw new AlreadyReversedException(txnId);
+            }
+            write(c, reversal);
+            return reversal;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not reverse transaction " + txnId, e);
+        }
+    }
+
+    private static boolean reversedWithin(Connection c, UUID tenantId, UUID txnId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM ledger_txn WHERE tenant_id = ? AND reverses_txn_id = ?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, txnId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
     private void write(Connection c, LedgerTransaction txn) {
         LedgerChecks.verify(txn, new ConnectionLookup(c));
         try {
