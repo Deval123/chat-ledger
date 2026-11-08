@@ -1,5 +1,6 @@
 package dev.chatledger.matching;
 
+import dev.chatledger.tenancy.DbTime;
 import dev.chatledger.tenancy.TenantScope;
 import org.springframework.stereotype.Repository;
 
@@ -505,7 +506,7 @@ public class MatchRepository {
             ps.setString(9, m.state());
             ps.setObject(10, m.ledgerTxnId());
             setUuid(ps, 11, m.decidedBy());
-            ps.setObject(12, m.decidedAt() == null ? null : m.decidedAt().atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(12, m.decidedAt() == null ? null : DbTime.utc(m.decidedAt()));
             return ps.executeUpdate();
         }
     }
@@ -517,7 +518,7 @@ public class MatchRepository {
                 "UPDATE match SET state = 'CONFIRMED', decided_by = ?, decided_at = ?, amount_minor = ?, excess_minor = ?, ledger_txn_id = ? "
                         + "WHERE tenant_id = ? AND id = ? AND state = 'SUGGESTED'")) {
             ps.setObject(1, decidedBy);
-            ps.setObject(2, decidedAt.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(2, DbTime.utc(decidedAt));
             ps.setLong(3, amountMinor);
             ps.setLong(4, excessMinor);
             ps.setObject(5, ledgerTxnId);
@@ -531,7 +532,7 @@ public class MatchRepository {
     public int supersedeWithin(Connection c, UUID tenantId, UUID matchId, Instant at) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
                 "UPDATE match SET state = 'REJECTED', decided_at = ? WHERE tenant_id = ? AND id = ? AND state = 'SUGGESTED'")) {
-            ps.setObject(1, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(1, DbTime.utc(at));
             ps.setObject(2, tenantId);
             ps.setObject(3, matchId);
             return ps.executeUpdate();
@@ -542,7 +543,7 @@ public class MatchRepository {
     public int supersedeForPaymentWithin(Connection c, UUID tenantId, UUID paymentId, UUID exceptMatchId, Instant at) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
                 "UPDATE match SET state = 'REJECTED', decided_at = ? WHERE tenant_id = ? AND payment_id = ? AND state = 'SUGGESTED' AND id <> ?")) {
-            ps.setObject(1, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(1, DbTime.utc(at));
             ps.setObject(2, tenantId);
             ps.setObject(3, paymentId);
             ps.setObject(4, exceptMatchId);
@@ -554,7 +555,7 @@ public class MatchRepository {
     public int supersedeForOrderWithin(Connection c, UUID tenantId, UUID orderId, UUID exceptMatchId, Instant at) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
                 "UPDATE match SET state = 'REJECTED', decided_at = ? WHERE tenant_id = ? AND order_id = ? AND state = 'SUGGESTED' AND id <> ?")) {
-            ps.setObject(1, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(1, DbTime.utc(at));
             ps.setObject(2, tenantId);
             ps.setObject(3, orderId);
             ps.setObject(4, exceptMatchId);
@@ -655,7 +656,7 @@ public class MatchRepository {
         try (PreparedStatement ps = c.prepareStatement(
                 "UPDATE match SET state = 'REJECTED', decided_by = ?, decided_at = ? WHERE tenant_id = ? AND id = ? AND state = 'SUGGESTED'")) {
             ps.setObject(1, decidedBy);
-            ps.setObject(2, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(2, DbTime.utc(at));
             ps.setObject(3, tenantId);
             ps.setObject(4, matchId);
             return ps.executeUpdate();
@@ -667,7 +668,7 @@ public class MatchRepository {
         try (PreparedStatement ps = c.prepareStatement(
                 "UPDATE match SET state = 'REJECTED', decided_by = ?, decided_at = ? WHERE tenant_id = ? AND payment_id = ? AND state = 'SUGGESTED'")) {
             ps.setObject(1, decidedBy);
-            ps.setObject(2, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(2, DbTime.utc(at));
             ps.setObject(3, tenantId);
             ps.setObject(4, paymentId);
             return ps.executeUpdate();
@@ -679,7 +680,7 @@ public class MatchRepository {
         try (PreparedStatement ps = c.prepareStatement(
                 "UPDATE match SET state = 'REVERSED', decided_by = ?, decided_at = ? WHERE tenant_id = ? AND id = ? AND state IN ('AUTO', 'CONFIRMED')")) {
             ps.setObject(1, decidedBy);
-            ps.setObject(2, at.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(2, DbTime.utc(at));
             ps.setObject(3, tenantId);
             ps.setObject(4, matchId);
             return ps.executeUpdate();

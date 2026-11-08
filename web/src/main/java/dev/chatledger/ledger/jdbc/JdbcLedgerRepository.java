@@ -11,6 +11,7 @@ import dev.chatledger.ledger.LedgerException;
 import dev.chatledger.ledger.LedgerRepository;
 import dev.chatledger.ledger.LedgerTransaction;
 import dev.chatledger.ledger.Side;
+import dev.chatledger.tenancy.DbTime;
 import dev.chatledger.tenancy.TenantScope;
 import org.postgresql.util.PSQLException;
 
@@ -147,7 +148,7 @@ public final class JdbcLedgerRepository implements LedgerRepository {
         try {
             LedgerTransaction original = readTransaction(c, tenantId, txnId)
                     .orElseThrow(() -> new LedgerException("Transaction not found for this tenant: " + txnId));
-            LedgerTransaction reversal = original.reverse(reversalId, at);
+            LedgerTransaction reversal = original.reverse(reversalId, DbTime.micros(at));   // the reversal returned is the one stored
             if (reversedWithin(c, tenantId, txnId)) {
                 throw new AlreadyReversedException(txnId);
             }
@@ -215,7 +216,7 @@ public final class JdbcLedgerRepository implements LedgerRepository {
             ps.setString(4, txn.refType());
             ps.setObject(5, txn.refId());
             ps.setObject(6, txn.reversesTxnId());
-            ps.setObject(7, OffsetDateTime.ofInstant(txn.createdAt(), ZoneOffset.UTC));
+            ps.setObject(7, DbTime.utc(txn.createdAt()));
             ps.executeUpdate();
         }
     }

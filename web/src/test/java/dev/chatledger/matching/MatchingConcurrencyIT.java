@@ -141,8 +141,16 @@ class MatchingConcurrencyIT {
         List<Object> results = together(tasks);
 
         noThrowable(results);
-        assertThat(results.stream().filter(r -> ((MatchingService.Run) r).kind() == MatchingService.RunKind.APPLIED)).hasSize(1);
-        assertThat(results.stream().filter(r -> ((MatchingService.Run) r).kind() == MatchingService.RunKind.SKIPPED)).hasSize(THREADS - 1);
+        List<MatchingService.RunKind> kinds = results.stream().map(r -> ((MatchingService.Run) r).kind()).toList();
+        // Exactly one run applies the match. Every other run changes nothing, in one of two ways, both legitimate and both seen on a slow
+        // machine: it read the payment as free before the winner committed and then met it matched under the lock (SKIPPED), or it read
+        // the payment before the commit but the open orders after it, so the order was no longer a candidate (NOTHING). Neither may
+        // suggest, apply, or store anything.
+        assertThat(kinds).as("the kind of every run: %s", kinds).filteredOn(k -> k == MatchingService.RunKind.APPLIED).hasSize(1);
+        assertThat(kinds).as("the kind of every run: %s", kinds).filteredOn(k -> k != MatchingService.RunKind.APPLIED)
+                .hasSize(THREADS - 1).isSubsetOf(MatchingService.RunKind.SKIPPED, MatchingService.RunKind.NOTHING);
+        assertThat(results.stream().mapToInt(r -> ((MatchingService.Run) r).suggestions()).sum()).isZero();
+        assertThat(count("SELECT count(*) FROM match WHERE tenant_id = ?", w.tenant, null)).as("no suggestion either").isEqualTo(1);
         assertThat(count("SELECT count(*) FROM match WHERE tenant_id = ? AND state = 'AUTO'", w.tenant, null)).isEqualTo(1);
         assertThat(MatchingFixture.ledger(w.tenant)).containsExactly("ORDER_ACCEPTED 1100 D5000", "ORDER_ACCEPTED 4000 C5000",
                 "PAYMENT_MATCHED 1000 D5000", "PAYMENT_MATCHED 1100 C5000");

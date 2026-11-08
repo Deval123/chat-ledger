@@ -1,5 +1,6 @@
 package dev.chatledger.matching;
 
+import dev.chatledger.tenancy.DbTime;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -56,7 +57,7 @@ class UnmatchIT {
         MatchRepository.Stored after = f.repository.find(tenant, before.id()).orElseThrow();
         assertThat(after.state()).isEqualTo("REVERSED");
         assertThat(after.decidedBy()).as("who").isEqualTo(seller);
-        assertThat(after.decidedAt()).as("when").isEqualTo(f.clock.instant());
+        assertThat(after.decidedAt()).as("when").isEqualTo(DbTime.micros(f.clock.instant()));
         assertThat(after.ledgerTxnId()).as("the original posting stays the match's posting").isEqualTo(before.ledgerTxnId());
         assertThat(after.amountMinor()).isEqualTo(5000L);
         assertThat(MatchingFixture.ledger(tenant)).containsExactly("ORDER_ACCEPTED 1100 D5000", "ORDER_ACCEPTED 4000 C5000",

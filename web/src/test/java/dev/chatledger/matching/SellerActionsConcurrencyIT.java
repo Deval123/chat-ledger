@@ -32,22 +32,12 @@ class SellerActionsConcurrencyIT {
 
     private static final int THREADS = 16;
 
-    // Sixteen threads opening a new connection for every statement exhaust the test machine's ports, so the storm shares a small pool.
-    private static final com.zaxxer.hikari.HikariDataSource POOL = pool();
-    private final MatchingFixture f = new MatchingFixture(POOL);
+    private final MatchingFixture f = new MatchingFixture();
     private final MatchingFixture quiet = new MatchingFixture(MatchConfig.defaults(), MatchingService.StepHook.NONE, false);
     private final MatchWorld w = new MatchWorld();
     private final UUID tenant = w.tenant;
     private final UUID seller = MatchingFixture.user(tenant, "SELLER");
     private final UUID helper = MatchingFixture.user(tenant, "HELPER");
-
-    private static com.zaxxer.hikari.HikariDataSource pool() {
-        com.zaxxer.hikari.HikariConfig config = new com.zaxxer.hikari.HikariConfig();
-        config.setDataSource(MatchWorld.DB.appDataSource());
-        config.setMaximumPoolSize(24);
-        config.setConnectionTimeout(60_000);
-        return new com.zaxxer.hikari.HikariDataSource(config);
-    }
 
     /** Runs all the tasks at the same moment and returns what each returned; any exception, or a task still running after a minute, fails. */
     private static <T> List<T> race(List<Callable<T>> tasks) throws Exception {

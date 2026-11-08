@@ -2,6 +2,7 @@ package dev.chatledger.matching;
 
 import dev.chatledger.orders.LogCapture;
 import dev.chatledger.payments.PaymentIngestionResult;
+import dev.chatledger.tenancy.DbTime;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -72,7 +73,7 @@ class SellerDecisionsIT {
         MatchRepository.Stored m = f.repository.find(tenant, suggestion).orElseThrow();
         assertThat(m.state()).isEqualTo("CONFIRMED");
         assertThat(m.decidedBy()).isEqualTo(seller);
-        assertThat(m.decidedAt()).isEqualTo(f.clock.instant());
+        assertThat(m.decidedAt()).isEqualTo(DbTime.micros(f.clock.instant()));
         assertThat(MatchingFixture.status("orders", order)).isEqualTo("PAID");
         assertThat(MatchingFixture.status("payment", payment)).isEqualTo("MATCHED");
         assertThat(MatchingFixture.ledger(tenant)).containsExactly("ORDER_ACCEPTED 1100 D5000", "ORDER_ACCEPTED 4000 C5000",
@@ -174,7 +175,7 @@ class SellerDecisionsIT {
         MatchRepository.Stored m = f.repository.find(tenant, suggestion).orElseThrow();
         assertThat(m.state()).isEqualTo("REJECTED");
         assertThat(m.decidedBy()).isEqualTo(seller);
-        assertThat(m.decidedAt()).isEqualTo(f.clock.instant());
+        assertThat(m.decidedAt()).isEqualTo(DbTime.micros(f.clock.instant()));
         assertThat(audit("MATCH_REJECTED", seller)).isEqualTo(1);
         assertThat(MatchingFixture.status("payment", payment)).isEqualTo("RECEIVED");
         assertThat(MatchingFixture.ledger(tenant)).as("a rejection posts nothing").hasSize(2);
@@ -261,7 +262,7 @@ class SellerDecisionsIT {
         MatchRepository.Stored m = f.repository.find(tenant, r.matchId()).orElseThrow();
         assertThat(m.state()).isEqualTo("CONFIRMED");
         assertThat(m.decidedBy()).isEqualTo(seller);
-        assertThat(m.decidedAt()).isEqualTo(f.clock.instant());
+        assertThat(m.decidedAt()).isEqualTo(DbTime.micros(f.clock.instant()));
         assertThat(audit("MATCH_MANUAL", seller)).isEqualTo(1);
         assertThat(audit("MATCH_CONFIRMED", seller)).isZero();
         MatchInvariants.assertHold(tenant);

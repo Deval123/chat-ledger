@@ -1,6 +1,7 @@
 package dev.chatledger.matching;
 
 import dev.chatledger.orders.LogCapture;
+import dev.chatledger.tenancy.DbTime;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -57,7 +58,7 @@ class PaymentSetAsideAndRematchIT {
         MatchRepository.Stored s = f.repository.find(tenant, suggestion).orElseThrow();
         assertThat(s.state()).as("its open suggestions go with it").isEqualTo("REJECTED");
         assertThat(s.decidedBy()).as("rejected by the seller, so never proposed again").isEqualTo(seller);
-        assertThat(s.decidedAt()).isEqualTo(f.clock.instant());
+        assertThat(s.decidedAt()).isEqualTo(DbTime.micros(f.clock.instant()));
         assertThat(audit("PAYMENT_UNMATCHED", seller)).isEqualTo(1);
         assertThat(MatchingFixture.rows("SELECT subject FROM audit_log WHERE tenant_id = ? AND action = 'PAYMENT_UNMATCHED'", tenant)).containsExactly(payment.toString());
         assertThat(MatchingFixture.ledger(tenant)).as("posts nothing").hasSize(2);

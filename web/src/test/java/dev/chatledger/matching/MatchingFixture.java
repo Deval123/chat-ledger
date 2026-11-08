@@ -43,6 +43,21 @@ final class MatchingFixture {
     private static final String ALNUM = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     static final String PHONE = "+999 000 000 1234";
 
+    /**
+     * The application role's connections, pooled. The plain data source opens a new connection for every statement; sixteen threads doing
+     * that on a two-CPU machine (the CI runner) made some connections take more than the driver's ten seconds, and a run failed with
+     * "Connect timed out" for no reason that has to do with matching.
+     */
+    static final com.zaxxer.hikari.HikariDataSource POOL = pool();
+
+    private static com.zaxxer.hikari.HikariDataSource pool() {
+        com.zaxxer.hikari.HikariConfig config = new com.zaxxer.hikari.HikariConfig();
+        config.setDataSource(DB.appDataSource());
+        config.setMaximumPoolSize(24);
+        config.setConnectionTimeout(60_000);
+        return new com.zaxxer.hikari.HikariDataSource(config);
+    }
+
     final MutableClock clock = new MutableClock();
     final PhoneKeys phoneKeys = new PhoneKeys(new KeyedHasher(UUID.randomUUID() + "" + UUID.randomUUID()));
     final MatchRepository repository;
@@ -76,7 +91,7 @@ final class MatchingFixture {
     }
 
     private MatchingFixture(MatchConfig config, MatchingService.StepHook hook, MatchTrigger custom, MatchingService.ActionHook actions) {
-        this(DB.appDataSource(), config, hook, custom, actions);
+        this(POOL, config, hook, custom, actions);
     }
 
     /** The engine runs at ingestion, as in production, over the given (for example pooled) data source of the application role. */
@@ -85,6 +100,9 @@ final class MatchingFixture {
     }
 
     private MatchingFixture(javax.sql.DataSource ds, MatchConfig config, MatchingService.StepHook hook, MatchTrigger custom, MatchingService.ActionHook actions) {
+        // PostgreSQL keeps microseconds; Linux clocks have nanoseconds (the Mac's do not). A clock with nanoseconds on every machine makes
+        // any timestamp that is not cut to microseconds before it is stored fail here, not only on the CI machine.
+        clock.advance(java.time.Duration.ofNanos(799));
         repository = new MatchRepository(ds);
         orderRepository = new OrderRepository(ds);
         paymentRepository = new PaymentRepository(ds);

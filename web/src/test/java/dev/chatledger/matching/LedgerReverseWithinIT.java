@@ -48,10 +48,12 @@ class LedgerReverseWithinIT {
     void the_reversal_is_the_mirror_of_the_original_which_is_left_alone() throws Exception {
         LedgerTransaction original = posted(tenant);
         UUID reversalId = UUID.randomUUID();
-        Instant at = Instant.now();
+        Instant at = Instant.now().plusNanos(799);   // nanoseconds, which PostgreSQL would round
 
         LedgerTransaction reversal = scope.call(tenant, c -> ledger.reverseWithin(c, tenant, original.id(), reversalId, at));
 
+        assertThat(reversal.createdAt()).as("the reversal returned carries the time that was stored").isEqualTo(dev.chatledger.tenancy.DbTime.micros(at));
+        assertThat(MatchingFixture.rows("SELECT created_at::text FROM ledger_txn WHERE tenant_id = ? AND kind = 'REVERSAL'", tenant)).hasSize(1);
         assertThat(reversal.id()).isEqualTo(reversalId);
         assertThat(reversal.reversesTxnId()).isEqualTo(original.id());
         assertThat(reversal.kind()).isEqualTo("REVERSAL");
