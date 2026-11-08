@@ -12,7 +12,7 @@ import java.util.UUID;
  * implementation must also refuse what the database refuses (unbalanced
  * transactions, entries on another tenant's account, a second reversal).
  */
-public interface LedgerRepository {
+public interface LedgerRepository extends AccountLookup {
 
     void createAccount(Account account);
 

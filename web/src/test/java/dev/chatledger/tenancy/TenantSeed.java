@@ -95,9 +95,10 @@ public record TenantSeed(
                     debit, txn, receivable);
             update(c, "INSERT INTO ledger_entry(id, txn_id, account_id, debit_minor, credit_minor) VALUES (?, ?, ?, 0, 1000)",
                     credit, txn, revenue);
-            update(c, "INSERT INTO match(id, tenant_id, order_id, payment_id, amount_minor, score, state, decided_by)"
-                            + " VALUES (?, ?, ?, ?, 1000, 90, 'AUTO', ?)",
-                    match, tenant, order, payment, user);
+            // A suggestion: it applies nothing, so it needs no posting and does not change any status.
+            update(c, "INSERT INTO match(id, tenant_id, order_id, payment_id, score, state)"
+                            + " VALUES (?, ?, ?, ?, 90, 'SUGGESTED')",
+                    match, tenant, order, payment);
             update(c, "INSERT INTO flag(id, tenant_id, subject_type, subject_id, code, reason) VALUES (?, ?, 'PAYMENT', ?, 'DUPLICATE_TX', 'synthetic')",
                     flag, tenant, payment);
             update(c, "INSERT INTO audit_log(id, tenant_id, actor, action, subject) VALUES (?, ?, ?, 'TEST', 'seed')",

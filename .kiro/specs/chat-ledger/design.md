@@ -638,6 +638,29 @@ Full proposal and the owner's answers: `task-5-design-stop.md` (approved with D1
 
 ### Trade-offs and weakened defenses (task 5): register items 32 to 50, below.
 
+## Matching (task 6), what stop 2a built
+
+Full proposal and the owner's answers: `task-6-design-stop.md`. Stop 2b adds the service that applies a match; stop 3 the overrides.
+
+- **Scoring is pure** (`matching` module): `MatchScorer` gives a score from 0 to 100 and reason **codes** from parsed fields only (no raw text is passed in, and a
+  source test fails if matching code mentions it). Amount: exact 50, partial or over-payment (up to twice the balance) 20. Reference equal under `ReferenceKeys` 25, but
+  0 if another open order has the same code. Identity up to 15: equal phone hash 15, otherwise name agreement 12 or 8, plus 3 for equal last four digits beside a name.
+  Time 10. A payment without a transaction id is held below the automatic threshold.
+- **An automatic match needs seven floors** (transaction id, exact amount, a unique matching reference, some identity, same currency, a trusted recorder, the kill switch
+  on) plus the score and, in `MatchPlanner`, a lead of at least the tie margin over every other candidate. Floors are constants; thresholds are configuration with bounds
+  (`app.matching.*`, `MatchConfig`), checked when the application starts.
+- **`NameSimilarity`** compares a sender with a customer by tokens (accent-insensitive, apostrophes dropped, other punctuation separates), bounded at 8 tokens of 40
+  characters from the first 100 characters, with `equals` and `startsWith` only.
+- **V016.** `match` gets `excess_minor`, `ledger_txn_id`, `created_at`; every column is tied to the state by CHECKs; one active match per payment, one open match per pair, one
+  posting per business event; transition triggers for order, payment and match status; deferred triggers that check at commit that the active matches of an order add up to at
+  most its total, that an active match uses its payment whole, that the order status is the function of its active matches, that a payment is `MATCHED` exactly when it has one,
+  that an automatic match has a transaction id, and that the posting has exactly the match's amounts on the right accounts. The application role gets `INSERT` on `match` and
+  `UPDATE` of named columns only: `orders.status`, `payment.status`, and six `match` columns.
+- **Ledger.** `JdbcLedgerRepository.appendWithin` posts on the caller's connection, so a posting can commit together with a match and a status change; the account and overflow
+  checks are one shared class (`LedgerChecks`) used by both paths. `ChartOfAccounts` creates the four fixed accounts of a tenant idempotently inside the caller's transaction.
+
+### Trade-offs and weakened defenses (task 6, so far): register items 51 to 59, below.
+
 ## Testing strategy
 
 - Unit tests for parsers, scoring, and each suspicion rule, with a table of examples.
@@ -698,3 +721,12 @@ The demo credentials go in the Devpost testing field.
 | 48 | "The amount is written in the message" proves presence, not meaning (item 23) | The check is independent of the parser | The template's fixed wording around the amount, the stated currency, the task 7 near-miss rule, the seller's last word |
 | 49 | Reference hole values are stored as written and compared by a key function (strip, upper-case); task 6 must use `ReferenceKeys` for every comparison, or `ord-1` and `ORD-1` will not match | One format with `orders.order_ref`, no data migration | A test of the key function; the task 6 line in `tasks.md`; a functional index on `upper(...)` can be added when the matching query exists |
 | 50 | Inherited: item 31 (PostgreSQL server log), item 5 (in-memory rate limiter), item 1 (the tenant setting protects against our own bugs, not SQL injection) | See those items | See those items |
+| 51 | **No signal derived from an SMS is unforgeable.** Anyone who can write the confirmation can write its amount, reference, sender and time | The text is all the system has | An automatic match needs seven floors and a lead over every other candidate, not only a score; `UNVERIFIED` and a helper's payment are never automatic; a match moves no money; the kill switch; audit; the seller reverses (stop 3); task 7 flags will veto |
+| 52 | The application role gains `INSERT` on `match` and column-limited `UPDATE` on `orders.status`, `payment.status` and six `match` columns | Matching has to change a status and record a decision | Column lists, no `DELETE` or `TRUNCATE`; transition triggers allow only the moves the matcher makes (never `DUPLICATE` or `UNPARSED` to `MATCHED`, nothing into or out of `NEEDS_REVIEW`, `UNPARSED`, `CANCELLED`); deferred consistency triggers; a catalog-driven test lists every column and its privilege |
+| 53 | Nothing can move an order out of `NEEDS_REVIEW` yet, for anyone | The transition trigger covers every role; task 8 must add its own named move | Task 8 line in `tasks.md`; until then such an order cannot be matched |
+| 54 | The match-to-posting rule (amounts and accounts) is enforced by a trigger and tests, not by the ledger, which knows nothing about matches | The ledger stays generic and append-only | Deferred trigger at commit; the account codes in the trigger and in `ChartOfAccounts` are kept in step by a test |
+| 55 | Name similarity is a heuristic; two people with the same first name and initial agree weakly | Names are free text | At most 12 points (15 with last four), never alone, bounded work, no regular expression; the neutral name never scores |
+| 56 | Matching settings are configuration | The owner asked for thresholds as configuration | Hard bounds checked at startup, a gap of at least 10, floors that no setting can relax, a kill switch that defaults on |
+| 57 | The four accounts are created by the application role at first use | A tenant has no chart of accounts otherwise (provisioning does not create one) | Fixed codes, unique per tenant, idempotent; the role already held `INSERT` on `account`; a wrong type under one of the codes stops posting |
+| 58 | Postings made on the caller's connection do not go through `LedgerService` | A posting must commit with the match and the status change | One shared check class used by both paths; a reversal cannot be posted this way (until the unmatch flow adds its own method); the deferred balance trigger still fires |
+| 59 | The new CHECKs on `match` are `NOT VALID`; the transition triggers apply to every role, including the owner | The table may hold rows from before; a status move must be deliberate | New and changed rows are checked; `VALIDATE CONSTRAINT` once old data is known to fit |

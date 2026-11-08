@@ -984,3 +984,94 @@ Two survivors, both my test's fault:
 - **Fold only the parameter** (`tx_id = upper(?)`). Every test stored the original in upper case, so folding the parameter alone looked right. Added the opposite direction: original in lower case, replay in upper case.
 
 Nothing was added to the production code for the first change. Not verified: the case fold uses PostgreSQL's `upper()`, tested with ASCII ids only (all the CHECK allows); a database with an unusual collation was not tried.
+
+## Task 6, stop 2a - scoring and the groundwork for matching (6.1)
+
+Proposal and the owner's answers: `.kiro/specs/chat-ledger/task-6-design-stop.md`. Approved on all seventeen decisions, with stop 2 split in two: this stop builds the scoring, V016, the
+repository, the chart of accounts and the ledger's append on the caller's connection; stop 2b builds `MatchingService.apply` (the flows with their postings, the engine runs, the hook in the
+ingestion services, the `ORDER_ACCEPTED` posting); stop 3 builds the overrides and the property tests. Three lines were added to `tasks.md` (tasks 7, 8, 9). Nothing here moves money or
+changes a status yet.
+
+### What the design review caught (before any code)
+
+- **Four gaps in the plan itself:** `JdbcLedgerRepository.append` opens its own transaction, so a posting could not commit with a match; no chart of accounts existed; nothing posted
+  "order accepted"; and the design's score table could not produce a partial or over-payment match at all (the amount signal only fired on an exact amount, so requirements 3.5 and 3.6 were
+  unreachable). Each is now either built (the first, second, fourth) or scheduled (the third, in 2b).
+- **The honest answer to "signals that cannot be forged by text":** there are none. Every signal comes from a text the forger may have written. The design says so, and puts the defense
+  in the floors, in the fact that a match moves no money, and in reversal and audit.
+
+### What changed from the design stop
+
+- The upper bound of the suggestion threshold (90) is not a check of its own: it follows from "the automatic threshold is at most 100 and at least 10 above". A mutation showed the separate check was redundant, so it was removed.
+- The commit-time check locks the **order** row only. The first version also locked the payment; the application already locks payment then order, so the extra lock added nothing.
+- Apostrophes are dropped from names rather than splitting them (`N'Diaye` is `ndiaye`); the last-four bonus applies only beside a name that already agrees.
+- `MatchingProperties` does not validate on its own any more: `MatchConfig` is the one place that knows the bounds, and the Spring bean builds it at startup.
+- The planner (`MatchPlanner`) is part of 6.1: scores are turned into "automatic", "suggestions" or "nothing" by a pure function, so the tie margin is tested without a database.
+
+### Defects the tests found in my own work
+
+- **`appendWithin` refused reversals, and `append` used it.** The existing ledger tests (five in `LedgerPostgresIT`, one property test) failed at once: reversals through the service were rejected. Fixed by giving
+  both paths a private write; the public `appendWithin` alone refuses reversals (the unmatch flow in stop 3 will add its own).
+- **V016 legitimately broke four older tests**, which is the right outcome: `PaymentConstraintsIT` (the application role may now update a status), three cases in `TenancyIntegrityIT` that inserted a match in the old shape, and the two
+  fixtures that seed a match row. Each was changed to say what it means now.
+- **The name comparison was not symmetric.** Writing the property "the answer does not depend on which name is the sender" showed that an initial only matched in one direction when both names had the same number of tokens.
+- **Wrong expectations in my own constraint tests:** a bare ledger transaction with no entries is refused by the balance trigger before anything else; the order-status check comes before the amount check, so a test of the amount
+  check needed an order in the right status; a planner test used the wrong margin.
+- **A hole in my own mutation driver, again.** One mutant (a text mention of `raw_text` in the repository) "survived" only because the driver ran the integration tests and not the unit test that scans for it. The driver now
+  has a mode that runs both; the mutant is caught. (The earlier lesson holds: a restored file is touched so Maven rebuilds it.)
+
+### Mutation checks (each guard broken on purpose; the file restored from a copy, compared and touched after every run)
+
+First run: **236 mutants, 216 caught, 20 survived.** Each survivor taught something:
+
+| First result | What it showed | Fix |
+|---|---|---|
+| Upper bound of the suggestion threshold changed | Implied by the gap rule | **Check deleted** |
+| Zero scores filtered from the planner's list | Never changes the plan | **Filter deleted** |
+| A one-letter-token condition in the initial match | An exact match always comes first | **Condition deleted** |
+| `openOrders` required a non-NULL total | Implied by the balance predicate and the status CHECK | **Predicate deleted** |
+| Order with nothing left to pay was scored | My test gave the payment nothing else to match | Test with every other signal agreeing |
+| 9 tokens, 41 characters per token, 101 characters per name, name not cut | Boundary constants tested through the constants themselves | Tests with literal values on each side |
+| Two-letter initials; one token used for two initials | Never tried | Two tests |
+| Posting debit, receivable credit or excess credit not checked | Each wrong-account case was caught by a different check | Three postings on the wrong accounts |
+| Message text selected by the repository | The driver ran the wrong test set | Driver mode (caught) |
+| Five `openOrders` and `appliedMinor` mutants | Equivalent, see below | None |
+
+Final run from a clean build: **233 mutants, 228 caught, 5 not caught.** The five are equivalent mutants, said plainly: counting `SUGGESTED` rows in an order's applied amount (two mutants) changes nothing because a
+suggestion has no amount (a CHECK); removing the tenant from the applied-amount subquery or from the customer join changes nothing because the composite foreign keys already put the rows in one tenant; removing the
+"something left to pay" predicate changes nothing because the V016 trigger makes a fully paid order `PAID`. I kept the predicates: they state what a candidate is and they keep every statement naming the tenant.
+
+Caught (named by group): every bound and the gap of `MatchConfig` and its defaults, the kill switch default; every weight, tier, window and boundary of the scorer; each of the seven floors; the unverified cap and its boundary; the
+shared-reference rule; case-insensitive references; the planner's margin, thresholds, cap, order and tie-breaks; name tokens, initials, symmetry and caps; reason codes; the bounds of the facts; the account checks and overflow in
+the ledger checks; the properties (defaults, bounds, key); the chart of accounts (conflict handling, type check, codes, types); `appendWithin` (no checks, reversal guard); every statement of the repository scoped by tenant as the
+schema owner, the candidate filters, the order, the limit, `wasNull`; a regex in the scorer, a unit test reaching the Docker-backed world, an unregistered repository; and in V016 every CHECK, every unique index, every status move
+(each allowed and each forbidden pair), every consistency rule (including the lock, by a test in which a second transaction must wait for the first), and every grant (an extra column, the whole table, `DELETE`, `TRUNCATE`, no `INSERT`).
+
+Not mutated: the three new indexes (nothing observable, only speed); the redacting `toString` methods of the new records are tested, but I did not try a mutant of them.
+
+### What the unit phase proves (it runs without Docker: verified with Docker stopped; 430 tests, all modules, was 357)
+
+Adds to the earlier list: the scorer (each signal, tier, boundary and floor, with a table of example pairs), the planner (including a property that an automatic plan is always eligible and clear of every other candidate), name similarity
+(accents, initials, symmetry, hostile and over-long names, a property), the bounds of every configuration value through a bare Spring context, the shared ledger checks, and source scans that matching code never mentions the text of a
+message or uses a pattern or format facility. Not proved by the unit phase: everything that needs PostgreSQL, which is the 331 integration tests (was 271): V016's constraints, triggers and grants, the repository (as the application role and
+as the schema owner), the chart of accounts under 16 concurrent callers, and `appendWithin` committing and rolling back with other writes.
+
+### Defenses weakened or traded off (design register items 51 to 59)
+
+No signal is unforgeable; new `INSERT` and column-limited `UPDATE` privileges for the application role; nothing can leave `NEEDS_REVIEW` until task 8; the match-to-posting rule is a trigger and not the ledger; name similarity is a heuristic;
+thresholds are configuration; the chart of accounts is created by the application role; postings on the caller's connection do not pass through `LedgerService`; new `NOT VALID` checks and triggers that bind every role.
+
+### Not verified
+
+- No flow exists yet. The database rules were exercised with hand-built rows written as the schema owner; the application role has not yet inserted or updated a real match through a service (stop 2b).
+- The locks the service will take (payment, then order) and the retry behaviour under 16 parallel matchers are stop 2b. The one concurrency test here uses `SET CONSTRAINTS ALL IMMEDIATE` and waits 1.5 seconds to show that a second check blocks; the
+  wait makes it timing-based (if the machine stalls, the mutant "no lock" could slip through; it does not make a correct lock fail).
+- The weights and tiers are a design, not a measurement: nothing here says how well they separate real payments from real orders.
+- Where the `Recorder` (SELLER, MACHINE or HELPER) comes from is decided in 2b; today it is a parameter.
+- PostgreSQL 16.4 only. No new dependency, so the dependency scan was not re-run.
+- Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.
+
+### One honest remark
+
+Nine of the twenty first-run survivors were not missing tests but guards that said the same thing twice (a bound implied by another, a filter that changed no result, a predicate implied by a CHECK or a foreign key). Four were deleted,
+which made the code smaller and the remaining checks easier to trust; five are kept and named, because they state what a candidate is and keep every statement naming its tenant, at the price of mutants that no test can kill.

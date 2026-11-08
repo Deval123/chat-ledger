@@ -3,7 +3,6 @@ package dev.chatledger.ledger;
 import java.math.BigInteger;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -62,24 +61,7 @@ public final class LedgerService {
     }
 
     private void append(LedgerTransaction transaction) {
-        UUID tenantId = transaction.tenantId();
-        for (Map.Entry<UUID, Long> change : transaction.netDebitByAccount().entrySet()) {
-            repository.findAccount(tenantId, change.getKey())
-                    .orElseThrow(() -> new LedgerException(
-                            "Account " + change.getKey() + " does not belong to tenant " + tenantId));
-            long current = repository.netDebit(tenantId, change.getKey());
-            long next;
-            try {
-                next = Math.addExact(current, change.getValue());
-            } catch (ArithmeticException overflow) {
-                throw new LedgerException(
-                        "Posting would overflow the balance of account " + change.getKey(), overflow);
-            }
-            if (next == Long.MIN_VALUE) {
-                throw new LedgerException(
-                        "Posting would overflow the balance of account " + change.getKey());
-            }
-        }
+        LedgerChecks.verify(transaction, repository);
         repository.append(transaction);
     }
 }

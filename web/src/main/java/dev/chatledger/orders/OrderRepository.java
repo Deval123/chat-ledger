@@ -62,7 +62,8 @@ public class OrderRepository {
         }
     }
 
-    private static final String UNKNOWN_CUSTOMER = "Unknown customer";
+    /** The display name of a customer known only by phone. The matcher never treats it as a name (see NameSimilarity.NEUTRAL_NAME). */
+    public static final String UNKNOWN_CUSTOMER = "Unknown customer";
 
     private final TenantScope scope;
 
