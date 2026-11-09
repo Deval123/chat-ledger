@@ -63,9 +63,24 @@ public class PaymentRepository {
     }
 
     /** The new payment's id, or empty if a unique key already holds the row (nothing was written). */
-    public Optional<UUID> insert(UUID tenantId, NewPayment p) {
+    /** Work that must commit with the new payment or not at all (its suspicion flags). It runs on the insert's connection, after the insert. */
+    @FunctionalInterface
+    public interface AfterInsert {
+        void after(Connection c, UUID paymentId) throws SQLException;
+    }
+
+    /**
+     * Stores the payment, its audit row and whatever {@code after} writes, in one transaction. Empty if the external id was already used
+     * (nothing is written, and {@code after} does not run). If {@code after} fails, the payment is not stored either.
+     */
+    public Optional<UUID> insert(UUID tenantId, NewPayment p, AfterInsert after) {
+        java.util.Objects.requireNonNull(after, "after");
         try {
-            return Optional.of(scope.call(tenantId, c -> insertWithin(c, tenantId, p)));
+            return Optional.of(scope.call(tenantId, c -> {
+                UUID id = insertWithin(c, tenantId, p);
+                after.after(c, id);
+                return id;
+            }));
         } catch (Conflict conflict) {
             return Optional.empty();
         } catch (SQLException e) {

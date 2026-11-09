@@ -6,8 +6,17 @@
   <summary th:text="#{raw.title}">Message as received (not checked)</summary>
   <p class="rawtext" th:text="${text}">text</p>
 </details>
+<!--/* Every flag, open and resolved. The sentence comes from the code (fixed text). An open flag has the seller's button. */-->
 <ul th:fragment="flags(flags)" class="reasons" th:if="${not #lists.isEmpty(flags)}">
-  <li th:each="flag : ${flags}" th:text="#{flag.line(${@display.text(flag.reason, 200)}, ${@times.format(flag.at, tenant.zone)})}">Flag</li>
+  <li th:each="flag : ${flags}" th:id="|f-${flag.id}|">
+    <span th:text="#{flag.line(#{${'flag.' + flag.code}}, ${@times.format(flag.at, tenant.zone)})}">Flag (03 Nov)</span>
+    <span th:if="${flag.pair}" class="hint" th:text="#{flag.pair}">About this payment and one order.</span>
+    <span th:if="${flag.open()}" class="flag" th:text="#{flag.open}">Open</span>
+    <span th:unless="${flag.open()}" th:text="${flag.resolvedBy != null and flag.resolvedBy.equals(userId)} ? #{flag.resolved.you(${@times.format(flag.resolvedAt, tenant.zone)})} : #{flag.resolved.other(${@times.format(flag.resolvedAt, tenant.zone)})}">Checked</span>
+    <form th:if="${flag.open() and canResolve}" th:action="@{/app/flags/{id}/resolve(id=${flag.id})}" method="post">
+      <button type="submit" class="secondary" th:text="#{action.resolve}">I checked this</button>
+    </form>
+  </li>
 </ul>
 </body>
 </html>

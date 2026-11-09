@@ -143,7 +143,11 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
   - [x] 6.4 Property-based tests: idempotency, never over-assign amounts. (`MatchingBooksPropertyIT` with `MatchInvariants`.)
   - _Requirements: 3, 4_
 
-- [ ] 7. Suspicion rules
+- [x] 7. Suspicion rules
+  - Done (stop 2, decisions D1 to D13 of `task-7-design-stop.md`, R4 dropped by the owner): ten rules in `suspicion`, pure and table-tested;
+    V019 (typed, write-once, idempotent flags; back-fill); payment and order rules in the insert transaction; pair rules under the lock in
+    the automatic step and with every suggestion; the `NOT_FLAGGED` floor; the resolve button and route; the board from flag rows only.
+    Notes: `docs/kiro-notes.md`, "Task 7"; register items 96 to 110.
   - One class per rule, one table of examples per rule, plain-language reasons.
   - **An open flag blocks an automatic match** (task 6 design, D17): the matcher must ask for open flags on the payment and the
     order before it matches automatically, and a flagged pair is suggested instead. Verify with a test per flag code.
@@ -182,6 +186,9 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
   - **Demo catalog seed**: the application role has SELECT only on `catalog_item` (task 4), so the demo tenant's
     catalog (synthetic items and prices, English and French names) is created by the seed/reset job running as
     the owner or an operator command, never by the web application. Verify the demo orders compute totals from it.
+  - **The demo seed triggers real flags** (task 7): at least R1 (a repeated transaction id), R5 (a payment made well before its order),
+    R8 (a sender name unlike the customer's) and R10 or R11 (the same phone under another name, or an overpayment), so the demo shows
+    the Flagged column, the sentences and the "I checked this" button. Verify that each of these flags exists after the seed.
   - _Requirements: 7_
 
 - [ ] 10. Optional AI extractor

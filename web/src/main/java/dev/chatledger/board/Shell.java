@@ -39,6 +39,8 @@ public class Shell {
         model.addAttribute("canExport", role.allows(Permission.EXPORT_DATA));
         model.addAttribute("canLedger", role.allows(Permission.VIEW_LEDGER));
         model.addAttribute("canRecordOrder", role.allows(Permission.RECORD_ORDER));
+        model.addAttribute("canResolve", role.allows(Permission.RESOLVE_FLAG));
+        model.addAttribute("userId", user.userId());
         model.addAttribute("canRecordPayment", role.allows(Permission.RECORD_PAYMENT));
         return tenant;
     }

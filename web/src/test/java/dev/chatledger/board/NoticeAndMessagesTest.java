@@ -102,4 +102,13 @@ class NoticeAndMessagesTest {
             }
         }
     }
+
+    /** The page shows the sentence from the catalogue; the database stores the code's own sentence. They are one text (task 7, D6). */
+    @Test
+    void every_flag_code_has_its_sentence_on_the_page_equal_to_the_stored_one() throws IOException {
+        Properties p = messages();
+        for (dev.chatledger.suspicion.FlagCode code : dev.chatledger.suspicion.FlagCode.values()) {
+            assertThat(p.getProperty("flag." + code.name())).as(code.name()).isEqualTo(code.sentence());
+        }
+    }
 }

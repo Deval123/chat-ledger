@@ -43,7 +43,7 @@ final class IngestionFixture {
     IngestionFixture(String ingestionRule) {
         limits = new RateLimits(new InMemoryRateLimiter(clock,
                 Map.of(RateLimits.INGESTION_TENANT, RateRule.parse("test", ingestionRule)), 10_000, Duration.ofHours(1)));
-        service = new OrderIngestionService(tenants, catalog, orders, limits, phoneKeys, new IngestionEvents(), dev.chatledger.matching.MatchTrigger.NONE);
+        service = new OrderIngestionService(tenants, catalog, orders, limits, phoneKeys, new IngestionEvents(), dev.chatledger.matching.MatchTrigger.NONE, dev.chatledger.flags.SuspicionWriter.withDefaults(java.time.Clock.systemUTC()));
     }
 
     UUID tenant() {

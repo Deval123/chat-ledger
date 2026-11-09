@@ -41,8 +41,8 @@ class BoardRepositoryIsolationIT {
         final UUID paymentA = a.payment(3000, "RECEIVED");
 
         Two() {
-            b.run("INSERT INTO flag(id, tenant_id, subject_type, subject_id, code, reason) VALUES (?, ?, 'ORDER', ?, 'TEST', 'synthetic flag')",
-                    UUID.randomUUID(), b.tenant, openB);
+            flagOrder(b, openB, false);
+            flagPayment(b, duplicateB, "DUPLICATE_TX", null, false);
         }
     }
 
@@ -119,6 +119,37 @@ class BoardRepositoryIsolationIT {
         assertExportScopedTo(new ExportRepository(MatchWorld.DB.migrateDataSource()), new Two());
     }
 
+    /**
+     * Task 7: a flag row of tenant B that names A's records (written with the foreign keys off: the schema refuses it) is not shown on A's
+     * cards or detail pages. Run as the owner, so the flag statements' own {@code tenant_id} predicates are the only thing that scopes them.
+     */
+    @Test
+    void a_flag_of_another_tenant_naming_our_records_is_not_shown_even_without_row_level_security() {
+        Two t = new Two();
+        MatchWorld.forced(c -> {
+            MatchWorld.run(c, "INSERT INTO flag(id, tenant_id, subject_type, payment_id, code, reason) VALUES (?, ?, 'PAYMENT', ?, 'SENDER_BURST', 'synthetic flag')",
+                    UUID.randomUUID(), t.b.tenant, t.paymentA);
+            MatchWorld.run(c, "INSERT INTO flag(id, tenant_id, subject_type, order_id, code, reason) VALUES (?, ?, 'ORDER', ?, 'SENDER_ALIAS', 'synthetic flag')",
+                    UUID.randomUUID(), t.b.tenant, t.orderA);
+        });
+        for (javax.sql.DataSource ds : new javax.sql.DataSource[]{MatchWorld.DB.appDataSource(), MatchWorld.DB.migrateDataSource()}) {
+            BoardRepository board = new BoardRepository(ds);
+            BoardRepository.Card payment = board.column(t.a.tenant, Column.REVIEW, null, 20).cards().get(0);
+            assertThat(payment.id()).isEqualTo(t.paymentA);
+            assertThat(payment.flagId()).isNull();
+            assertThat(payment.openFlags()).isZero();
+            BoardRepository.Card order = board.column(t.a.tenant, Column.AWAITING, null, 20).cards().get(0);
+            assertThat(order.id()).isEqualTo(t.orderA);
+            assertThat(order.flagId()).isNull();
+            assertThat(order.openFlags()).isZero();
+            assertThat(board.payment(t.a.tenant, t.paymentA, true).orElseThrow().flags()).isEmpty();
+            assertThat(board.order(t.a.tenant, t.orderA, true).orElseThrow().flags()).isEmpty();
+            // Control: B's own flags are on B's records.
+            assertThat(board.order(t.b.tenant, t.openB, false).orElseThrow().flags()).hasSize(1);
+            assertThat(board.payment(t.b.tenant, t.duplicateB, false).orElseThrow().flags()).hasSize(1);
+        }
+    }
+
     @Test
     void a_stream_stops_at_its_cap_and_an_unknown_tenant_sees_nothing() {
         Two t = new Two();
@@ -153,8 +184,24 @@ class BoardRepositoryIsolationIT {
         assertThat(all).containsExactly(made.get(4), made.get(3), made.get(2), made.get(1), made.get(0));
     }
 
-    private static void flag(MatchWorld w, UUID subject) {
-        w.run("INSERT INTO flag(id, tenant_id, subject_type, subject_id, code, reason) VALUES (?, ?, 'X', ?, 'TEST', 'synthetic flag')", UUID.randomUUID(), w.tenant, subject);
+    /** An order flag (R10's shape), open or already resolved by the world's seller. */
+    static void flagOrder(MatchWorld w, UUID order, boolean resolved) {
+        w.run("INSERT INTO flag(id, tenant_id, subject_type, order_id, code, reason, resolved_at, resolved_by) VALUES (?, ?, 'ORDER', ?, 'SENDER_ALIAS', 'synthetic flag', "
+                + "CASE WHEN ? THEN now() END, CASE WHEN ? THEN CAST(? AS UUID) END)", UUID.randomUUID(), w.tenant, order, resolved, resolved, w.user);
+    }
+
+    /** A payment flag; with an order it is a pair flag (use a pair code then). */
+    static void flagPayment(MatchWorld w, UUID payment, String code, UUID order, boolean resolved) {
+        w.run("INSERT INTO flag(id, tenant_id, subject_type, payment_id, order_id, code, reason, resolved_at, resolved_by) VALUES (?, ?, 'PAYMENT', ?, ?, ?, 'synthetic flag', "
+                + "CASE WHEN ? THEN now() END, CASE WHEN ? THEN CAST(? AS UUID) END)", UUID.randomUUID(), w.tenant, payment, order, code, resolved, resolved, w.user);
+    }
+
+    private static void flag(MatchWorld w, UUID orderOrPayment, boolean isOrder) {
+        if (isOrder) {
+            flagOrder(w, orderOrPayment, false);
+        } else {
+            flagPayment(w, orderOrPayment, "SENDER_BURST", null, false);
+        }
     }
 
     @Test
@@ -162,27 +209,47 @@ class BoardRepositoryIsolationIT {
         MatchWorld w = new MatchWorld();
         Map<UUID, Column> expected = new java.util.LinkedHashMap<>();
         UUID unparsedFlagged = w.orderWithoutTotal("UNPARSED");
-        flag(w, unparsedFlagged);
+        flag(w, unparsedFlagged, true);
         expected.put(unparsedFlagged, Column.UNPARSED);                 // unread beats flagged
         expected.put(w.unparsedPayment(), Column.UNPARSED);
         UUID reviewFlagged = w.orderWithoutTotal("NEEDS_REVIEW");
-        flag(w, reviewFlagged);
+        flag(w, reviewFlagged, true);
         expected.put(reviewFlagged, Column.FLAGGED);                    // flagged beats review
         UUID receivedFlagged = w.payment(100, "RECEIVED");
-        flag(w, receivedFlagged);
+        flag(w, receivedFlagged, false);
         expected.put(receivedFlagged, Column.FLAGGED);
         UUID paidFlagged = w.order(100, "PAID", null, null);
-        flag(w, paidFlagged);
+        flag(w, paidFlagged, true);
         expected.put(paidFlagged, Column.FLAGGED);                      // flagged beats matched
         UUID awaitingFlagged = w.order(100, "PENDING_PAYMENT", null, null);
-        flag(w, awaitingFlagged);
+        flag(w, awaitingFlagged, true);
         expected.put(awaitingFlagged, Column.FLAGGED);                  // flagged beats awaiting
         UUID asideFlagged = w.payment(100, "UNMATCHED");
-        flag(w, asideFlagged);
+        flag(w, asideFlagged, false);
         expected.put(asideFlagged, Column.FLAGGED);                     // flagged beats set aside
-        expected.put(w.payment(100, "UNVERIFIED"), Column.FLAGGED);     // by status
+        // Task 7, D9: Flagged comes from open flag rows only, never from a status.
+        UUID unverifiedFlagged = w.payment(100, "UNVERIFIED");
+        flagPayment(w, unverifiedFlagged, "NO_PROVIDER_ID", null, false);
+        expected.put(unverifiedFlagged, Column.FLAGGED);
+        UUID unverifiedChecked = w.payment(100, "UNVERIFIED");
+        flagPayment(w, unverifiedChecked, "NO_PROVIDER_ID", null, true);
+        expected.put(unverifiedChecked, Column.REVIEW);                 // its flag resolved: back to review
+        expected.put(w.payment(100, "UNVERIFIED"), Column.REVIEW);     // no flag row: not flagged by its status
         UUID original = w.payment(100, "MATCHED");
-        expected.put(w.duplicateOf(original, 100), Column.FLAGGED);
+        UUID duplicateFlagged = w.duplicateOf(original, 100);
+        flagPayment(w, duplicateFlagged, "DUPLICATE_TX", null, false);
+        expected.put(duplicateFlagged, Column.FLAGGED);
+        UUID duplicateChecked = w.duplicateOf(w.payment(100, "MATCHED"), 100);
+        flagPayment(w, duplicateChecked, "DUPLICATE_TX", null, true);
+        expected.put(duplicateChecked, Column.ASIDE);                   // its flag resolved: with the payments set aside
+        UUID orderOfPair = w.order(100, "PENDING_PAYMENT", null, null);
+        UUID paymentOfPair = w.payment(100, "RECEIVED");
+        flagPayment(w, paymentOfPair, "PHONE_MISMATCH", orderOfPair, false);
+        expected.put(paymentOfPair, Column.FLAGGED);                    // a pair flag shows on the payment
+        expected.put(orderOfPair, Column.AWAITING);                     // and not on the order
+        UUID awaitingChecked = w.order(100, "PENDING_PAYMENT", null, null);
+        flagOrder(w, awaitingChecked, true);
+        expected.put(awaitingChecked, Column.AWAITING);
         expected.put(w.orderWithoutTotal("NEEDS_REVIEW"), Column.REVIEW);
         expected.put(w.payment(100, "RECEIVED"), Column.REVIEW);
         expected.put(w.order(100, "PAID", null, null), Column.MATCHED);
@@ -197,7 +264,7 @@ class BoardRepositoryIsolationIT {
                     assertThat(found.put(id, column)).as(id + " is in one column only").isNull();
                 }
             }
-            found.remove(original);   // the matched payment is shown on its order, not as a card
+            found.remove(original);   // a matched payment is shown on its order, not as a card
             assertThat(found).isEqualTo(expected);
             Map<Column, Long> counts = new java.util.EnumMap<>(Column.class);
             for (Column column : Column.values()) {

@@ -158,17 +158,49 @@ class MatchingConcurrencyIT {
     }
 
     @Test
+    /** A synthetic phone of its own for payer {@code i}. */
+    static String phone(int i) {
+        return "+999 000 001 " + (1000 + i);
+    }
+
+    @Test
+    void sixteen_payments_from_one_phone_at_once_are_a_burst_and_only_the_first_ones_can_be_automatic() throws Exception {
+        MatchWorld w = new MatchWorld();
+        UUID seller = MatchingFixture.user(w.tenant, "SELLER");
+        MatchingFixture live = new MatchingFixture();
+        for (int i = 0; i < THREADS; i++) {
+            live.orders.ingest(w.tenant, seller, MatchingFixture.id(), MatchingFixture.orderText("R-" + i, "Ana Kamga", MatchingFixture.PHONE, 5000));
+        }
+        List<Callable<UUID>> tasks = new ArrayList<>();
+        for (int i = 0; i < THREADS; i++) {
+            String text = live.sms(5000, "Ana Kamga", MatchingFixture.PHONE, "R-" + i);
+            tasks.add(() -> live.payments.ingest(w.tenant, seller, MatchingFixture.id(), text).paymentId());
+        }
+        noThrowable(together(tasks));
+        long flagged = count("SELECT count(*) FROM flag WHERE tenant_id = ? AND code = 'SENDER_BURST'", w.tenant, null);
+        long auto = count("SELECT count(*) FROM match WHERE tenant_id = ? AND state = 'AUTO'", w.tenant, null);
+        // The sender's payments are recorded one after the other (an advisory lock per phone), so each sees the ones before it: the first
+        // three are not yet a burst of four, the other thirteen are. Without the lock most of them saw nothing and only a few were flagged.
+        assertThat(flagged).as("payments seen as part of a burst").isEqualTo(13L);
+        assertThat(auto).as("never a flagged payment matched automatically").isLessThanOrEqualTo(THREADS - flagged);
+        assertThat(count("SELECT count(*) FROM match m JOIN flag f ON f.payment_id = m.payment_id AND f.order_id IS NULL "
+                + "WHERE m.tenant_id = ? AND m.state = 'AUTO'", w.tenant, null)).isZero();
+        MatchInvariants.assertHold(w.tenant);
+    }
+
+    @Test
     void sixteen_payments_arriving_at_once_for_sixteen_orders_are_each_matched_to_their_own() throws Exception {
         MatchWorld w = new MatchWorld();
         UUID seller = MatchingFixture.user(w.tenant, "SELLER");
         MatchingFixture live = new MatchingFixture();   // ingestion calls the matcher after each commit, as in production
         List<UUID> orders = new ArrayList<>();
         for (int i = 0; i < THREADS; i++) {
-            orders.add(live.orders.ingest(w.tenant, seller, MatchingFixture.id(), MatchingFixture.orderText("R-" + i, "Ana Kamga", MatchingFixture.PHONE, 5000)).orderId());
+            orders.add(live.orders.ingest(w.tenant, seller, MatchingFixture.id(), MatchingFixture.orderText("R-" + i, "Ana Kamga", phone(i), 5000)).orderId());
         }
         List<Callable<UUID>> tasks = new ArrayList<>();
         for (int i = 0; i < THREADS; i++) {
-            String text = live.sms(5000, "Ana Kamga", MatchingFixture.PHONE, "R-" + i);
+            // One payer per order (one phone each): sixteen payments from one phone at once is a burst (R6) and rightly not automatic.
+            String text = live.sms(5000, "Ana Kamga", phone(i), "R-" + i);
             tasks.add(() -> live.payments.ingest(w.tenant, seller, MatchingFixture.id(), text).paymentId());
         }
         List<Object> results = together(tasks);

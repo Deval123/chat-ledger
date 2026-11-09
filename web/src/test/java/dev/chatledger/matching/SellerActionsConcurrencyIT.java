@@ -221,8 +221,9 @@ class SellerActionsConcurrencyIT {
     @Test
     void sixteen_rematches_at_once_make_each_automatic_match_once() throws Exception {
         for (int i = 0; i < 6; i++) {
-            order("T-" + i, "Ana Kamga", PHONE, 3000 + 100L * i);
-            payment(seller, quiet.sms(3000 + 100L * i, "Ana Kamga", PHONE, "T-" + i));
+            // six payers, one phone each (six payments from one phone in minutes would be a burst, R6, and not automatic)
+            order("T-" + i, "Ana Kamga", MatchingConcurrencyIT.phone(i), 3000 + 100L * i);
+            payment(seller, quiet.sms(3000 + 100L * i, "Ana Kamga", MatchingConcurrencyIT.phone(i), "T-" + i));
         }
         List<Callable<MatchingService.RematchResult>> tasks = new ArrayList<>();
         for (int i = 0; i < THREADS; i++) {

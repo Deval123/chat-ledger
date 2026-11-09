@@ -61,7 +61,8 @@ class BoardRoutesIT extends BoardIT {
             post("/app/payments/{id}/take-back", "CONFIRM_OR_OVERRIDE_MATCH", Map.of(), 404),
             post("/app/rematch", "CONFIRM_OR_OVERRIDE_MATCH", Map.of(), 302),
             post("/app/orders/{id}/approve", "APPROVE_ORDER_TOTAL", Map.of("total", "100", "confirm", "yes"), 404),
-            post("/app/books/check", "VIEW_LEDGER", Map.of(), 302));
+            post("/app/books/check", "VIEW_LEDGER", Map.of(), 302),
+            post("/app/flags/{id}/resolve", "RESOLVE_FLAG", Map.of(), 404));
 
     private static Route get(String pattern, String authority, int unknown) {
         return new Route("GET", pattern, authority, Map.of(), unknown);

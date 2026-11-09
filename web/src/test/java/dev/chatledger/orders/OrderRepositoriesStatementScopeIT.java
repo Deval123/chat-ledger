@@ -88,8 +88,8 @@ class OrderRepositoriesStatementScopeIT {
         OrderDecider.Draft draft = new OrderDecider.Draft(OrderDecider.Status.UNPARSED, null, "XAF", List.of(), null);
         String idB = IngestionFixture.id();
         String idA = IngestionFixture.id();
-        assertThat(orders.insert(b, new OrderRepository.NewOrder(idB, null, "x", draft, "Bea", sharedHash, "4321", null, null))).isPresent();
-        assertThat(orders.insert(a, new OrderRepository.NewOrder(idA, null, "x", draft, "Ana", sharedHash, "4321", null, null))).isPresent();
+        assertThat(orders.insert(b, new OrderRepository.NewOrder(idB, null, "x", draft, "Bea", sharedHash, "4321", null, null), (c, o, cu) -> { })).isPresent();
+        assertThat(orders.insert(a, new OrderRepository.NewOrder(idA, null, "x", draft, "Ana", sharedHash, "4321", null, null), (c, o, cu) -> { })).isPresent();
 
         UUID customerB = orders.findByExternalId(b, idB).orElseThrow().customerId();
         UUID customerA = orders.findByExternalId(a, idA).orElseThrow().customerId();

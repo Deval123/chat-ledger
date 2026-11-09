@@ -116,6 +116,9 @@ public final class MatchScorer {
         if (config.autoEnabled()) {
             floors.add(FloorCode.AUTO_ENABLED);
         }
+        if (!order.flagged() && !payment.flagged()) {
+            floors.add(FloorCode.NOT_FLAGGED);
+        }
         boolean autoEligible = floors.size() == FloorCode.values().length && total >= config.autoThreshold();
         return new ScoredPair(order.id(), payment.id(), total, reasons, floors, autoEligible);
     }

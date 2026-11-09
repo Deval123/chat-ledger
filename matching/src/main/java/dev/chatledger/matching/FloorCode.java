@@ -11,5 +11,7 @@ public enum FloorCode {
     IDENTITY_PRESENT,
     SAME_CURRENCY,
     TRUSTED_RECORDER,
-    AUTO_ENABLED
+    AUTO_ENABLED,
+    /** Neither the payment nor the order has a flag of its own, open or resolved (task 7, D3). A flag on the pair is checked under the lock. */
+    NOT_FLAGGED
 }

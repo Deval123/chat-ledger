@@ -21,7 +21,7 @@ class BoardActionLimitIT extends BoardIT {
 
     private static final List<String> ROUTES = List.of("/app/orders", "/app/payments", "/app/matches/{id}/confirm", "/app/matches/{id}/reject",
             "/app/matches/manual", "/app/matches/{id}/unmatch", "/app/payments/{id}/set-aside", "/app/payments/{id}/take-back", "/app/rematch",
-            "/app/orders/{id}/approve", "/app/books/check");
+            "/app/orders/{id}/approve", "/app/books/check", "/app/flags/{id}/resolve");
 
     @Test
     void the_third_action_in_a_minute_is_refused_on_every_route() {

@@ -11,9 +11,11 @@ import java.util.UUID;
  *
  * @param appliedMinor    The sum of the order's active matches (the balance is {@code totalMinor - appliedMinor}).
  * @param referenceShared True if another open order of the tenant has the same reference key; then a matching reference proves nothing.
+ * @param flagged         True if the order has a flag of its own (open or resolved). Such an order is never matched automatically.
  */
 public record OrderFacts(UUID id, long totalMinor, long appliedMinor, String currency, Instant createdAt, String orderRef,
-                         String customerName, String customerPhoneHash, String customerLast4, boolean referenceShared) {
+                         String customerName, String customerPhoneHash, String customerLast4, boolean referenceShared,
+                         boolean flagged) {
 
     public OrderFacts {
         Objects.requireNonNull(id, "id");

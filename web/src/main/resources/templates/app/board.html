@@ -16,7 +16,6 @@
   <div class="columns">
     <section th:each="entry : ${pages}" th:id="|col-${entry.key.path()}|" class="column" th:attr="aria-labelledby=|h-${entry.key.path()}|">
       <h2 th:id="|h-${entry.key.path()}|" th:text="#{${'column.' + entry.key.name()}}">Column</h2>
-      <p class="hint" th:if="${entry.key.name() == 'FLAGGED'}" th:text="#{column.note.FLAGGED}">Partial until the suspicion rules.</p>
       <p class="empty" th:if="${#lists.isEmpty(entry.value.cards)}" th:text="#{${'column.empty.' + entry.key.name()}}">Nothing here.</p>
       <th:block th:each="card : ${entry.value.cards}">
         <th:block th:replace="~{fragments/board :: card(${card})}"></th:block>

@@ -114,9 +114,36 @@ verified the signature; a mismatch is rejected (task 11). See "Tenancy and authe
 
 ## Suspicion rules
 
-Each rule is a small class returning zero or more flags with a code and a plain reason:
-`DUPLICATE_TX`, `NO_PROVIDER_ID`, `AMOUNT_NEAR_MISS`, `NAME_MISMATCH`, `TIME_ANOMALY`,
-`SENDER_ALIAS`. Rules are independent and individually testable.
+Each rule is a small class returning zero or one finding with a code; the reason stored is the code's fixed sentence
+(`FlagCode.sentence()`), never message text. Rules are independent and individually testable. Task 7 (decisions D1 to D13 in
+`task-7-design-stop.md`, approved with R4 dropped) built ten codes:
+
+| Rule | Code | About | Where it runs |
+|---|---|---|---|
+| R1 | `DUPLICATE_TX` | a payment | in the payment insert transaction |
+| R2 | `NO_PROVIDER_ID` | a payment | in the payment insert transaction |
+| R3 | `AMOUNT_NEAR_MISS` | a pair | under the matcher's lock (`applyWithin`) and with each suggestion |
+| R5 | `PAID_BEFORE_ORDER` | a pair | the same |
+| R6 | `SENDER_BURST` | a payment | in the payment insert transaction, under an advisory lock per sender phone |
+| R7 | `PHONE_MISMATCH` | a pair | under the matcher's lock and with each suggestion |
+| R8 | `NAME_MISMATCH` | a pair | the same |
+| R9 | `PAID_OUTSIDE_USUAL_WINDOW` | a payment | in the payment insert transaction |
+| R10 | `SENDER_ALIAS` | an order, or a payment | in the order insert transaction; in the payment insert transaction |
+| R11 | `OVERPAYMENT` | a pair | under the matcher's lock and with each suggestion |
+
+- **Storage (V019).** Typed `payment_id` and `order_id` with foreign keys to the same tenant; a CHECK ties each code to its shape; one flag
+  per rule and subject (`INSERT ... ON CONFLICT DO NOTHING`); write-once except for one resolution (who and when), for every role, and never
+  deleted. Existing `DUPLICATE` and `UNVERIFIED` payments were back-filled.
+- **Matching (D3, D12).** Any flag, open or resolved, keeps a pair from automatic matching: a payment flag without an order blocks every
+  pair of that payment, an order flag every pair of that order, a pair flag only that pair. The scorer's floor `NOT_FLAGGED` sees the
+  subject's own flags; the wall in `applyWithin` sees all three scopes under the lock and degrades to a suggestion, written in the same
+  transaction as the finding. Flags never refuse a confirmation or a manual match (D8).
+- **Board (D9).** The Flagged column comes from open flag rows only. A checked unverified payment goes to Review, a checked repeat to the
+  payments set aside or repeated.
+- **Resolve (D7).** "I checked this": one click, seller only, audited `FLAG_RESOLVED`, once, no undo.
+- **Settings.** `app.suspicion.*` thresholds with bounds checked at startup; `app.suspicion.disabled` lists codes switched off.
+
+### Trade-offs and weakened defenses (task 7): register items 96 to 110, below.
 
 ## Other security rules
 
@@ -820,3 +847,18 @@ The demo credentials go in the Devpost testing field.
 | 93 | **htmx keeps one key in `sessionStorage`** (`htmx-current-path-for-history`, the current path), even with history off | It is how htmx 2 works | Only a path, no page content; checked in the browser walk |
 | 94 | **Refused htmx requests show the plain error page's sentence in the notice area** | htmx drops error answers by default | `responseHandling` swaps `#notice` from the error page; the error page keeps it (lint) and says nothing about the cause; checked in a browser with a 404 |
 | 95 | **Test contexts use four database connections each** | Spring keeps every test context alive on one shared database | Test-only setting; no web test sends requests in parallel; production pool settings unchanged |
+| 96 | **The application role may now write `flag`**: INSERT, and UPDATE of `resolved_at` and `resolved_by` only | The rules and the resolve button need it; the table was SELECT-only until task 7 | Column grant; typed foreign keys to the same tenant; shape and bound CHECKs; a trigger, for every role including the owner, refuses any other change, a second resolution, a delete and a truncate (`FlagSchemaIT`) |
+| 97 | **The rules are heuristics**: they miss some fraud and flag some honest payments | Text from chats and confirmations proves nothing by itself | Each flag is advisory and explained in one sentence; it only removes automatic matching; the seller confirms, matches by hand or marks it checked (D8). False-positive rates are not measured |
+| 98 | **R6 and R10 need a full sender phone**: a forward with only the last four digits is not counted as a burst or an alias | There is no phone hash to compare | Such a payment is already flagged by R2 (no transaction id) and is suggestion-only |
+| 99 | **Thresholds are global**, not per workspace | No settings page yet | Bounds checked at startup; `app.suspicion.disabled` switches a rule off for all; per-workspace settings are a later task |
+| 100 | **Any flag, even a checked one, keeps a pair from automatic matching** (D3) | A checked flag says the seller looked, not that the pair is safe | Costs the seller one confirmation per flagged pair; the explainer says why ("A flag was raised on this payment, this order or this pair") |
+| 101 | **`reason` repeats the code's sentence** | The row stays readable without the code table | A test compares every stored sentence (and the back-fill's) with `FlagCode.sentence()` and with the page text |
+| 102 | **The rules do not run again on old records** | Running them on history would flag records the seller has already handled | Only the back-fill of `DUPLICATE` and `UNVERIFIED` payments (V019); new records and every matcher decision are evaluated |
+| 103 | **Two `EXISTS` on `flag` in each matching facts query** | The scorer's floor needs the subjects' own flags | Partial indexes per payment and per order; the cost on a large workspace is not measured |
+| 104 | **Payments from one sender phone are recorded one at a time** (`pg_advisory_xact_lock` on tenant and phone hash) | Under READ COMMITTED sixteen payments sent at once each saw only committed ones, and a burst slipped under R6 (4 flagged instead of 13) | The lock is per tenant and phone, held to commit; other senders are not delayed; `MatchingConcurrencyIT` asserts exactly 13 |
+| 105 | **Redundant guards deleted after the first mutation pass**, each a mutant no test could kill: in R3 the equal-digit skip and the length check (the exact amount is refused first); in R11 `paid <= balance` (the excess is then below any minimum); `isBlank` in `RuleNames` (a blank key is empty); the `UNPARSED` short-circuit in `SuspicionWriter` (no rule fires on an unread payment); the locked facts' own flags in `applyWithin` (the wall reads all three scopes); the Java "already resolved" check in `FlagService` (the UPDATE's `resolved_at IS NULL` and the trigger); `subject_type` in the unique key (`chk_flag_subject` makes it follow from `payment_id`); the "customer existed" flag in `OrderContext` (a new customer stores the parsed name, so they agree) | A guard no test can tell apart from its absence is noise that looks like a defense | Each named here; every remaining guard is killed by a test |
+| 106 | **The tenant predicates in the board's flag reads are redundant** with row-level security and the composite foreign keys | Defense in depth | Kept, and made testable: a flag of another tenant naming our records, written with the keys off, is not shown when the statements run as the owner (`BoardRepositoryIsolationIT`) |
+| 107 | **A flag can never be deleted**, which will conflict with deleting a workspace's data (`DELETE_TENANT_DATA`, a later task) | Write-once is the audit property | Open: that task has to decide how flags go with the rest of the data (for example an owner-only routine that is allowed past the trigger) and name it as a weakened defense |
+| 108 | **`app.suspicion.disabled` (a list of codes) instead of one `enabled` key per rule** | One setting, validated against the enum at startup; a typo stops the application | A small deviation from the design stop's wording; the switched-off codes are logged at startup |
+| 109 | **Test fixtures share one set of phone keys** (`MatchingFixture.SHARED_KEYS`) | Two fixtures hashed one phone differently and R7 fired in tests that were not about it | Test-only; the production hashing (per-tenant salt) is unchanged |
+| 110 | **The older concurrency tests now give each payer its own phone** | Sixteen payments from one phone are a burst (R6), which those tests are not about | A new test asserts the burst count for sixteen at once from one phone |

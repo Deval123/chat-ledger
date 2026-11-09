@@ -49,9 +49,12 @@ public class PaymentIngestionService {
     private final PaymentEvents events;
     private final Clock clock;
     private final MatchTrigger matcher;
+    private final dev.chatledger.flags.SuspicionWriter suspicion;
 
     public PaymentIngestionService(TenantRepository tenants, PaymentRepository payments, PaymentTemplates templates,
-                                   RateLimits limits, PhoneKeys phoneKeys, PaymentEvents events, Clock clock, MatchTrigger matcher) {
+                                   RateLimits limits, PhoneKeys phoneKeys, PaymentEvents events, Clock clock, MatchTrigger matcher,
+                                   dev.chatledger.flags.SuspicionWriter suspicion) {
+        this.suspicion = java.util.Objects.requireNonNull(suspicion, "suspicion");
         this.tenants = tenants;
         this.payments = payments;
         this.templates = templates;
@@ -104,7 +107,10 @@ public class PaymentIngestionService {
                 duplicateOf = payments.findOriginal(tenantId, parsed.provider(), parsed.transactionId()).orElse(null);
             }
             PaymentRepository.NewPayment toStore = build(externalId, text, draft, parsed, phoneHash, duplicateOf, actor, money.currency());
-            Optional<UUID> id = payments.insert(tenantId, toStore);
+            // The payment rules run in the payment's own transaction, on purpose: the payment is never visible without its flags, so no
+            // rematch can match it in between. A retry is safe: ingestion is idempotent by (tenant, external id), and so are the flags.
+            Optional<UUID> id = payments.insert(tenantId, toStore, (c, paymentId) -> suspicion.paymentWithin(c, tenantId, paymentId,
+                    toStore.status(), toStore.paidAt(), toStore.senderPhoneHash(), toStore.senderName()));
             if (id.isPresent()) {
                 PaymentIngestionResult.Outcome outcome = outcome(toStore.status());
                 events.created(tenantId, id.get(), outcome, draft.reason(), parsed == null ? null : parsed.templateId());

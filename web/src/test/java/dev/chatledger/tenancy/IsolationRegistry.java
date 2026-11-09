@@ -79,6 +79,7 @@ final class IsolationRegistry {
             Map.entry("PaymentRepository", "dev.chatledger.payments.PaymentRepositoryIsolationIT#another_tenants_payments_cannot_be_read_or_written"),
             Map.entry("MatchRepository", "dev.chatledger.matching.MatchRepositoryIsolationIT#another_tenants_matches_cannot_be_read_or_written"),
             Map.entry("BoardRepository", "dev.chatledger.matching.BoardRepositoryIsolationIT#another_tenants_board_cannot_be_read"),
+            Map.entry("FlagRepository", "dev.chatledger.matching.FlagRepositoryIsolationIT#another_tenants_flags_cannot_be_read_or_written"),
             Map.entry("ExportRepository", "dev.chatledger.matching.BoardRepositoryIsolationIT#another_tenants_rows_cannot_be_exported"));
 
     static final Map<String, TableSpec> TABLES = Map.ofEntries(
@@ -116,7 +117,7 @@ final class IsolationRegistry {
                                     + " VALUES (?, ?, ?, ?, 90, 'REJECTED', now())",
                             UUID.randomUUID(), t, r.orderId(), r.paymentId()))),
             Map.entry("flag", TableSpec.direct(
-                    (c, t, r) -> update(c, "INSERT INTO flag(id, tenant_id, subject_type, subject_id, code, reason) VALUES (?, ?, 'PAYMENT', ?, 'PROBE', 'probe')",
+                    (c, t, r) -> update(c, "INSERT INTO flag(id, tenant_id, subject_type, payment_id, code, reason) VALUES (?, ?, 'PAYMENT', ?, 'SENDER_BURST', 'probe')",
                             UUID.randomUUID(), t, r.paymentId()))),
             Map.entry("catalog_item", TableSpec.direct(
                     (c, t, r) -> update(c, "INSERT INTO catalog_item(id, tenant_id, name_key, display_name, unit_minor) VALUES (?, ?, ?, 'Probe', 1)",

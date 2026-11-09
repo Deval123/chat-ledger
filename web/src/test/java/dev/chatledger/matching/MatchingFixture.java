@@ -59,7 +59,12 @@ final class MatchingFixture {
     }
 
     final MutableClock clock = new MutableClock();
-    final PhoneKeys phoneKeys = new PhoneKeys(new KeyedHasher(UUID.randomUUID() + "" + UUID.randomUUID()));
+    /**
+     * One key for every fixture, as production has one secret: a test that records the order through one fixture and the payment through
+     * another must see the same phone hash for the same phone (otherwise R7, phone mismatch, rightly fires).
+     */
+    private static final PhoneKeys SHARED_KEYS = new PhoneKeys(new KeyedHasher(UUID.randomUUID() + "" + UUID.randomUUID()));
+    final PhoneKeys phoneKeys = SHARED_KEYS;
     final MatchRepository repository;
     final MatchingService matcher;
     final OrderIngestionService orders;
@@ -99,21 +104,32 @@ final class MatchingFixture {
         this(appDataSource, MatchConfig.defaults(), MatchingService.StepHook.NONE, null, MatchingService.ActionHook.NONE);
     }
 
+    /** The ingestion services and the matcher with the given suspicion writer (for example one that fails on purpose); no engine trigger if {@code trigger} is false. */
+    MatchingFixture(dev.chatledger.flags.SuspicionWriter writer, MatchingService.StepHook hook, boolean trigger) {
+        this(DB.appDataSource(), MatchConfig.defaults(), hook, trigger ? null : MatchTrigger.NONE, MatchingService.ActionHook.NONE, writer);
+    }
+
     private MatchingFixture(javax.sql.DataSource ds, MatchConfig config, MatchingService.StepHook hook, MatchTrigger custom, MatchingService.ActionHook actions) {
+        this(ds, config, hook, custom, actions, null);
+    }
+
+    private MatchingFixture(javax.sql.DataSource ds, MatchConfig config, MatchingService.StepHook hook, MatchTrigger custom, MatchingService.ActionHook actions,
+                            dev.chatledger.flags.SuspicionWriter writer) {
         // PostgreSQL keeps microseconds; Linux clocks have nanoseconds (the Mac's do not). A clock with nanoseconds on every machine makes
         // any timestamp that is not cut to microseconds before it is stored fail here, not only on the CI machine.
         clock.advance(java.time.Duration.ofNanos(799));
         repository = new MatchRepository(ds);
         orderRepository = new OrderRepository(ds);
         paymentRepository = new PaymentRepository(ds);
-        matcher = new MatchingService(ds, repository, config, new MatchEvents(), clock, hook, actions);
+        dev.chatledger.flags.SuspicionWriter suspicion = writer != null ? writer : dev.chatledger.flags.SuspicionWriter.withDefaults(clock);
+        matcher = new MatchingService(ds, repository, config, new MatchEvents(), clock, hook, actions, suspicion);
         RateLimits limits = new RateLimits(new InMemoryRateLimiter(clock,
                 Map.of(RateLimits.INGESTION_TENANT, RateRule.parse("test", "1000000/1m")), 10_000, Duration.ofHours(1)));
         MatchTrigger t = custom == null ? matcher : custom;
         orders = new OrderIngestionService(new TenantRepository(ds), new CatalogRepository(ds), orderRepository, limits,
-                phoneKeys, new IngestionEvents(), t);
+                phoneKeys, new IngestionEvents(), t, suspicion);
         payments = new PaymentIngestionService(new TenantRepository(ds), paymentRepository, TEMPLATES, limits, phoneKeys,
-                new PaymentEvents(), clock, t);
+                new PaymentEvents(), clock, t, suspicion);
     }
 
     // ── Messages ───────────────────────────────────────────────────────────

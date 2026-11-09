@@ -21,7 +21,7 @@ class MatchScorerTest {
     private static final String HASH = "ab".repeat(32);
 
     private static OrderFacts order(long total, long applied, String ref, String name, String hash, String last4, boolean shared) {
-        return new OrderFacts(UUID.randomUUID(), total, applied, "XAF", ORDERED, ref, name, hash, last4, shared);
+        return new OrderFacts(UUID.randomUUID(), total, applied, "XAF", ORDERED, ref, name, hash, last4, shared, false);
     }
 
     private static OrderFacts order(String ref, String name, String hash) {
@@ -29,7 +29,7 @@ class MatchScorerTest {
     }
 
     private static PaymentFacts payment(long amount, String ref, String name, String hash, String last4, Instant paidAt, boolean tx) {
-        return new PaymentFacts(UUID.randomUUID(), amount, "XAF", tx, ref, name, hash, last4, paidAt);
+        return new PaymentFacts(UUID.randomUUID(), amount, "XAF", tx, ref, name, hash, last4, paidAt, false);
     }
 
     private static PaymentFacts payment(long amount) {
@@ -88,7 +88,7 @@ class MatchScorerTest {
         assertThat(none.score()).as("every other signal agrees, but nothing is left to pay").isZero();
         assertThat(none.reasons()).isEmpty();
         assertThat(none.autoEligible()).isFalse();
-        PaymentFacts euro = new PaymentFacts(UUID.randomUUID(), 5000, "EUR", true, null, null, null, null, null);
+        PaymentFacts euro = new PaymentFacts(UUID.randomUUID(), 5000, "EUR", true, null, null, null, null, null, false);
         ScoredPair s = score(order(null, null, null), euro);
         assertThat(s.score()).isZero();
         assertThat(s.reasons()).isEmpty();
@@ -182,6 +182,21 @@ class MatchScorerTest {
         assertThat(s.reasons().stream().mapToInt(Reason::points).sum()).isEqualTo(100);
         assertThat(s.autoEligible()).isTrue();
         assertThat(s.floorsMet()).containsExactlyInAnyOrder(FloorCode.values());
+    }
+
+    /** Task 7, D3: a flag of the order's own or the payment's own (open or resolved) takes the NOT_FLAGGED floor away, whatever the score. */
+    @Test
+    void a_flagged_order_or_payment_is_never_eligible_and_the_score_is_unchanged() {
+        OrderFacts o = order(5000, 0, "A-1042", "Ana Kamga", HASH, "1234", false);
+        PaymentFacts p = payment(5000, "A-1042", "Ana Kamga", HASH, "1234", ORDERED.plusSeconds(60), true);
+        OrderFacts flaggedOrder = new OrderFacts(o.id(), 5000, 0, "XAF", ORDERED, "A-1042", "Ana Kamga", HASH, "1234", false, true);
+        PaymentFacts flaggedPayment = new PaymentFacts(p.id(), 5000, "XAF", true, "A-1042", "Ana Kamga", HASH, "1234", ORDERED.plusSeconds(60), true);
+        for (ScoredPair s : List.of(score(flaggedOrder, p), score(o, flaggedPayment), score(flaggedOrder, flaggedPayment))) {
+            assertThat(s.score()).isEqualTo(100);
+            assertThat(s.autoEligible()).isFalse();
+            assertThat(s.floorsMet()).doesNotContain(FloorCode.NOT_FLAGGED).hasSize(FloorCode.values().length - 1);
+        }
+        assertThat(score(o, p).floorsMet()).contains(FloorCode.NOT_FLAGGED);
     }
 
     @Test

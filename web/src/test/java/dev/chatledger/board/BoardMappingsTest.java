@@ -46,7 +46,7 @@ class BoardMappingsTest {
     @Test
     void every_handler_names_its_permission_and_is_a_get_or_a_post() {
         List<Method> handlers = handlers();
-        assertThat(handlers).hasSizeGreaterThanOrEqualTo(24);
+        assertThat(handlers).hasSizeGreaterThanOrEqualTo(25);
         for (Method m : handlers) {
             PreAuthorize pre = m.getAnnotation(PreAuthorize.class);
             assertThat(pre).as(m.getName() + " has @PreAuthorize").isNotNull();
@@ -58,7 +58,7 @@ class BoardMappingsTest {
 
     @Test
     void the_handlers_that_change_things_are_posts_and_the_pages_are_gets() {
-        Set<String> posts = Set.of("pasteOrder", "pastePayment", "confirm", "reject", "manual", "unmatch", "setAside", "takeBack", "rematch", "approve", "checkBooks");
+        Set<String> posts = Set.of("pasteOrder", "pastePayment", "confirm", "reject", "manual", "unmatch", "setAside", "takeBack", "rematch", "approve", "checkBooks", "resolveFlag");
         for (Method m : handlers()) {
             RequestMapping mapping = AnnotatedElementUtils.findMergedAnnotation(m, RequestMapping.class);
             boolean isPost = mapping.method()[0] == RequestMethod.POST;

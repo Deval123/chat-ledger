@@ -160,6 +160,14 @@ try {
   const snap = await page.evaluate(() => getComputedStyle(document.querySelector('.columns')).scrollSnapType);
   record('the columns scroll and snap', /x/.test(snap), snap);
 
+  // Task 7: the flagged card says why in a fixed sentence and has the seller's button; one tap resolves it in place.
+  const flaggedCard = await text(page, '#col-flagged .card');
+  record('the flagged card shows the reason and the resolve button',
+    flaggedCard.includes('This transaction id was already recorded.') && (await page.$('#col-flagged form[action$="/resolve"] button')) !== null, flaggedCard.slice(0, 120));
+  await tap(page, '#col-flagged form[action$="/resolve"] button');
+  record('resolving with htmx answers in place', await waitText(page, '#col-flagged .card.done', 'Marked as checked.'));
+  record('the Flagged chip drops to 0 out of band', await waitText(page, '#chips a[href="#col-flagged"]', 'Flagged 0'), await chip(page, 'flagged'));
+
   // A refused htmx request is shown in the notice area, not dropped: an action on an id that does not exist, as a stale page would send.
   // (No swap option is passed, so the configured response handling decides where the answer goes.)
   await page.evaluate(() => window.htmx.ajax('POST', '/app/payments/00000000-0000-4000-8000-000000000000/set-aside', { source: '#paste', target: '#paste' }));
@@ -210,6 +218,21 @@ try {
     await plain.$eval('#col-review form[action$="/set-aside"] button', (el) => el.scrollIntoView({ inline: 'center', block: 'center' }));
     await Promise.all([plain.waitForNavigation({ waitUntil: 'networkidle0' }), tap(plain, '#col-review form[action$="/set-aside"] button')]);
     record('without JavaScript Set aside redirects with a notice', (await text(plain, '#notice')).includes('Payment set aside.'), plain.url());
+  }
+  // Task 7 without JavaScript: a forward has no transaction id, so it is flagged; resolve it from its page with a plain form.
+  await plain.evaluate(() => { document.querySelectorAll('#paste details')[1].open = true; });
+  const fwdDate = smsDate();
+  await plain.type('#payment-text', `Forwarded: received 800 XAF from Plain Eve (4321) on ${fwdDate}`);
+  await Promise.all([plain.waitForNavigation({ waitUntil: 'networkidle0' }), tap(plain, '#paste details:nth-of-type(2) button[type=submit]')]);
+  const flaggedLink = await plain.$eval('#col-flagged a', (a) => a.getAttribute('href')).catch(() => null);
+  record('without JavaScript a forward is flagged', flaggedLink !== null && (await chip(plain, 'flagged')).includes('Flagged 1'), await chip(plain, 'flagged'));
+  if (flaggedLink) {
+    await plain.goto(base + flaggedLink, { waitUntil: 'networkidle0' });
+    record('the payment page lists the open flag with its button', (await text(plain, 'ul.reasons')).includes('no transaction id') && (await plain.$('form[action$="/resolve"] button')) !== null);
+    await plain.screenshot({ path: 'screenshots/07-flag-on-payment-page.png' });
+    await Promise.all([plain.waitForNavigation({ waitUntil: 'networkidle0' }), tap(plain, 'form[action$="/resolve"] button')]);
+    record('without JavaScript resolving returns to the same page with a notice', plain.url().includes(flaggedLink + '?n=FLAG_RESOLVED')
+      && (await text(plain, '#notice')).includes('Marked as checked.') && (await text(plain, 'ul.reasons')).includes('Checked by you'), plain.url());
   }
   await plainContext.close();
 } finally {
