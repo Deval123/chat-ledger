@@ -5,12 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <!--/*
     htmx contract: htmx's defaults allow eval, script tags in responses and an injected inline style, all of
-    which the CSP forbids. Turn them off, and let it talk to its own origin only. The htmx library itself is
-    added in task 8, served from this origin.
+    which the CSP forbids. Turn them off, let it talk to its own origin only, keep no page snapshots in the
+    browser's storage, and show a refused request (403, 404, 429, ...) in the notice area instead of dropping it.
+    The htmx library is vendored (third-party/htmx) and served from this origin.
   */-->
-  <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"selfRequestsOnly":true}'>
+  <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"selfRequestsOnly":true,"historyEnabled":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true,"target":"#notice","select":"#notice","swapOverride":"outerHTML"}]}'>
   <title th:text="${title}">chat-ledger</title>
+  <link rel="icon" type="image/svg+xml" th:href="@{/assets/favicon.svg}">
+  <link rel="stylesheet" th:href="@{/assets/app.css}">
+  <script th:src="@{/assets/htmx-2.0.11.min.js}" defer></script>
 </head>
 <body>
+<!--/* The bar at the top of every signed-in page: workspace, role, navigation, sign out, and the notice area. */-->
+<header th:fragment="top" class="top">
+  <p class="brand"><strong th:text="${@display.text(tenant.name, 40)}">Shop</strong>
+    <span class="chip" th:text="#{${'role.' + role}}">Seller</span></p>
+  <nav aria-label="Main" class="links" th:attr="aria-label=#{nav.label}">
+    <a th:href="@{/app}" th:text="#{nav.board}">Board</a>
+    <a th:href="@{/app/summary}" th:text="#{nav.summary}">Summary</a>
+    <a th:if="${canLedger}" th:href="@{/app/books}" th:text="#{nav.books}">Books</a>
+    <a th:if="${canExport}" th:href="@{/app/export}" th:text="#{nav.export}">Download</a>
+  </nav>
+  <form th:action="@{/logout}" method="post" class="signout">
+    <button type="submit" th:text="#{nav.signout}">Sign out</button>
+  </form>
+  <th:block th:replace="~{fragments/board :: notice}"></th:block>
+</header>
 </body>
 </html>

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<body>
+<!--/* One match on a detail page: the state in words, the amounts, the reasons as sentences, why it was not automatic, and the buttons. */-->
+<article th:fragment="match(s, kind)" class="card match" th:id="|m-${s.match.id}|"
+         th:with="m=${s.match}, money=${@money}">
+  <p class="status" th:text="#{${'match.state.' + m.state}(${m.score})}">Suggested</p>
+  <p class="meta">
+    <a th:href="@{/app/{k}s/{id}(k=${kind}, id=${m.otherId})}" th:text="#{${'match.other.' + kind}(${@display.text(m.otherWho, 40)}, ${@display.text(m.otherRef, 40)})}">Other</a>
+    <span th:if="${m.otherAmountMinor != null}" th:text="${money.format(m.otherAmountMinor, tenant.scale, tenant.currency)}">5,000 XAF</span>
+  </p>
+  <p th:if="${m.amountMinor != null}" th:text="#{match.applied(${money.format(m.amountMinor, tenant.scale, tenant.currency)})}">3,000 applied</p>
+  <p th:if="${m.excessMinor > 0}" th:text="#{match.excess(${money.format(m.excessMinor, tenant.scale, tenant.currency)})}">1,000 kept as credit</p>
+  <p th:if="${m.state == 'SUGGESTED'}" th:text="#{match.would(${money.format(s.wouldApplyMinor, tenant.scale, tenant.currency)}, ${money.format(s.wouldExcessMinor, tenant.scale, tenant.currency)})}">Confirming would apply</p>
+  <p th:if="${m.decidedAt != null and m.state != 'SUGGESTED'}" th:text="#{${'match.decider.' + s.decider}(${@times.format(m.decidedAt, tenant.zone)})}">Decided</p>
+  <ul class="reasons" th:if="${not #lists.isEmpty(s.reasons) or s.otherReasons > 0}">
+    <li th:each="code : ${s.reasons}" th:text="#{${'reason.' + code.name()}}">Reason</li>
+    <li th:if="${s.otherReasons > 0}" th:text="#{reason.other}">Another reason</li>
+  </ul>
+  <div th:if="${m.state == 'SUGGESTED' and s.rescored and not #lists.isEmpty(s.missingNow)}">
+    <p th:text="#{match.notauto}">Why this is not automatic, as of now:</p>
+    <ul class="reasons"><li th:each="floor : ${s.missingNow}" th:text="#{${'floor.' + floor.name()}}">Missing</li></ul>
+  </div>
+  <div class="actions" th:if="${m.state == 'SUGGESTED' and canDecide}">
+    <form th:action="@{/app/matches/{id}/confirm(id=${m.id})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
+      <button type="submit" th:text="#{action.confirm}">Confirm</button>
+    </form>
+    <form th:action="@{/app/matches/{id}/reject(id=${m.id})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
+      <button type="submit" class="secondary" th:text="#{action.reject}">Reject</button>
+    </form>
+  </div>
+  <div class="actions" th:if="${(m.state == 'AUTO' or m.state == 'CONFIRMED') and canReverse}">
+    <a class="button secondary" th:href="@{/app/matches/{id}/undo(id=${m.id})}" th:text="#{action.undo}">Undo</a>
+  </div>
+</article>
+</body>
+</html>

@@ -50,11 +50,16 @@ class TemplateLintTest {
                 .add("th:inline javascript or css", "th:inline\\s*=\\s*[\"']?(javascript|css)")
                 .add("javascript: URL", "javascript\\s*:")
                 .add("<iframe>, <object>, <embed> or <base>", "<(iframe|object|embed|base)\\b")
-                .add("data: URL", "=\\s*[\"']\\s*data:");
+                .add("data: URL", "=\\s*[\"']\\s*data:")
+                .add("th:inline of any kind", "th:inline")
+                .add("an http(s) address (everything is served from this origin)", "https?://")
+                .add("an hx- attribute built from an expression (hx-* must be literal)", "th:attr\\s*=\\s*[\"'][^\"']*hx-(?!headers)")
+                .add("th:hx-... attribute", "\\bth:hx-")
+                .add("an hx- attribute value that is an expression", "\\shx-(?!headers)[a-z-]+\\s*=\\s*[\"']\\s*[$@{]");
     }
 
     static List<String> violations(String name, String template) {
-        String text = template.replaceAll("(?s)<!--.*?-->", "");
+        String text = template.replaceAll("(?s)<!--.*?-->", "").replace("xmlns:th=\"http://www.thymeleaf.org\"", "");
         List<String> found = new ArrayList<>();
         for (int i = 0; i < RULES.patterns.size(); i++) {
             if (RULES.patterns.get(i).matcher(text).find()) {
@@ -96,7 +101,22 @@ class TemplateLintTest {
         String layout = Files.readString(TEMPLATES.resolve("fragments/layout.html"));
         assertThat(layout).contains("name=\"htmx-config\"").contains("\"allowEval\":false")
                 .contains("\"allowScriptTags\":false").contains("\"includeIndicatorStyles\":false")
-                .contains("\"selfRequestsOnly\":true");
+                .contains("\"selfRequestsOnly\":true").contains("\"historyEnabled\":false")
+                .contains("\"responseHandling\"").contains("\"target\":\"#notice\"");
+    }
+
+    /** htmx swaps a refused answer into #notice (see the layout's responseHandling); the error page must have one, or the refusal is lost. */
+    @Test
+    void the_error_page_has_the_notice_element_that_htmx_swaps_in() throws IOException {
+        assertThat(Files.readString(TEMPLATES.resolve("error.html"))).containsPattern("<p id=\"notice\"[^>]*>The request could not be completed");
+    }
+
+    @Test
+    void the_layout_loads_the_vendored_htmx_and_the_one_stylesheet_from_this_origin() throws IOException {
+        String layout = Files.readString(TEMPLATES.resolve("fragments/layout.html"));
+        assertThat(layout).contains("th:src=\"@{/assets/htmx-2.0.11.min.js}\"").contains("th:href=\"@{/assets/app.css}\"");
+        assertThat(Path.of("src/main/resources/static/htmx-2.0.11.min.js")).exists();
+        assertThat(Path.of("src/main/resources/static/app.css")).exists();
     }
 
     @Test
@@ -116,7 +136,12 @@ class TemplateLintTest {
                 "<a href=\"javascript:alert(1)\">x</a>",
                 "<iframe src=\"/x\"></iframe>",
                 "<base href=\"/\">",
-                "<img src=\"data:image/png;base64,AAAA\">"};
+                "<img src=\"data:image/png;base64,AAAA\">",
+                "<p th:inline=\"text\">[[${x}]]</p>",
+                "<a href=\"http://example.invalid/\">x</a>",
+                "<form th:attr=\"hx-post=${x}\"></form>",
+                "<form th:hx-post=\"${x}\"></form>",
+                "<form hx-post=\"${x}\"></form>"};
         for (String template : bad) {
             assertThat(violations("t.html", template)).as(template).isNotEmpty();
         }

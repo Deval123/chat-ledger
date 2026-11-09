@@ -40,7 +40,8 @@ class OrderRenderIT extends AbstractWebIT {
 
             Browser.Response page = b.get("/app/probe/order/" + externalId);
             assertThat(page.status()).as(name).isEqualTo(200);
-            String html = page.body();
+            // The layout loads the vendored htmx from this origin; that one tag is ours, anything else would come from the message.
+            String html = page.body().replaceAll("<script src=\"/assets/htmx-2\\.0\\.11\\.min-[0-9a-f]{32}\\.js\" defer></script>", "");
             assertThat(html).as(name + ": no raw tag from the message").doesNotContainIgnoringCase("<script")
                     .doesNotContainIgnoringCase("<img").doesNotContain("<b>").doesNotContain("<!--").doesNotContain("<![CDATA[");
             if (HostileCorpus.get(name).contains("<")) {

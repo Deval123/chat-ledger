@@ -30,7 +30,33 @@ class SecurityPropertiesTest {
         assertThatThrownBy(() -> new SecurityProperties.Hashing(0, ok)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new SecurityProperties.Hashing(1, Duration.ZERO)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new SecurityProperties(new SecurityProperties.Session(ok, ok, ok),
-                new SecurityProperties.Hashing(1, ok), new SecurityProperties.Limits("1/1m", "1/1m", "1/1m", "1/1m"),
+                new SecurityProperties.Hashing(1, ok), new SecurityProperties.Limits("1/1m", "1/1m", "1/1m", "1/1m", "1/1m", "1/1h", "1/1m", "1/1m"),
                 new SecurityProperties.Size(org.springframework.util.unit.DataSize.ofKilobytes(4), org.springframework.util.unit.DataSize.ofKilobytes(4), org.springframework.util.unit.DataSize.ofKilobytes(4)), Duration.ZERO)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void the_board_limits_have_the_approved_defaults() {
+        var binder = new org.springframework.boot.context.properties.bind.Binder(
+                new org.springframework.boot.context.properties.source.MapConfigurationPropertySource(java.util.Map.of()));
+        SecurityProperties.Limits l = binder.bindOrCreate("app.security", SecurityProperties.class).limits();
+        assertThat(l.rematchPerMinute()).isEqualTo("3/1m");
+        assertThat(l.rematchPerHour()).isEqualTo("20/1h");
+        assertThat(l.exportPerTenant()).isEqualTo("6/10m");
+        assertThat(l.actionsPerUser()).isEqualTo("120/1m");
+        assertThat(l.ingestionPerTenant()).isEqualTo("60/1m/30");
+    }
+
+    @Test
+    void a_bad_board_limit_stops_startup() {
+        for (String bad : new String[]{"0/1m", "-1/1m", "3", "3/0m", "three/1m", "3/1x", "", "3/1m/0"}) {
+            assertThatThrownBy(() -> new SecurityProperties.Limits("1/1m", "1/1m", "1/1m", "1/1m", bad, "1/1h", "1/1m", "1/1m")).as("rematch minute " + bad)
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> new SecurityProperties.Limits("1/1m", "1/1m", "1/1m", "1/1m", "1/1m", bad, "1/1m", "1/1m")).as("rematch hour " + bad)
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> new SecurityProperties.Limits("1/1m", "1/1m", "1/1m", "1/1m", "1/1m", "1/1h", bad, "1/1m")).as("export " + bad)
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> new SecurityProperties.Limits("1/1m", "1/1m", "1/1m", "1/1m", "1/1m", "1/1h", "1/1m", bad)).as("actions " + bad)
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 }

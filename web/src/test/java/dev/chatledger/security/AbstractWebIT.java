@@ -42,7 +42,10 @@ import java.util.UUID;
                 // here. The limit tests run in their own contexts with the real defaults.
                 "app.security.limits.login-per-ip=1000000/1m",
                 "app.security.limits.login-per-account=1000000/1m",
-                "app.security.limits.login-page-per-ip=1000000/1m"})
+                "app.security.limits.login-page-per-ip=1000000/1m",
+                // Spring keeps every test context alive, each with its own pool, on one shared database. A small pool per context keeps the
+                // total under PostgreSQL's connection limit (a 16-thread ingestion test needs the rest). No web test sends requests in parallel.
+                "spring.datasource.hikari.maximum-pool-size=4"})
 @ActiveProfiles("probe")
 @Import(AbstractWebIT.TestClockConfig.class)
 abstract class AbstractWebIT {
@@ -109,6 +112,17 @@ abstract class AbstractWebIT {
             sb.append(e.getFormattedMessage()).append('\n');
             if (e.getThrowableProxy() != null) {
                 sb.append(e.getThrowableProxy().getMessage()).append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
+    /** What was logged at the given level or above since the test began (messages only). */
+    String loggedTextAt(Level level) {
+        StringBuilder sb = new StringBuilder();
+        for (ILoggingEvent e : List.copyOf(logs.list)) {
+            if (e.getLevel().isGreaterOrEqual(level)) {
+                sb.append(e.getFormattedMessage()).append('\n');
             }
         }
         return sb.toString();

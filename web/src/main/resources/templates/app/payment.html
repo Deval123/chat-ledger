@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.payment})}">
+</head>
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main th:with="title=${payment.who != null ? @display.text(payment.who, 100) : ''}">
+  <h1 th:text="${#strings.isEmpty(title)} ? #{card.unknown.payment} : ${title}">Sender</h1>
+  <p class="status" th:text="#{${'status.PAYMENT.' + payment.status}('', '')}">Received</p>
+  <dl>
+    <dt th:if="${payment.hasAmount}" th:text="#{fact.amount}">Amount</dt>
+    <dd th:if="${payment.hasAmount}" th:text="${@money.format(payment.amountMinor, tenant.scale, payment.currency)}">5,000 XAF</dd>
+    <dt th:if="${payment.txId != null}" th:text="#{fact.tx}">Transaction</dt>
+    <dd th:if="${payment.txId != null}" th:text="${@display.text(payment.txId, 40)}">TX</dd>
+    <dt th:if="${payment.ref != null}" th:text="#{fact.paymentref}">Note</dt>
+    <dd th:if="${payment.ref != null}" th:text="${@display.text(payment.ref, 64)}">Ref</dd>
+    <dt th:if="${payment.last4 != null}" th:text="#{fact.phone}">Phone</dt>
+    <dd th:if="${payment.last4 != null}"><span aria-hidden="true" th:text="${@phone.display(payment.last4)}">1234</span><span class="sr" th:text="${@phone.spoken(payment.last4)}">phone ending 1234</span></dd>
+    <dt th:if="${payment.paidAt != null}" th:text="#{fact.paid}">Paid</dt>
+    <dd th:if="${payment.paidAt != null}" th:text="${@times.format(payment.paidAt, tenant.zone)}">03 Nov</dd>
+    <dt th:text="#{fact.recorded}">Recorded</dt>
+    <dd th:text="${@times.format(payment.at, tenant.zone)}">03 Nov</dd>
+  </dl>
+  <p th:if="${payment.duplicateOf != null}"><a th:href="@{/app/payments/{id}(id=${payment.duplicateOf})}" th:text="#{payment.first}">The payment it repeats</a></p>
+  <div th:if="${not #lists.isEmpty(payment.flags)}">
+    <h2 th:text="#{detail.flags}">Flags</h2>
+    <th:block th:replace="~{fragments/facts :: flags(${payment.flags})}"></th:block>
+  </div>
+  <div class="actions" th:if="${canDecide and free}">
+    <a class="button secondary" th:href="@{/app/payments/{id}/match(id=${payment.id})}" th:text="#{action.match}">Match by hand</a>
+    <form th:action="@{/app/payments/{id}/set-aside(id=${payment.id})}" method="post">
+      <button type="submit" class="secondary" th:text="#{action.setaside}">Set aside</button>
+    </form>
+  </div>
+  <div class="actions" th:if="${canDecide and payment.status == 'UNMATCHED'}">
+    <form th:action="@{/app/payments/{id}/take-back(id=${payment.id})}" method="post">
+      <button type="submit" th:text="#{action.takeback}">Take back</button>
+    </form>
+  </div>
+  <h2 th:if="${not #lists.isEmpty(shown)}" th:text="#{detail.orders}">Orders</h2>
+  <th:block th:each="s : ${shown}">
+    <th:block th:replace="~{fragments/match :: match(${s}, 'order')}"></th:block>
+  </th:block>
+  <th:block th:replace="~{fragments/facts :: raw(${raw})}"></th:block>
+  <p><a th:href="@{/app}" th:text="#{nav.back}">Back to the board</a></p>
+</main>
+</body>
+</html>

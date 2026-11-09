@@ -22,7 +22,7 @@ class AuthorizationIT extends AbstractWebIT {
         String csrf = Browser.csrf(b.get("/app"));
 
         assertThat(b.get("/app").status()).isEqualTo(200);
-        assertThat(b.get("/app").body()).contains("HELPER");
+        assertThat(b.get("/app").body()).contains("<span class=\"chip\">Helper</span>");
         assertThat(b.post("/app/probe/record", Map.of("_csrf", csrf)).status()).isEqualTo(200);
 
         assertThat(b.get("/admin/probe/export").status()).as("export").isEqualTo(403);

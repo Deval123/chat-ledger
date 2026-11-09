@@ -70,7 +70,7 @@ class AuthenticationIT extends AbstractWebIT {
 
         Browser.Response app = b.get("/app");
         assertThat(app.status()).isEqualTo(200);
-        assertThat(app.body()).contains("SELLER");
+        assertThat(app.body()).contains("<span class=\"chip\">Seller</span>");
 
         // An attacker who planted the pre-login id gets nothing.
         Browser attacker = browser();

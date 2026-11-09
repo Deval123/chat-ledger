@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.summary})}">
+</head>
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main>
+  <h1 th:text="#{summary.title(${@times.day(day)})}">Summary</h1>
+  <ul class="plain">
+    <li th:text="#{summary.orders(${summary.orders})}">0 orders recorded</li>
+    <li th:text="#{summary.paid(${summary.paid})}">0 paid</li>
+    <li th:text="#{summary.flagged(${summary.flagged})}">0 flagged now</li>
+  </ul>
+  <ul class="plain" th:if="${amounts != null}">
+    <li th:text="#{summary.outstanding(${@money.format(amounts.outstandingMinor, tenant.scale, tenant.currency)})}">0 owed</li>
+    <li th:text="#{summary.collected(${@money.format(amounts.collectedMinor, tenant.scale, tenant.currency)})}">0 collected</li>
+    <li th:text="#{summary.unverified(${amounts.unverifiedCount}, ${@money.format(amounts.unverifiedMinor, tenant.scale, tenant.currency)})}">0 unverified</li>
+  </ul>
+  <p class="hint" th:text="#{summary.note}">Definitions.</p>
+  <p>
+    <a th:if="${previous != null}" th:href="@{/app/summary(date=${previous})}" th:text="#{summary.previous}">Previous day</a>
+    <a th:if="${following != null}" th:href="@{/app/summary(date=${following})}" th:text="#{summary.next}">Next day</a>
+  </p>
+  <p><a th:href="@{/app}" th:text="#{nav.back}">Back to the board</a></p>
+</main>
+</body>
+</html>

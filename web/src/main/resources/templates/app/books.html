@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.books})}">
+</head>
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main>
+  <h1 th:text="#{books.title}">The books</h1>
+  <p th:if="${result.balanced()}" class="ok" role="status" th:text="#{books.ok}">The books balance.</p>
+  <p th:unless="${result.balanced()}" class="alert" role="alert" th:text="#{books.bad}">These figures do not agree.</p>
+  <table>
+    <thead><tr><th th:text="#{books.col.check}">Check</th><th th:text="#{books.col.books}">Books</th><th th:text="#{books.col.records}">Records</th><th th:text="#{books.col.result}">Result</th></tr></thead>
+    <tbody>
+      <tr th:each="line : ${result.lines()}">
+        <td th:text="#{${'books.' + line.code().name()}}">Check</td>
+        <td th:text="${line.code().name() == 'MATCH_POSTINGS'} ? ${line.left()} : ${@money.format(line.left(), tenant.scale, tenant.currency)}">0</td>
+        <td th:text="${line.code().name() == 'MATCH_POSTINGS'} ? ${line.right()} : ${@money.format(line.right(), tenant.scale, tenant.currency)}">0</td>
+        <td th:text="${line.ok()} ? #{books.line.ok} : #{books.line.bad}">balanced</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="hint" th:text="#{books.cached(${@times.format(result.checkedAt(), tenant.zone)})}">Checked at.</p>
+  <form th:action="@{/app/books/check}" method="post">
+    <button type="submit" th:text="#{books.again}">Check again now</button>
+  </form>
+  <p><a th:href="@{/app}" th:text="#{nav.back}">Back to the board</a></p>
+</main>
+</body>
+</html>

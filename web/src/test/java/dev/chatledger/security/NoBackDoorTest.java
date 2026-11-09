@@ -105,7 +105,9 @@ class NoBackDoorTest {
         for (String dir : new String[]{"src/main/resources", "src/test/resources"}) {
             files.addAll(files(WEB.resolve(dir), null));
         }
-        files.removeIf(f -> f.toString().endsWith("common-passwords.txt") || f.toString().endsWith(".html"));
+        files.removeIf(f -> f.toString().endsWith("common-passwords.txt") || f.toString().endsWith(".html")
+                // The vendored htmx script is minified third-party code; its SHA-256 is pinned in HtmxProvenanceTest, so it cannot change unseen.
+                || f.toString().endsWith("static/htmx-2.0.11.min.js"));
         files.add(ROOT.resolve("docker-compose.yml"));
         files.add(ROOT.resolve(".env.example"));
         files.addAll(files(ROOT.resolve("docker"), null));

@@ -1212,3 +1212,98 @@ A missing actor is a helper (a legitimate caller with no actor loses automatic m
 - **A third, separate failure found on the way.** About one repetition in 80 on two CPUs failed with `Connect timed out`: the test data source opens a new connection for every statement and sixteen threads exceeded the driver's ten seconds. A test harness defect, not the matcher. `MatchingFixture` now shares a pool of the application role's connections (also three times faster). 480 repetitions on two CPUs then passed.
 - **CI environment.** Reproduced as a Linux container pinned to two CPUs (Maven and the database both on CPUs 0 and 1, Java 21): the full verify passes there (154 unit, 464 integration).
 
+
+## Task 8 - board and summary UI (stop 2)
+
+The owner approved D1 to D22 of `.kiro/specs/chat-ledger/task-8-design-stop.md` with five conditions. Work stays on `task-8-board`; nothing was committed by me. Task 1 in `tasks.md` is ticked (`- [x] 1. Project skeleton`), checked at the start of this stop and again at the end.
+
+### The five conditions
+1. **`PhoneMask.maskText` counts digits across separators.** Digits joined by up to three separator characters in a row (space, dot, dash, parentheses, U+00A0, U+202F) are one number; 7 or more digits keep the last four, the others become `•`. Tested with `6 99 00 12 34`, `699.001.234`, `(+237) 699-001-234` (the leading `(+` stays outside) and `+999 000 000 1234`, plus each separator alone. Heuristic, named in register item 79.
+2. **htmx from the official release.** v2.0.11 (the latest 2.x; 4.x was rejected because the configuration keys and the CSP contract are htmx 2). Downloaded from the GitHub release, SHA-256 computed here (`d6fdc75f…f717`, 52,182 bytes, equal to the release asset's digest), licence Zero-Clause BSD read from the source archive's `LICENSE` (archive SHA-256 `665124df…a1b`). File, licence and `web/third-party/htmx/PROVENANCE.md` are in the tree; `HtmxProvenanceTest` fails if the hash, size, version, note or licence changes, or if another script appears among the static files. I reached the release; nothing was guessed.
+3. **puppeteer-core only as a dev tool.** `tools/browser-check/` (puppeteer-core 25.16.0, exact, lock file with 25 packages), installed with `npm ci --ignore-scripts`, uses the installed Chrome, outside the Maven build and not run by CI. What I ran is below.
+4. **V018 and the approval.** The freezing trigger refuses any change of `total_minor` outside `NEEDS_REVIEW` to `PENDING_PAYMENT`, for every role including the owner; the status trigger allows that one move out of review; a deferred trigger refuses the move at commit without this tenant's `ORDER_ACCEPTED` posting. `OrderApprovalService.approve` is one transaction: enabled seller, lock, status, total 1 to 10^12, total and status, accounts, posting, audit `ORDER_APPROVED`; the matcher is asked afterwards. Every guard was mutation-checked (12 trigger mutants, 13 service and page mutants, all killed or deleted as redundant).
+5. **HELPER: no raw text, no export, no books.** A 403 test per route (`BoardRoutesIT`, generated from the request mappings) and a test per template (`BoardRenderIT`: nine pages rendered for a helper, none holds the raw text, the masked marker or a phone beyond the last four; the board holds no link to books, downloads or rematch). The repository is not even asked for raw text for a helper.
+
+### What each route refuses
+Every route: anonymous is sent to sign-in (POST: 403 or sign-in); a user without the permission gets 403 with the fixed page; every POST without or with a wrong CSRF token (form field or htmx header) gets 403 and changes nothing; an id of another workspace or an unknown id gets 404 (never 403); a bad UUID, column, cursor, page or date gets 400 without echoing the input; every POST counts against 120 actions a minute per user (429 with `Retry-After`).
+
+| Route | Permission (who) | Also refuses |
+|---|---|---|
+| `GET /app` | `VIEW_BOARD` (seller, helper) | an unknown notice code is ignored, never echoed |
+| `GET /app/columns/{column}` | `VIEW_BOARD` | column not one of six, cursor not `micros_uuid`, page outside 1 to 5 (400) |
+| `GET /app/orders/{id}`, `GET /app/payments/{id}` | `VIEW_BOARD` | raw text only for a seller, only for unread, review and flagged items |
+| `GET /app/orders/{id}/review` | `APPROVE_ORDER_TOTAL` (seller) | an order not in review: back to the order with a sentence |
+| `POST /app/orders/{id}/approve` (`total`, then `confirm=yes`) | `APPROVE_ORDER_TOTAL` | not an amount, 0 or above 10^12, not in review (sentence); without the exact word `yes` only the second look is shown and nothing is written |
+| `GET /app/payments/{id}/match`, `POST /app/matches/manual` | `CONFIRM_OR_OVERRIDE_MATCH` (seller) | a payment that is not free; a pair across workspaces (404) |
+| `POST /app/matches/{id}/confirm`, `/reject` | `CONFIRM_OR_OVERRIDE_MATCH` | a suggestion no longer waiting, a payment no longer free (sentence) |
+| `GET /app/matches/{id}/undo`, `POST /app/matches/{id}/unmatch` | `REVERSE_TRANSACTION` (seller) | a match not active (sentence) |
+| `POST /app/payments/{id}/set-aside`, `/take-back` | `CONFIRM_OR_OVERRIDE_MATCH` | a payment in the wrong status (sentence) |
+| `POST /app/rematch` | `CONFIRM_OR_OVERRIDE_MATCH` | 3 a minute and 20 an hour per workspace (429) |
+| `POST /app/orders`, `POST /app/payments` (`mid`, `text`) | `RECORD_ORDER`, `RECORD_PAYMENT` (seller, helper) | `mid` not a UUID (400), bodies above 64 KB (413), the ingestion limit (429), the services' input rules (sentence) |
+| `GET /app/summary?date=` | `VIEW_BOARD`; amounts only with `VIEW_LEDGER` | a date before 2000 or after today, or not ISO (400) |
+| `GET /app/books`, `POST /app/books/check` | `VIEW_LEDGER` (seller) | nothing else |
+| `GET /app/export`, `GET /app/export/orders.csv`, `payments.csv` | `EXPORT_DATA` (seller) | more than 366 days, reversed or future dates, before 2000 (400); more than 100,000 rows (back with "narrow the dates", nothing sent, no audit row); 6 per 10 minutes per workspace (429) |
+| `GET /app/export/ledger.csv` | `EXPORT_DATA` and `VIEW_LEDGER` | the same |
+| `GET /assets/**` | public | no tenant data; unknown files 404 |
+
+### Browser check: what I ran and what I did not
+Ran, in headless Chrome (the installed Google Chrome, via puppeteer-core) at 390 by 844, against the real application on a throwaway database (`BrowserCheckFixtureIT`, run only with `-Dbrowser.check=true`). 29 checks, all passing on the last run:
+- sign-in lands on the board; the vendored htmx loads and runs under the CSP; no console error or CSP violation in the whole walk;
+- no sideways scroll at 390 px; every visible button, link and summary at least 44 px tall; text at least 16 px; pinch zoom not disabled; Tab reaches the order box with a visible outline;
+- with htmx: paste an order (answer in place, no navigation, chips updated out of band); the matching payment matches by itself (Matched 1, Awaiting 0); an underpayment waits in Review with Confirm and Reject; Confirm from the card replaces the card and fills the notice; the order is back in Awaiting as "Part paid: 3,000 XAF of 5,000 XAF"; a repeated transaction is flagged; free text is kept as unread; the chips count them; the columns scroll and snap; a 404 answer to an htmx request (sent with `htmx.ajax`, as a stale page would, not by a button) lands in the notice area and leaves the page alone; no history snapshot in storage (one session key with the current path only, register item 93); the unread message is under a closed `<details>`;
+- a helper sees the paste forms and no seller control;
+- with JavaScript disabled: a paste redirects to the board with the notice; the card has plain buttons; Set aside works and shows its notice.
+Screenshots: first screen, the Review column, each of the five columns, the unread detail, the helper's board, the board after a paste without JavaScript (in `tools/browser-check/screenshots/`, not committed).
+
+Not run in a browser: a real phone or a touch device (the viewport is emulated); Safari, Firefox or an old Android browser; a slow network; a screen reader; the summary, books, download, review, approve, undo and picker pages (covered by integration tests only); the wide-screen layout; keyboard use beyond the first field. Found by the walk and fixed: every page asked for `/favicon.ico` and logged an access denial (a favicon is now served under `/assets`). Also added while debugging the notice area: `Accept: text/html` in `hx-headers`, so an error answer is the HTML page whatever htmx sends by default. I did not verify that htmx needed it; the notice-area failure itself was my test passing a `swap` option that overrides the response handling.
+
+### Mutation checks
+Three to four workers, each on its own copy of the repository; each mutant applied, the named tests run, the file restored and touched. A kill counts only when the build reports a failing test (the first pass's classifier did not check that, so the whole set was run again with logs kept).
+
+| Group | Mutants | Killed | Deleted as redundant |
+|---|---|---|---|
+| V018 triggers and grant | 12 | 12 | 0 |
+| Approval transaction and second look | 13 | 12 | 1 |
+| Permission on each route, role table | 21 | 21 | 0 |
+| CSRF on the board's POSTs | 1 | 1 | 0 |
+| Public assets | 1 | 1 | 0 |
+| Rate limits (defaults, wiring, each route's call, rematch and export at the endpoint) | 23 | 23 | 0 |
+| 404 for foreign or unknown ids | 2 | 2 | 0 |
+| Helper versus seller filtering | 7 | 7 | 0 |
+| Raw text (who, which items, masked) | 7 | 7 | 0 |
+| Tenant predicate of each new statement (owner-run tests) | 12 | 12 | 0 |
+| Column placement precedence | 10 | 10 | 0 |
+| Page size, page cap, cursor paging | 7 | 7 | 0 |
+| Cursor, day and notice parsers | 8 | 5 | 3 |
+| CSV export (bounds, cap, audit, masking, BOM, numbers) | 14 | 13 | 1 |
+| CSV neutralisation (each prefix, starts, quoting, cleaning) | 17 | 17 | 0 |
+| Display cleaning | 12 | 11 | 1 |
+| PhoneMask | 16 | 16 | 0 |
+| MoneyFormat | 7 | 6 | 1 |
+| Books check (six comparisons, tenant, cache, log) | 12 | 11 | 1 |
+| htmx configuration keys and script | 7 | 7 | 0 |
+| Templates, error page, Flagged note | 6 | 6 | 0 |
+| **Total** | **215** | **207** | **8** |
+
+The first full pass left 20 survivors. Twelve exposed missing tests, now written: a posting of another tenant with the same reference must not satisfy the commit check; the review page's raw text masked; a tab, a CR, an LF start alone; a tab shown as a space; the parenthesis and both no-break spaces as separators; the books mismatch logged at ERROR (the test had read DEBUG too); a non-dash at a dash position of the cursor; a stored name with a bidi override cleaned and cut on the card; CSV totals unquoted. One more after I added the second look: only the exact `confirm=yes` approves. Eight were guards no test could tell from their absence; they are deleted and named in register item 91. Nothing survives.
+
+### Defects found by my own tests in this stop
+- The approve page offered no second look at the formatted amount, which the design promised (found while writing the register); added, with its own mutants.
+- `/app/columns/{column}` did not convert lower-case names (400 for every column); a converter was added.
+- The export page's list literal did not parse in Thymeleaf (500).
+- The page-wide hostile check matched an `on…=` word inside message text that was correctly escaped; the test now looks for `on…=` and `style=` only inside tags.
+- The shared test database ran out of connections once two more test contexts existed; the test pools are four connections each (register item 95).
+
+### Tests
+Unit phase with Docker stopped (`docker desktop stop`, `mvn clean test`): **505** tests, all green (was 437). Full build with Docker (`mvn clean verify`): the same unit tests and **534** integration tests, all green, 1 skipped (the browser fixture) (was 464). New: `BoardRepositoryIsolationIT`, `BooksCheckIT`, `ApprovalSchemaIT`, `OrderApprovalIT`, `BoardFlowIT`, `BoardRoutesIT`, `BoardRenderIT`, `BoardExportIT`, `BoardExportCapIT`, `BoardActionLimitIT`, `BoardRateLimitsTest`, `BoardMappingsTest`, `NoticeAndMessagesTest`, `DisplayTest`, `PhoneMaskTest`, `MoneyFormatTest`, `CsvWriterTest`, `HtmxProvenanceTest`, and additions to the lints, the security property tests and the older render tests.
+
+### Defenses weakened or traded off (design register items 76 to 95)
+A third-party script in every page; the column grant on `orders.total_minor`, with an audit row that names the order but not the totals (a deviation from the design text); a total the seller states cannot be corrected yet; raw text shown to the seller with heuristic masking; display cleaning and CSV neutralisation alter what is shown or exported; the books check is cached five minutes; Flagged is partial until task 7; no automatic refresh; in-memory token-bucket limits; a helper sees names and amounts; scroll-snap needs CSS; no cancel or dismiss; English only; an npm developer tool outside the CI scan; eight redundant guards deleted; two clocks for "today"; one htmx session key; error answers in the notice area; small test pools.
+
+### Not verified
+- A real phone, other browsers, a screen reader, a slow network (above).
+- The npm packages of the browser tool are not in the CI vulnerability scan; no Maven dependency was added, so the Maven scan was not re-run.
+- The two-CPU Linux container run was not repeated for this stop.
+- PostgreSQL 16.4 only.
+- Concurrency at the HTTP level (two sellers clicking the same card) is covered by the service tests of task 6, not by a web test.
+- Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.
