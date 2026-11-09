@@ -1307,3 +1307,81 @@ A third-party script in every page; the column grant on `orders.total_minor`, wi
 - PostgreSQL 16.4 only.
 - Concurrency at the HTTP level (two sellers clicking the same card) is covered by the service tests of task 6, not by a web test.
 - Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.
+
+## Task 7 - suspicion rules (stop 2)
+
+The owner approved D1 to D13 of `.kiro/specs/chat-ledger/task-7-design-stop.md` with one change (D4: R4 `SHORT_OF_ROUND` dropped, so ten codes, removed from the tables, configuration, tests and mutation plan) and four clarifications. Work stays on `task-7-suspicion`; nothing was committed by me. The board's "partial" note was removed only after D9 was in place.
+
+### The four clarifications
+1. **Scope of D3, written down and tested.** A flag with no related order blocks every pair of that payment; an order flag blocks every pair of that order; a pair flag blocks only that pair. `FlagRepository.stateWithin` reads the three scopes; `FlagMatchingIT` has "pair flag on (P,A) does not block (P,B)", "payment-only flag blocks (P,B)", "pair flag on (P,B) blocks (P,B)", order flags on A and on B, and (added after the first mutation pass) "a pair flag on (P,A) does not block another payment Q on A".
+2. **A pair finding and its suggestion commit together.** When `applyWithin` finds a pair flag under the lock, it writes the finding and the suggestion on the same connection and returns `DEGRADED_TO_SUGGESTION` with reason `FLAGGED`. Tested: the finding is still there after the degrade; an injected failure after the `FLAGGED` step leaves neither; the retry writes both once. The mutant that writes the findings in a transaction of their own that is rolled back is killed by three tests.
+3. **A payment and its flags share one transaction, on purpose.** The payment rules (R1, R2, R6, R9, R10 on the payment) run inside the payment insert transaction, after its audit row; the order rule (R10 on the order) inside the order insert transaction. If a flag cannot be written, the payment (or the order and its posting) is not stored either, so no record exists without the flags it should carry. A retry is safe because ingestion is idempotent by (tenant, externalId): the retry is a first attempt and stores the record with its flags, and a replay of a stored one adds nothing; a flag is also unique per rule and subject. Tested in `FlagIngestionIT`.
+4. **Task 9.** `tasks.md` under task 9: the demo seed must trigger at least R1, R5, R8 and R10/R11, so the demo shows real flags and the resolve button.
+
+### What was built
+- `suspicion` module: `FlagCode` (ten codes, each with one fixed sentence), `Finding`, the contexts, `SuspicionConfig` with bounds, `Suspicion` (payment, order and pair rules), one class per rule. No web dependency, no message text in a finding.
+- V019: typed `payment_id` and `order_id` with foreign keys to the same tenant, shape and bound CHECKs, a unique key per rule and subject, a write-once trigger for every role (one resolution, no delete, no truncate), INSERT and `UPDATE (resolved_at, resolved_by)` for the application, a back-fill of the `DUPLICATE` and `UNVERIFIED` payments, an index for the sender rules. It refuses to run if `flag` already holds rows.
+- `web/flags`: `FlagRepository`, `SuspicionWriter`, `SuspicionProperties` and `SuspicionWiring` (`app.suspicion.*`, `app.suspicion.disabled`), `FlagService` (resolve).
+- Matching: `OrderFacts.flagged` and `PaymentFacts.flagged` (the subject's own flags) and the floor `NOT_FLAGGED`; the wall in `applyWithin`; the pair rules on every suggestion too.
+- Board (D9, D13): Flagged from open flag rows only; a checked unverified payment goes to Review, a checked repeat to "Payments set aside or repeated"; the first open flag's sentence and "I checked this" on the card; every flag on the order and payment pages; the explainer names `NOT_FLAGGED` for a pair flag too.
+
+### Findings while building
+- **R6 could be evaded by sending at once.** Under READ COMMITTED sixteen payments from one phone, recorded concurrently, each saw only the committed ones: 4 were flagged instead of 13. `senderRecordsWithin` now takes `pg_advisory_xact_lock` on (tenant, phone hash) first. Found by the new test in `MatchingConcurrencyIT`, which now asserts exactly 13. Register item 104.
+- **Two test fixtures hashed one phone differently**, so R7 fired in tests that were not about it. The fixtures share one key set (register item 109). The older concurrency tests now give each payer its own phone (item 110).
+- **The explainer could not see a pair flag** (the re-score only has the two subjects' facts), so a pair-flagged suggestion did not say why it was not automatic. It now takes `pairFlagged`.
+
+### What each route refuses
+New: `POST /app/flags/{id}/resolve`.
+
+| Route | Permission (who) | Also refuses |
+|---|---|---|
+| `POST /app/flags/{id}/resolve` | `RESOLVE_FLAG` (seller only; a helper gets 403 and sees no button) | without or with a wrong CSRF token (403, nothing written); a flag of another workspace or an unknown id (404, never 403, nothing changed); a bad UUID (400); 120 actions a minute per user (429); the service asks the database whether the user is an enabled seller, so a helper id passed to it is refused too; a second resolve changes nothing and answers "That flag was already marked as checked." |
+
+Unchanged routes: no route refuses anything new because of a flag. Confirm, reject and manual match work on flagged pairs (D8, tested). Order and payment paste store the flags in the same transaction.
+
+### Browser check: what I ran and what I did not
+Ran the extended walk in headless Chrome (puppeteer-core, installed Chrome) at 390 by 844 against the real application on a throwaway database (`BrowserCheckFixtureIT`, `-Dbrowser.check=true`): **35 of 35 checks passed**. On top of task 8's walk: the flagged card shows the sentence and the resolve button; resolving with htmx answers in place and the Flagged chip drops to 0 out of band; without JavaScript a forward is flagged, the payment page lists the open flag with its button, and resolving returns to the same page with its notice. No console error or CSP violation in the whole walk.
+
+Not run in a browser: a real phone or touch device; Safari, Firefox or an old Android browser; a slow network; a screen reader; resolving an order flag (integration tests only); the summary's "flagged now", the books and the download pages; a pair flag on a suggestion card.
+
+### Mutation checks
+Four workers, each on its own copy of the repository; each mutant applied, the named tests run, the files restored and touched. A kill counts only when the build reports a failing test.
+
+First pass: 177 mutants, 152 killed, 24 survived, 1 invalid (a `while (false)` that does not compile; redone as `while (i < 0)`). Of the 24, 11 were guards no test could tell from their absence: they are deleted (register item 105). The other 13 exposed missing tests, now written: a resolver without a time refused by the check alone; a pair flag's order frozen by the trigger; a pair flag on (P,A) not blocking Q on A; repeats not counted in R6; more than 50 later payments not hiding an earlier burst; "flagged now" and the card after a resolve; the explainer's sentence for a payment-only and for an order-only flag; a flag of another tenant naming our records, run as the owner (card and detail); the last pair of digits swapped in R3.
+
+Second pass, the whole set again on fresh copies, with two mutants added (R11 with a zero balance; R10's stored name dropped by the writer):
+
+| Group | Mutants | Killed | Deleted as redundant |
+|---|---|---|---|
+| Rules R1 to R11 and name handling | 45 | 40 | 5 |
+| Thresholds, bounds, runner, contexts, findings | 26 | 26 | 0 |
+| Settings and wiring (`app.suspicion.*`) | 10 | 10 | 0 |
+| Floor `NOT_FLAGGED` and explainer | 4 | 4 | 0 |
+| V019 (grants, keys, checks, unique key, trigger, back-fill) | 31 | 30 | 1 |
+| `FlagRepository` (scopes, tenant, advisory lock, sender records, resolve) | 12 | 12 | 0 |
+| Writer and ingestion hooks | 11 | 8 | 3 |
+| Matcher (wall, facts, degrade, same transaction) | 15 | 14 | 1 |
+| Resolve service, route and shell | 10 | 9 | 1 |
+| Board placement, counts, card, detail, templates | 15 | 15 | 0 |
+| **Total** | **179** | **168** | **11** |
+
+Nothing survives. No mutant was set aside as equivalent: the two tenant predicates I expected to stay unkillable (they are redundant with row-level security and the composite foreign keys) are killed by the owner-run test.
+
+### Tests
+Unit phase with Docker stopped (`docker desktop stop`, `mvn -o clean test`): **530** tests, all green (31 + 156 + 31 + 67 + 23 + 222; was 505). Full build with Docker (`mvn -o clean verify`): the same unit tests and **591** integration tests, all green, 1 skipped (the browser fixture) (was 534). New: `PaymentRulesTest`, `PairRulesTest` (jqwik), `OrderRuleTest`, `SuspicionTest`, `NoInputPatternsTest`, `SuspicionPropertiesTest`, `FlagMatchingIT`, `FlagIngestionIT`, `FlagRepositoryIsolationIT` (in the isolation registry), `FlagSchemaIT`, `FlagMigrationIT`, `FlagResolveIT`, and additions to the board, routes, isolation, rollback and concurrency tests.
+
+### Deviations from the design stop
+- `app.suspicion.disabled` (a list of codes) instead of one `enabled` key per rule (register item 108).
+- The "customer existed" input of R10 on orders was removed: a new customer stores the parsed name, so the names always agree and the rule cannot fire; the guard was redundant (item 105).
+- The explainer takes a `pairFlagged` argument (above).
+
+### Defenses weakened or traded off (design register items 96 to 110)
+The application may now write `flag` (INSERT and the resolution columns); the rules are heuristics; R6 and R10 need a full phone; global thresholds; any flag, even a checked one, costs a confirmation; the reason repeats the code's sentence; no re-run on history; two `EXISTS` per facts query; one sender's payments serialised by an advisory lock; eleven redundant guards deleted; tenant predicates kept although redundant; flags never deletable (conflicts with a future tenant-data deletion); the `disabled` list; shared fixture keys; distinct phones in the older concurrency tests.
+
+### Not verified
+- The cost of the two `EXISTS` on a large workspace (not measured).
+- False-positive and false-negative rates of the rules on real traffic (no real data, by design).
+- The two-CPU Linux container run was not repeated for this stop.
+- The npm packages of the browser tool are still not in the CI vulnerability scan; jqwik was added to `suspicion` at the version the project already pins, so no new artifact entered the Maven scan.
+- PostgreSQL 16.4 only.
+- Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.

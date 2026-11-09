@@ -54,7 +54,7 @@ public class BoardRepository {
 
     /** One card. Amounts are minor units; {@code amountMinor} is null for an item that could not be read. */
     public record Card(Kind kind, UUID id, String status, Long amountMinor, long appliedMinor, long suggestions, UUID suggestionId, String currency,
-                       String who, String last4, String ref, Instant at, boolean flagged) {
+                       String who, String last4, String ref, Instant at, boolean flagged, UUID flagId, String flagCode, long openFlags) {
         @Override
         public String toString() {
             return "Card[" + kind + " " + id + " " + status + "]";
@@ -109,7 +109,11 @@ public class BoardRepository {
     public record Line(String label, int qty, Long unitMinor) {
     }
 
-    public record FlagView(String code, String reason, Instant at) {
+    /** A flag as a detail page shows it. {@code pair} is true for a flag about one pair (a payment and one order). */
+    public record FlagView(UUID id, String code, Instant at, Instant resolvedAt, UUID resolvedBy, boolean pair, UUID paymentId, UUID orderId) {
+        public boolean open() {
+            return resolvedAt == null;
+        }
     }
 
     /** A match as shown on a detail page, with the item on the other side. */
@@ -175,17 +179,17 @@ public class BoardRepository {
             return scope.call(tenantId, c -> {
                 try (PreparedStatement ps = c.prepareStatement(
                         "WITH items AS ("
-                                + "SELECT o.status AS status, EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = o.tenant_id AND f.subject_id = o.id "
+                                + "SELECT o.status AS status, EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = o.tenant_id AND f.subject_type = 'ORDER' AND f.order_id = o.id "
                                 + "AND f.resolved_at IS NULL) AS flagged FROM orders o WHERE o.tenant_id = ? "
                                 + "UNION ALL "
-                                + "SELECT p.status, EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.subject_id = p.id "
+                                + "SELECT p.status, EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.payment_id = p.id "
                                 + "AND f.resolved_at IS NULL) FROM payment p WHERE p.tenant_id = ?) "
                                 + "SELECT CASE WHEN status = 'UNPARSED' THEN 'UNPARSED' "
-                                + "WHEN flagged OR status IN ('DUPLICATE', 'UNVERIFIED') THEN 'FLAGGED' "
-                                + "WHEN status IN ('NEEDS_REVIEW', 'RECEIVED') THEN 'REVIEW' "
+                                + "WHEN flagged THEN 'FLAGGED' "
+                                + "WHEN status IN ('NEEDS_REVIEW', 'RECEIVED', 'UNVERIFIED') THEN 'REVIEW' "
                                 + "WHEN status = 'PAID' THEN 'MATCHED' "
                                 + "WHEN status IN ('PENDING_PAYMENT', 'PARTIALLY_PAID') THEN 'AWAITING' "
-                                + "WHEN status = 'UNMATCHED' THEN 'ASIDE' END AS col, count(*) AS n FROM items GROUP BY 1")) {
+                                + "WHEN status IN ('UNMATCHED', 'DUPLICATE') THEN 'ASIDE' END AS col, count(*) AS n FROM items GROUP BY 1")) {
                     ps.setObject(1, tenantId);
                     ps.setObject(2, tenantId);
                     Map<Column, Long> out = new EnumMap<>(Column.class);
@@ -217,18 +221,18 @@ public class BoardRepository {
                         "WITH items AS ("
                                 + "SELECT CAST('ORDER' AS TEXT) AS kind, o.id AS id, o.status AS status, o.total_minor AS amount, o.currency AS currency, "
                                 + "o.created_at AS ts, o.order_ref AS ref, cu.display_name AS who, cu.phone_last4 AS last4, "
-                                + "EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = o.tenant_id AND f.subject_id = o.id AND f.resolved_at IS NULL) AS flagged "
+                                + "EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = o.tenant_id AND f.subject_type = 'ORDER' AND f.order_id = o.id AND f.resolved_at IS NULL) AS flagged "
                                 + "FROM orders o LEFT JOIN customer cu ON cu.id = o.customer_id AND cu.tenant_id = o.tenant_id WHERE o.tenant_id = ? "
                                 + "UNION ALL "
                                 + "SELECT 'PAYMENT', p.id, p.status, p.amount_minor, p.currency, p.created_at, COALESCE(p.tx_id, p.reference), "
-                                + "p.sender_name, p.sender_last4, EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.subject_id = p.id "
+                                + "p.sender_name, p.sender_last4, EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.payment_id = p.id "
                                 + "AND f.resolved_at IS NULL) FROM payment p WHERE p.tenant_id = ?), "
                                 + "placed AS (SELECT i.*, CASE WHEN i.status = 'UNPARSED' THEN 'UNPARSED' "
-                                + "WHEN i.flagged OR i.status IN ('DUPLICATE', 'UNVERIFIED') THEN 'FLAGGED' "
-                                + "WHEN i.status IN ('NEEDS_REVIEW', 'RECEIVED') THEN 'REVIEW' "
+                                + "WHEN i.flagged THEN 'FLAGGED' "
+                                + "WHEN i.status IN ('NEEDS_REVIEW', 'RECEIVED', 'UNVERIFIED') THEN 'REVIEW' "
                                 + "WHEN i.status = 'PAID' THEN 'MATCHED' "
                                 + "WHEN i.status IN ('PENDING_PAYMENT', 'PARTIALLY_PAID') THEN 'AWAITING' "
-                                + "WHEN i.status = 'UNMATCHED' THEN 'ASIDE' END AS col FROM items i), "
+                                + "WHEN i.status IN ('UNMATCHED', 'DUPLICATE') THEN 'ASIDE' END AS col FROM items i), "
                                 + "page AS (SELECT * FROM placed WHERE col = ? AND (CAST(? AS TIMESTAMPTZ) IS NULL "
                                 + "OR (ts, id) < (CAST(? AS TIMESTAMPTZ), CAST(? AS UUID))) ORDER BY ts DESC, id DESC LIMIT ?) "
                                 + "SELECT g.kind, g.id, g.status, g.amount, g.currency, g.ts, g.ref, g.who, g.last4, g.flagged, "
@@ -237,8 +241,12 @@ public class BoardRepository {
                                 + "(SELECT count(*) FROM match m WHERE m.tenant_id = ? AND m.state = 'SUGGESTED' "
                                 + "AND (m.payment_id = g.id OR m.order_id = g.id)) AS suggestions, "
                                 + "CASE WHEN g.kind = 'PAYMENT' THEN (SELECT m.id FROM match m WHERE m.tenant_id = ? AND m.payment_id = g.id "
-                                + "AND m.state = 'SUGGESTED' ORDER BY m.score DESC, m.id LIMIT 1) END AS suggestion_id "
-                                + "FROM page g ORDER BY g.ts DESC, g.id DESC")) {
+                                + "AND m.state = 'SUGGESTED' ORDER BY m.score DESC, m.id LIMIT 1) END AS suggestion_id, fl.flag_id, fl.flag_code, "
+                                + "COALESCE(fl.open_flags, 0) AS open_flags "
+                                + "FROM page g LEFT JOIN LATERAL (SELECT f.id AS flag_id, f.code AS flag_code, count(*) OVER () AS open_flags FROM flag f "
+                                + "WHERE f.tenant_id = ? AND f.resolved_at IS NULL AND ((g.kind = 'PAYMENT' AND f.payment_id = g.id) "
+                                + "OR (g.kind = 'ORDER' AND f.subject_type = 'ORDER' AND f.order_id = g.id)) ORDER BY f.created_at, f.id LIMIT 1) fl ON TRUE "
+                                + "ORDER BY g.ts DESC, g.id DESC")) {
                     ps.setObject(1, tenantId);
                     ps.setObject(2, tenantId);
                     ps.setString(3, column.name());
@@ -247,6 +255,7 @@ public class BoardRepository {
                     ps.setObject(8, tenantId);
                     ps.setObject(9, tenantId);
                     ps.setObject(10, tenantId);
+                    ps.setObject(11, tenantId);
                     List<Card> cards = new ArrayList<>();
                     try (ResultSet rs = ps.executeQuery()) {
                         while (rs.next()) {
@@ -256,7 +265,8 @@ public class BoardRepository {
                             cards.add(new Card(Kind.valueOf(rs.getString("kind")), rs.getObject("id", UUID.class), rs.getString("status"),
                                     amountOrNull, rs.getLong("applied"), rs.getLong("suggestions"), rs.getObject("suggestion_id", UUID.class), strip(rs.getString("currency")),
                                     rs.getString("who"), last4 == null ? null : last4.strip(), rs.getString("ref"),
-                                    rs.getObject("ts", OffsetDateTime.class).toInstant(), rs.getBoolean("flagged")));
+                                    rs.getObject("ts", OffsetDateTime.class).toInstant(), rs.getBoolean("flagged"),
+                                    rs.getObject("flag_id", UUID.class), rs.getString("flag_code"), rs.getLong("open_flags")));
                         }
                     }
                     if (cards.size() > limit) {
@@ -300,11 +310,11 @@ public class BoardRepository {
                 OrderDetail head;
                 try (PreparedStatement ps = c.prepareStatement(
                         "SELECT o.id, o.status, o.total_minor, o.currency, o.created_at, o.order_ref, o.delivery_note, cu.display_name, cu.phone_last4, "
-                                + "EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = o.tenant_id AND f.subject_id = o.id AND f.resolved_at IS NULL) AS flagged, "
+                                + "EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = o.tenant_id AND f.subject_type = 'ORDER' AND f.order_id = o.id AND f.resolved_at IS NULL) AS flagged, "
                                 + "COALESCE((SELECT SUM(m.amount_minor) FROM match m WHERE m.tenant_id = o.tenant_id AND m.order_id = o.id "
                                 + "AND m.state IN ('AUTO', 'CONFIRMED')), 0) AS applied, "
                                 + "CASE WHEN CAST(? AS BOOLEAN) AND (o.status IN ('NEEDS_REVIEW', 'UNPARSED') OR EXISTS (SELECT 1 FROM flag f "
-                                + "WHERE f.tenant_id = o.tenant_id AND f.subject_id = o.id AND f.resolved_at IS NULL)) THEN o.raw_text END AS raw "
+                                + "WHERE f.tenant_id = o.tenant_id AND f.subject_type = 'ORDER' AND f.order_id = o.id AND f.resolved_at IS NULL)) THEN o.raw_text END AS raw "
                                 + "FROM orders o LEFT JOIN customer cu ON cu.id = o.customer_id AND cu.tenant_id = o.tenant_id "
                                 + "WHERE o.tenant_id = ? AND o.id = ?")) {
                     ps.setBoolean(1, withRaw);
@@ -347,7 +357,7 @@ public class BoardRepository {
                 }
                 return Optional.of(new OrderDetail(head.id(), head.status(), head.totalMinor(), head.appliedMinor(), head.currency(), head.who(),
                         head.last4(), head.ref(), head.deliveryNote(), head.at(), head.flagged(), head.rawText(), List.copyOf(lines),
-                        List.copyOf(matches), flags(c, tenantId, orderId)));
+                        List.copyOf(matches), orderFlags(c, tenantId, orderId)));
             });
         } catch (SQLException e) {
             throw new IllegalStateException("Could not read the order", e);
@@ -362,9 +372,9 @@ public class BoardRepository {
                 try (PreparedStatement ps = c.prepareStatement(
                         "SELECT p.id, p.status, p.amount_minor, p.currency, p.provider, p.tx_id, p.sender_name, p.sender_last4, "
                                 + "COALESCE(p.reference, '') AS reference, p.paid_at, p.created_at, p.duplicate_of, "
-                                + "EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.subject_id = p.id AND f.resolved_at IS NULL) AS flagged, "
+                                + "EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.payment_id = p.id AND f.resolved_at IS NULL) AS flagged, "
                                 + "CASE WHEN CAST(? AS BOOLEAN) AND (p.status IN ('UNPARSED', 'DUPLICATE', 'UNVERIFIED') OR EXISTS (SELECT 1 FROM flag f "
-                                + "WHERE f.tenant_id = p.tenant_id AND f.subject_id = p.id AND f.resolved_at IS NULL)) THEN p.raw_text END AS raw "
+                                + "WHERE f.tenant_id = p.tenant_id AND f.payment_id = p.id AND f.resolved_at IS NULL)) THEN p.raw_text END AS raw "
                                 + "FROM payment p WHERE p.tenant_id = ? AND p.id = ?")) {
                     ps.setBoolean(1, withRaw);
                     ps.setObject(2, tenantId);
@@ -400,7 +410,7 @@ public class BoardRepository {
                 }
                 return Optional.of(new PaymentDetail(head.id(), head.status(), head.amountMinor(), head.hasAmount(), head.currency(), head.provider(),
                         head.txId(), head.who(), head.last4(), head.ref(), head.paidAt(), head.at(), head.flagged(), head.rawText(),
-                        head.duplicateOf(), List.copyOf(matches), flags(c, tenantId, paymentId)));
+                        head.duplicateOf(), List.copyOf(matches), paymentFlags(c, tenantId, paymentId)));
             });
         } catch (SQLException e) {
             throw new IllegalStateException("Could not read the payment", e);
@@ -423,19 +433,39 @@ public class BoardRepository {
         }
     }
 
-    private static List<FlagView> flags(java.sql.Connection c, UUID tenantId, UUID subjectId) throws SQLException {
+    /** Every flag of a payment, open and resolved, oldest first: its own and those of its pairs. */
+    private static List<FlagView> paymentFlags(java.sql.Connection c, UUID tenantId, UUID paymentId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT code, reason, created_at FROM flag WHERE tenant_id = ? AND subject_id = ? AND resolved_at IS NULL ORDER BY created_at, id")) {
+                "SELECT id, code, created_at, resolved_at, resolved_by, order_id IS NOT NULL AS pair, payment_id, order_id FROM flag "
+                        + "WHERE tenant_id = ? AND payment_id = ? ORDER BY created_at, id LIMIT 50")) {
             ps.setObject(1, tenantId);
-            ps.setObject(2, subjectId);
-            List<FlagView> out = new ArrayList<>();
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    out.add(new FlagView(rs.getString("code"), rs.getString("reason"), rs.getObject("created_at", OffsetDateTime.class).toInstant()));
-                }
-            }
-            return List.copyOf(out);
+            ps.setObject(2, paymentId);
+            return readFlags(ps);
         }
+    }
+
+    /** Every flag of an order, open and resolved, oldest first: its own and those of its pairs with payments. */
+    private static List<FlagView> orderFlags(java.sql.Connection c, UUID tenantId, UUID orderId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT id, code, created_at, resolved_at, resolved_by, subject_type = 'PAYMENT' AS pair, payment_id, order_id FROM flag "
+                        + "WHERE tenant_id = ? AND order_id = ? ORDER BY created_at, id LIMIT 50")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            return readFlags(ps);
+        }
+    }
+
+    private static List<FlagView> readFlags(PreparedStatement ps) throws SQLException {
+        List<FlagView> out = new ArrayList<>();
+        try (ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                OffsetDateTime resolved = rs.getObject("resolved_at", OffsetDateTime.class);
+                out.add(new FlagView(rs.getObject("id", UUID.class), rs.getString("code"), rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+                        resolved == null ? null : resolved.toInstant(), rs.getObject("resolved_by", UUID.class), rs.getBoolean("pair"),
+                        rs.getObject("payment_id", UUID.class), rs.getObject("order_id", UUID.class)));
+            }
+        }
+        return List.copyOf(out);
     }
 
     // ── Summary ────────────────────────────────────────────────────────────────
@@ -460,10 +490,10 @@ public class BoardRepository {
                 }
                 long flagged;
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT (SELECT count(*) FROM payment p WHERE p.tenant_id = ? AND p.status <> 'UNPARSED' AND (p.status IN ('DUPLICATE', 'UNVERIFIED') "
-                                + "OR EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.subject_id = p.id AND f.resolved_at IS NULL))) "
+                        "SELECT (SELECT count(*) FROM payment p WHERE p.tenant_id = ? AND p.status <> 'UNPARSED' "
+                                + "AND EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.payment_id = p.id AND f.resolved_at IS NULL)) "
                                 + "+ (SELECT count(*) FROM orders o WHERE o.tenant_id = ? AND o.status <> 'UNPARSED' AND EXISTS (SELECT 1 FROM flag f "
-                                + "WHERE f.tenant_id = o.tenant_id AND f.subject_id = o.id AND f.resolved_at IS NULL)) AS n")) {
+                                + "WHERE f.tenant_id = o.tenant_id AND f.subject_type = 'ORDER' AND f.order_id = o.id AND f.resolved_at IS NULL)) AS n")) {
                     ps.setObject(1, tenantId);
                     ps.setObject(2, tenantId);
                     try (ResultSet rs = ps.executeQuery()) {

@@ -97,7 +97,7 @@ class MatchingEdgeCasesIT {
             @Override
             public List<OrderFacts> openOrders(UUID tenantId, String currency, int limit) {
                 return super.openOrders(tenantId, currency, limit).stream().map(o -> new OrderFacts(o.id(), o.totalMinor(), o.appliedMinor(), o.currency(),
-                        o.createdAt(), o.orderRef(), paid.senderName(), paid.senderPhoneHash(), paid.senderLast4(), false)).toList();
+                        o.createdAt(), o.orderRef(), paid.senderName(), paid.senderPhoneHash(), paid.senderLast4(), false, o.flagged())).toList();
             }
         };
         MatchingService optimistic = new MatchingService(MatchWorld.DB.appDataSource(), liar, MatchConfig.defaults(), new MatchEvents(), f.clock);

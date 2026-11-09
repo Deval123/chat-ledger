@@ -44,9 +44,12 @@ public class ActionController {
     private final RateLimits limits;
     private final Shell shell;
     private final BooksCheck books;
+    private final dev.chatledger.flags.FlagService flags;
 
     public ActionController(OrderIngestionService orders, PaymentIngestionService payments, MatchingService matching, OrderApprovalService approval,
-                            BoardRepository board, RateLimits limits, Shell shell, BooksCheck books) {
+                            BoardRepository board, RateLimits limits, Shell shell, BooksCheck books,
+                            dev.chatledger.flags.FlagService flags) {
+        this.flags = flags;
         this.books = books;
         this.orders = orders;
         this.payments = payments;
@@ -198,6 +201,30 @@ public class ActionController {
                 case NOT_REVIEWABLE -> Notice.APPROVE_NOT_REVIEWABLE;
                 case TOTAL_OUT_OF_RANGE -> Notice.APPROVE_TOTAL_INVALID;
             };
+        }
+        return answer(request, model, user, notice, null, "fragments/board :: done");
+    }
+
+    // ── Flags ──────────────────────────────────────────────────────────────────
+
+    /**
+     * "I checked this": the seller resolves one flag. One click, no check page (task 7, D7): it moves no money and does not hand the pair back
+     * to the engine. A plain post redirects to the page the flag belongs to (built from ids the database returned, never from the request).
+     */
+    @PostMapping("/app/flags/{id}/resolve")
+    @PreAuthorize("hasAuthority('RESOLVE_FLAG')")
+    public String resolveFlag(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id, HttpServletRequest request,
+                              HttpServletResponse response, Model model) {
+        throttle(response, limits.action(user.userId()));
+        dev.chatledger.flags.FlagService.Result result = flags.resolve(user.tenantId(), id, user.userId());
+        Notice notice = switch (result.outcome()) {
+            case RESOLVED -> Notice.FLAG_RESOLVED;
+            case ALREADY_RESOLVED -> Notice.FLAG_ALREADY_RESOLVED;
+            case NOT_A_SELLER -> Notice.REFUSED_NOT_A_SELLER;
+            case NOT_FOUND -> throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        };
+        if (!"true".equals(request.getHeader("HX-Request")) && result.page() != null) {
+            return "redirect:" + result.page() + "?n=" + notice.name();
         }
         return answer(request, model, user, notice, null, "fragments/board :: done");
     }

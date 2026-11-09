@@ -61,6 +61,9 @@ class MatchingRollbackIT {
     @Test
     void a_failure_after_any_step_of_a_confirmation_leaves_nothing_and_the_retry_posts_once() {
         for (ApplyStep step : ApplyStep.values()) {
+            if (step == ApplyStep.FLAGGED) {
+                continue;   // reached only by a flagged pair, which is never applied: FlagMatchingIT fails it on purpose
+            }
             ByHand h = new ByHand();
             String before = snapshot(h.w.tenant, h.order, h.payment);
             assertThat(before).contains("accounts=0", "txns=0", "audit=0");
@@ -85,6 +88,9 @@ class MatchingRollbackIT {
     @Test
     void a_failure_after_any_step_of_an_automatic_match_leaves_nothing_and_the_retry_posts_once() {
         for (ApplyStep step : ApplyStep.values()) {
+            if (step == ApplyStep.FLAGGED) {
+                continue;   // reached only by a flagged pair, which is never applied: FlagMatchingIT fails it on purpose
+            }
             MatchWorld w = new MatchWorld();
             UUID seller = MatchingFixture.user(w.tenant, "SELLER");
             MatchingFixture quiet = new MatchingFixture(MatchConfig.defaults(), MatchingService.StepHook.NONE, false);

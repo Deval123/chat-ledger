@@ -46,10 +46,10 @@ class MatchingRedactionTest {
                 id.toString(), "AUTO");
         assertRedacted(new MatchRepository.Stored(id, UUID.randomUUID(), UUID.randomUUID(), "CONFIRMED", 5000L, 0, 90, "[{\"code\":\"AMOUNT_EXACT\"}]",
                 UUID.randomUUID(), UUID.randomUUID(), Instant.now()), id.toString(), "CONFIRMED");
-        PaymentFacts facts = new PaymentFacts(id, 5000, "XAF", true, "SECRET-REF", "Secret Name", "secret-hash-value", "last4-secret", Instant.now());
+        PaymentFacts facts = new PaymentFacts(id, 5000, "XAF", true, "SECRET-REF", "Secret Name", "secret-hash-value", "last4-secret", Instant.now(), false);
         assertRedacted(new MatchRepository.PaymentCandidate(facts, Recorder.HELPER), id.toString(), "HELPER");
         assertRedacted(facts, id.toString());
-        assertRedacted(new OrderFacts(id, 5000, 0, "XAF", Instant.now(), "SECRET-REF", "Secret Name", "secret-hash-value", "last4-secret", false), id.toString());
+        assertRedacted(new OrderFacts(id, 5000, 0, "XAF", Instant.now(), "SECRET-REF", "Secret Name", "secret-hash-value", "last4-secret", false, false), id.toString());
     }
 
     @Test

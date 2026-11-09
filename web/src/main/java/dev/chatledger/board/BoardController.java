@@ -143,7 +143,8 @@ public class BoardController {
         OrderDetail order = board.order(user.tenantId(), id, seller).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         long balance = order.totalMinor() == null ? 0 : Math.max(0, order.totalMinor() - order.appliedMinor());
         List<Explainer.Shown> shown = order.matches().stream().map(m -> explainer.explain(user.tenantId(), user.userId(), m, order.id(), m.otherId(),
-                m.otherAmountMinor() == null ? 0 : m.otherAmountMinor(), balance)).toList();
+                m.otherAmountMinor() == null ? 0 : m.otherAmountMinor(), balance,
+                order.flags().stream().anyMatch(f -> f.pair() && m.otherId().equals(f.paymentId())))).toList();
         model.addAttribute("order", order);
         model.addAttribute("shown", shown);
         model.addAttribute("raw", order.rawText() == null ? null : display.block(phone.maskText(order.rawText()), 1000));
@@ -160,7 +161,8 @@ public class BoardController {
         boolean seller = user.role() == Role.SELLER;
         PaymentDetail payment = board.payment(user.tenantId(), id, seller).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         List<Explainer.Shown> shown = payment.matches().stream().map(m -> explainer.explain(user.tenantId(), user.userId(), m, m.otherId(), payment.id(),
-                payment.amountMinor(), m.otherAmountMinor() == null ? 0 : Math.max(0, m.otherAmountMinor() - m.otherAppliedMinor()))).toList();
+                payment.amountMinor(), m.otherAmountMinor() == null ? 0 : Math.max(0, m.otherAmountMinor() - m.otherAppliedMinor()),
+                payment.flags().stream().anyMatch(f -> f.pair() && m.otherId().equals(f.orderId())))).toList();
         model.addAttribute("payment", payment);
         model.addAttribute("shown", shown);
         model.addAttribute("raw", payment.rawText() == null ? null : display.block(phone.maskText(payment.rawText()), 1000));

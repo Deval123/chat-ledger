@@ -120,6 +120,8 @@ final class MatchInvariants {
         parts.add("orders=" + MatchingFixture.rows("SELECT id || ' ' || status FROM orders WHERE tenant_id = ? ORDER BY id", tenant));
         parts.add("payments=" + MatchingFixture.rows("SELECT id || ' ' || status FROM payment WHERE tenant_id = ? ORDER BY id", tenant));
         parts.add("audit=" + MatchingFixture.count("SELECT count(*) FROM audit_log WHERE tenant_id = ?", tenant, null));
+        parts.add("flags=" + MatchingFixture.rows("SELECT code || ' ' || subject_type || ' ' || COALESCE(payment_id::text, '-') || ' ' || COALESCE(order_id::text, '-') "
+                + "|| ' ' || (resolved_at IS NOT NULL) FROM flag WHERE tenant_id = ? ORDER BY 1", tenant));
         return String.join("\n", parts);
     }
 

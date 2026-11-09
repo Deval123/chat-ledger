@@ -23,5 +23,11 @@
       <groupId>dev.chatledger</groupId>
       <artifactId>matching</artifactId>
     </dependency>
+    <!-- jqwik for property-based tests -->
+    <dependency>
+      <groupId>net.jqwik</groupId>
+      <artifactId>jqwik</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>

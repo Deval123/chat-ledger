@@ -17,11 +17,11 @@ class FactsTest {
     private static final long MAX = 1_000_000_000_000L;
 
     private static OrderFacts order(long total, long applied) {
-        return new OrderFacts(UUID.randomUUID(), total, applied, "XAF", T, null, null, null, null, false);
+        return new OrderFacts(UUID.randomUUID(), total, applied, "XAF", T, null, null, null, null, false, false);
     }
 
     private static PaymentFacts payment(long amount) {
-        return new PaymentFacts(UUID.randomUUID(), amount, "XAF", true, null, null, null, null, null);
+        return new PaymentFacts(UUID.randomUUID(), amount, "XAF", true, null, null, null, null, null, false);
     }
 
     @Test
@@ -52,11 +52,11 @@ class FactsTest {
 
     @Test
     void ids_and_currencies_are_required() {
-        assertThatThrownBy(() -> new OrderFacts(null, 1, 0, "XAF", T, null, null, null, null, false)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new OrderFacts(UUID.randomUUID(), 1, 0, null, T, null, null, null, null, false)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new OrderFacts(UUID.randomUUID(), 1, 0, "XAF", null, null, null, null, null, false)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new PaymentFacts(null, 1, "XAF", true, null, null, null, null, null)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new PaymentFacts(UUID.randomUUID(), 1, null, true, null, null, null, null, null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new OrderFacts(null, 1, 0, "XAF", T, null, null, null, null, false, false)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new OrderFacts(UUID.randomUUID(), 1, 0, null, T, null, null, null, null, false, false)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new OrderFacts(UUID.randomUUID(), 1, 0, "XAF", null, null, null, null, null, false, false)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new PaymentFacts(null, 1, "XAF", true, null, null, null, null, null, false)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new PaymentFacts(UUID.randomUUID(), 1, null, true, null, null, null, null, null, false)).isInstanceOf(NullPointerException.class);
     }
 
     @Test

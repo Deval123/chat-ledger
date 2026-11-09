@@ -39,9 +39,12 @@ public class OrderIngestionService {
     private final PhoneKeys phoneKeys;
     private final IngestionEvents events;
     private final MatchTrigger matcher;
+    private final dev.chatledger.flags.SuspicionWriter suspicion;
 
     public OrderIngestionService(TenantRepository tenants, CatalogRepository catalog, OrderRepository orders,
-                                 RateLimits limits, PhoneKeys phoneKeys, IngestionEvents events, MatchTrigger matcher) {
+                                 RateLimits limits, PhoneKeys phoneKeys, IngestionEvents events, MatchTrigger matcher,
+                                 dev.chatledger.flags.SuspicionWriter suspicion) {
+        this.suspicion = java.util.Objects.requireNonNull(suspicion, "suspicion");
         this.tenants = tenants;
         this.catalog = catalog;
         this.orders = orders;
@@ -92,7 +95,9 @@ public class OrderIngestionService {
                 parsed == null ? null : parsed.customerName(), phoneHash, phoneLast4,
                 parsed == null ? null : parsed.deliveryNote(), actor);
 
-        Optional<UUID> id = orders.insert(tenantId, toStore);
+        String parsedName = parsed == null ? null : parsed.customerName();
+        // The order rule runs in the order's own transaction: the order is never visible without its flag (task 7, D5).
+        Optional<UUID> id = orders.insert(tenantId, toStore, (c, orderId, customer) -> suspicion.orderWithin(c, tenantId, orderId, parsedName, customer));
         if (id.isEmpty()) {
             // Another request with the same external id won the race: the unique key decided, nothing was written.
             OrderRepository.Stored winner = orders.findByExternalId(tenantId, externalId)

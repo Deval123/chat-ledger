@@ -1,5 +1,7 @@
 package dev.chatledger.matching;
 
+import dev.chatledger.flags.FlagRepository;
+import dev.chatledger.flags.SuspicionWriter;
 import dev.chatledger.ledger.LedgerException;
 import dev.chatledger.ledger.LedgerTransaction;
 import dev.chatledger.ledger.jdbc.JdbcLedgerRepository;
@@ -13,7 +15,10 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -63,11 +68,13 @@ public class MatchingService implements MatchTrigger {
      */
     public enum Reason {
         NOT_FOUND, PAYMENT_NOT_FREE, ORDER_NOT_OPEN, CURRENCY_MISMATCH, NOTHING_LEFT_TO_PAY, AUTO_NOT_ELIGIBLE,
-        NOT_A_SELLER, NOT_SUGGESTED, NOT_ACTIVE, SELLER_DECLINED, PAYMENT_STATUS_NOT_ALLOWED
+        NOT_A_SELLER, NOT_SUGGESTED, NOT_ACTIVE, SELLER_DECLINED, PAYMENT_STATUS_NOT_ALLOWED,
+        /** Task 7: the payment, the order or the pair has a flag (open or resolved), so the engine suggests instead of matching. */
+        FLAGGED
     }
 
     /** The steps of {@link #apply}, in order. A test can fail the transaction after any of them. */
-    public enum ApplyStep { PAYMENT_LOCKED, LOCKED, ACCOUNTS, ORDER_POSTED, MATCH_POSTED, MATCH_WRITTEN, ORDER_STATUS, PAYMENT_STATUS, SUPERSEDED, AUDIT }
+    public enum ApplyStep { PAYMENT_LOCKED, LOCKED, FLAGGED, ACCOUNTS, ORDER_POSTED, MATCH_POSTED, MATCH_WRITTEN, ORDER_STATUS, PAYMENT_STATUS, SUPERSEDED, AUDIT }
 
     /** The steps of the seller's actions other than a match (reverse, reject, move a payment), in order. */
     public enum ActionStep { PAYMENT_LOCKED, LOCKED, REVERSAL_POSTED, MATCH_REVERSED, ORDER_STATUS, PAYMENT_STATUS, MATCH_REJECTED, SUGGESTIONS_REJECTED, AUDIT }
@@ -130,18 +137,31 @@ public class MatchingService implements MatchTrigger {
     private final Clock clock;
     private final StepHook hook;
     private final ActionHook actions;
+    private final SuspicionWriter suspicion;
 
     @Autowired
+    public MatchingService(DataSource dataSource, MatchRepository matches, MatchConfig config, MatchEvents events, Clock clock,
+                           SuspicionWriter suspicion) {
+        this(dataSource, matches, config, events, clock, StepHook.NONE, ActionHook.NONE, suspicion);
+    }
+
+    /** With the approved rules and their default thresholds (code built outside Spring: tests and fixtures). */
     public MatchingService(DataSource dataSource, MatchRepository matches, MatchConfig config, MatchEvents events, Clock clock) {
-        this(dataSource, matches, config, events, clock, StepHook.NONE, ActionHook.NONE);
+        this(dataSource, matches, config, events, clock, StepHook.NONE, ActionHook.NONE, SuspicionWriter.withDefaults(clock));
     }
 
     MatchingService(DataSource dataSource, MatchRepository matches, MatchConfig config, MatchEvents events, Clock clock, StepHook hook) {
-        this(dataSource, matches, config, events, clock, hook, ActionHook.NONE);
+        this(dataSource, matches, config, events, clock, hook, ActionHook.NONE, SuspicionWriter.withDefaults(clock));
     }
 
     MatchingService(DataSource dataSource, MatchRepository matches, MatchConfig config, MatchEvents events, Clock clock, StepHook hook,
                     ActionHook actions) {
+        this(dataSource, matches, config, events, clock, hook, actions, SuspicionWriter.withDefaults(clock));
+    }
+
+    MatchingService(DataSource dataSource, MatchRepository matches, MatchConfig config, MatchEvents events, Clock clock, StepHook hook,
+                    ActionHook actions, SuspicionWriter suspicion) {
+        this.suspicion = Objects.requireNonNull(suspicion, "suspicion");
         this.dataSource = dataSource;
         this.scope = new TenantScope(dataSource);
         this.ledger = new JdbcLedgerRepository(scope);
@@ -182,21 +202,27 @@ public class MatchingService implements MatchTrigger {
         PaymentFacts payment = candidate.get().facts();
         Recorder recorder = candidate.get().recorder();
         Set<UUID> declined = matches.declinedOrders(tenantId, paymentId);   // the seller said no to these: never proposed or applied again
-        List<ScoredPair> scored = matches.openOrders(tenantId, payment.currency(), config.candidateCap()).stream()
-                .filter(order -> !declined.contains(order.id()))
-                .map(order -> MatchScorer.score(order, payment, recorder, config)).toList();
+        Map<UUID, OrderFacts> orders = new HashMap<>();
+        for (OrderFacts order : matches.openOrders(tenantId, payment.currency(), config.candidateCap())) {
+            if (!declined.contains(order.id())) {
+                orders.put(order.id(), order);
+            }
+        }
+        List<ScoredPair> scored = orders.values().stream().map(order -> MatchScorer.score(order, payment, recorder, config)).toList();
         MatchPlanner.Plan plan = MatchPlanner.plan(scored, config);
         switch (plan.kind()) {
             case AUTO -> {
                 ApplyResult result = apply(tenantId, plan.auto().orderId(), paymentId, Mode.AUTO, null);
                 return switch (result.outcome()) {
                     case APPLIED -> new Run(RunKind.APPLIED, result.matchId(), 0);
-                    case DEGRADED_TO_SUGGESTION -> new Run(RunKind.SUGGESTED, null, storeSuggestions(tenantId, List.of(plan.auto())));
+                    // A flagged pair was already stored as a suggestion, with its flags, inside the automatic step.
+                    case DEGRADED_TO_SUGGESTION -> result.reason() == Reason.FLAGGED ? new Run(RunKind.SUGGESTED, null, 1)
+                            : new Run(RunKind.SUGGESTED, null, storeSuggestions(tenantId, List.of(plan.auto()), orders, Map.of(paymentId, payment)));
                     case NOT_APPLICABLE -> new Run(RunKind.SKIPPED, null, 0);
                 };
             }
             case SUGGEST -> {
-                return new Run(RunKind.SUGGESTED, null, storeSuggestions(tenantId, plan.suggestions()));
+                return new Run(RunKind.SUGGESTED, null, storeSuggestions(tenantId, plan.suggestions(), orders, Map.of(paymentId, payment)));
             }
             default -> {
                 return new Run(RunKind.NOTHING, null, 0);
@@ -215,21 +241,40 @@ public class MatchingService implements MatchTrigger {
         }
         OrderFacts order = found.get();
         Set<UUID> declined = matches.declinedPayments(tenantId, orderId);
-        List<ScoredPair> scored = matches.openPaymentCandidates(tenantId, order.currency(), config.candidateCap()).stream()
-                .filter(candidate -> !declined.contains(candidate.facts().id()))
-                .map(candidate -> MatchScorer.score(order, candidate.facts(), candidate.recorder(), config)).toList();
+        Map<UUID, PaymentFacts> payments = new HashMap<>();
+        List<ScoredPair> scored = new ArrayList<>();
+        for (MatchRepository.PaymentCandidate candidate : matches.openPaymentCandidates(tenantId, order.currency(), config.candidateCap())) {
+            if (!declined.contains(candidate.facts().id())) {
+                payments.put(candidate.facts().id(), candidate.facts());
+                scored.add(MatchScorer.score(order, candidate.facts(), candidate.recorder(), config));
+            }
+        }
         MatchPlanner.Plan plan = MatchPlanner.plan(scored, config);
         return switch (plan.kind()) {
             case AUTO -> onPaymentRecorded(tenantId, plan.auto().paymentId());
-            case SUGGEST -> new Run(RunKind.SUGGESTED, null, storeSuggestions(tenantId, plan.suggestions()));
+            case SUGGEST -> new Run(RunKind.SUGGESTED, null, storeSuggestions(tenantId, plan.suggestions(), Map.of(orderId, order), payments));
             case NONE -> new Run(RunKind.NOTHING, null, 0);
         };
     }
 
-    private int storeSuggestions(UUID tenantId, List<ScoredPair> pairs) {
+    /** Stores each suggestion with the flags its pair rules find, in one transaction per pair, so the seller sees the flags with the suggestion. */
+    private int storeSuggestions(UUID tenantId, List<ScoredPair> pairs, Map<UUID, OrderFacts> orders, Map<UUID, PaymentFacts> payments) {
         int stored = 0;
         for (ScoredPair pair : pairs) {
-            if (matches.insertSuggestion(tenantId, pair.orderId(), pair.paymentId(), pair.score(), pair.reasonsJson()).isPresent()) {
+            OrderFacts order = orders.get(pair.orderId());
+            PaymentFacts payment = payments.get(pair.paymentId());
+            boolean written;
+            try {
+                written = scope.call(tenantId, c -> {
+                    if (order != null && payment != null) {
+                        suspicion.pairWithin(c, tenantId, order, payment);
+                    }
+                    return matches.insertSuggestionWithin(c, tenantId, pair.orderId(), pair.paymentId(), pair.score(), pair.reasonsJson()).isPresent();
+                });
+            } catch (SQLException e) {
+                throw new IllegalStateException("Could not store a suggestion", e);
+            }
+            if (written) {
                 stored++;
             }
         }
@@ -346,11 +391,24 @@ public class MatchingService implements MatchTrigger {
         if (mode == Mode.AUTO && matches.wasDeclinedWithin(c, tenantId, orderId, paymentId)) {
             return ApplyResult.notApplicable(Reason.SELLER_DECLINED);   // the seller has the last word: an automatic match never overrides a no
         }
+        // The flags as they are now, under the lock. The payment's own flags committed with the payment and the order's with the order;
+        // the pair rules run here on the locked facts and what they find is written in this transaction.
+        FlagRepository.FlagState before = suspicion.stateWithin(c, tenantId, paymentId, orderId);
         OrderFacts orderFacts = new OrderFacts(ord.id(), total, alreadyApplied, ord.currency(), ord.createdAt(), ord.orderRef(), ord.customerName(),
-                ord.customerPhoneHash(), ord.customerLast4(), matches.referenceSharedWithin(c, tenantId, ord.orderRef()));
+                ord.customerPhoneHash(), ord.customerLast4(), matches.referenceSharedWithin(c, tenantId, ord.orderRef()), false);
         PaymentFacts paymentFacts = new PaymentFacts(pay.id(), pay.amountMinor(), pay.currency(), pay.hasTransactionId(), pay.reference(),
-                pay.senderName(), pay.senderPhoneHash(), pay.senderLast4(), pay.paidAt());
+                pay.senderName(), pay.senderPhoneHash(), pay.senderLast4(), pay.paidAt(), false);
+        // (The facts carry no flag here: the wall below decides on the flag state read under the lock, before the score is used.)
         ScoredPair scored = MatchScorer.score(orderFacts, paymentFacts, pay.recorder(), config);
+        boolean pairFlagged = !suspicion.pairWithin(c, tenantId, orderFacts, paymentFacts).isEmpty() || before.pair();
+        if (mode == Mode.AUTO && (before.payment() || before.order() || pairFlagged)) {
+            // Task 7, D3 and D12: a flagged pair is never matched automatically. It becomes a suggestion, written here so that the flags and
+            // the suggestion commit together (the seller sees why on the card). An existing suggestion of the pair is kept as it is.
+            Optional<UUID> kept = suggestion.isPresent() ? suggestion
+                    : matches.insertSuggestionWithin(c, tenantId, orderId, paymentId, scored.score(), scored.reasonsJson());
+            hook.after(ApplyStep.FLAGGED, c);
+            return new ApplyResult(Outcome.DEGRADED_TO_SUGGESTION, kept.orElse(null), 0, 0, null, Reason.FLAGGED);
+        }
         if (mode == Mode.AUTO && !scored.autoEligible()) {
             return new ApplyResult(Outcome.DEGRADED_TO_SUGGESTION, null, 0, 0, null, Reason.AUTO_NOT_ELIGIBLE);
         }

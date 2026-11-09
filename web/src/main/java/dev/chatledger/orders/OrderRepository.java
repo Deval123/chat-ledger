@@ -78,9 +78,27 @@ public class OrderRepository {
     }
 
     /** The new order's id, or empty if this tenant already has an order with that external id (nothing was written). */
-    public Optional<UUID> insert(UUID tenantId, NewOrder order) {
+    /**
+     * The customer an order was attached to and its stored name. For a phone that already belonged to a customer this is the first name
+     * (the new name is not written over it); for a customer created by this order it is this order's own name.
+     */
+    public record CustomerResult(UUID id, String storedName) {
+        @Override
+        public String toString() {
+            return "CustomerResult[" + id + "]";
+        }
+    }
+
+    /** Work that must commit with the new order or not at all (its suspicion flags). It runs on the insert's connection, after the insert. */
+    @FunctionalInterface
+    public interface AfterInsert {
+        void after(Connection c, UUID orderId, CustomerResult customer) throws SQLException;
+    }
+
+    public Optional<UUID> insert(UUID tenantId, NewOrder order, AfterInsert after) {
+        java.util.Objects.requireNonNull(after, "after");
         try {
-            return Optional.of(scope.call(tenantId, c -> insertWithin(c, tenantId, order)));
+            return Optional.of(scope.call(tenantId, c -> insertWithin(c, tenantId, order, after)));
         } catch (AlreadyExists exists) {
             return Optional.empty();
         } catch (SQLException e) {
@@ -92,8 +110,9 @@ public class OrderRepository {
         }
     }
 
-    private UUID insertWithin(Connection c, UUID tenantId, NewOrder order) throws SQLException {
-        UUID customerId = customer(c, tenantId, order);
+    private UUID insertWithin(Connection c, UUID tenantId, NewOrder order, AfterInsert after) throws SQLException {
+        CustomerResult customer = customer(c, tenantId, order);
+        UUID customerId = customer == null ? null : customer.id();
         UUID orderId = UUID.randomUUID();
         OrderDecider.Draft draft = order.draft();
         try (PreparedStatement ps = c.prepareStatement(
@@ -146,6 +165,7 @@ public class OrderRepository {
             ledger.appendWithin(c, Postings.orderAccepted(tenantId, orderId, draft.totalMinor(), accounts, java.time.Instant.now()));
         }
         AuditLogRepository.appendWithin(c, tenantId, order.actor(), "ORDER_INGESTED", orderId.toString());
+        after.after(c, orderId, customer);   // the order's suspicion flags: in this transaction, so the order is never seen without them
         return orderId;
     }
 
@@ -153,7 +173,7 @@ public class OrderRepository {
      * A customer with a phone is found or created by the phone's keyed hash (unique per tenant). A customer with only a
      * name gets a row of their own: without a phone there is no safe key to recognise them by.
      */
-    private UUID customer(Connection c, UUID tenantId, NewOrder order) throws SQLException {
+    private CustomerResult customer(Connection c, UUID tenantId, NewOrder order) throws SQLException {
         if (order.phoneHash() != null) {
             try (PreparedStatement ps = c.prepareStatement(
                     "INSERT INTO customer(id, tenant_id, display_name, phone_hash, phone_last4) VALUES (?, ?, ?, ?, ?) "
@@ -166,12 +186,12 @@ public class OrderRepository {
                 ps.executeUpdate();
             }
             try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT id FROM customer WHERE tenant_id = ? AND phone_hash = ?")) {
+                    "SELECT id, display_name FROM customer WHERE tenant_id = ? AND phone_hash = ?")) {
                 ps.setObject(1, tenantId);
                 ps.setString(2, order.phoneHash());
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
-                    return rs.getObject(1, UUID.class);
+                    return new CustomerResult(rs.getObject(1, UUID.class), rs.getString(2));
                 }
             }
         }
@@ -184,7 +204,7 @@ public class OrderRepository {
                 ps.setString(3, order.customerName());
                 ps.executeUpdate();
             }
-            return id;
+            return new CustomerResult(id, order.customerName());
         }
         return null;
     }

@@ -48,24 +48,28 @@ public class MatchRepository {
     /** Stores a suggestion (no amounts, no posting). Empty if the pair already has an open match: nothing is written. */
     public Optional<UUID> insertSuggestion(UUID tenantId, UUID orderId, UUID paymentId, int score, String reasonsJson) {
         try {
-            return scope.call(tenantId, c -> {
-                UUID id = UUID.randomUUID();
-                try (PreparedStatement ps = c.prepareStatement(
-                        "INSERT INTO match(id, tenant_id, order_id, payment_id, score, reasons_json, state) "
-                                + "VALUES (?, ?, ?, ?, ?, ?, 'SUGGESTED') ON CONFLICT DO NOTHING RETURNING id")) {
-                    ps.setObject(1, id);
-                    ps.setObject(2, tenantId);
-                    ps.setObject(3, orderId);
-                    ps.setObject(4, paymentId);
-                    ps.setInt(5, score);
-                    ps.setString(6, reasonsJson);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        return rs.next() ? Optional.of(id) : Optional.<UUID>empty();
-                    }
-                }
-            });
+            return scope.call(tenantId, c -> insertSuggestionWithin(c, tenantId, orderId, paymentId, score, reasonsJson));
         } catch (SQLException e) {
             throw new IllegalStateException("Could not store a match", e);
+        }
+    }
+
+    /** The same on the caller's connection, so a suggestion can commit together with the flags that made it a suggestion. */
+    public Optional<UUID> insertSuggestionWithin(Connection c, UUID tenantId, UUID orderId, UUID paymentId, int score, String reasonsJson)
+            throws SQLException {
+        UUID id = UUID.randomUUID();
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO match(id, tenant_id, order_id, payment_id, score, reasons_json, state) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, 'SUGGESTED') ON CONFLICT DO NOTHING RETURNING id")) {
+            ps.setObject(1, id);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, orderId);
+            ps.setObject(4, paymentId);
+            ps.setInt(5, score);
+            ps.setString(6, reasonsJson);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(id) : Optional.<UUID>empty();
+            }
         }
     }
 
@@ -228,7 +232,8 @@ public class MatchRepository {
         try {
             return scope.call(tenantId, c -> {
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT x.id, x.total_minor, x.applied, x.currency, x.created_at, x.order_ref, cu.display_name, cu.phone_hash, cu.phone_last4, x.ref_n "
+                        "SELECT x.id, x.total_minor, x.applied, x.currency, x.created_at, x.order_ref, cu.display_name, cu.phone_hash, cu.phone_last4, x.ref_n, "
+                                + "EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = x.tenant_id AND f.subject_type = 'ORDER' AND f.order_id = x.id) AS flagged "
                                 + "FROM (SELECT o.id, o.tenant_id, o.total_minor, o.currency, o.created_at, o.order_ref, o.customer_id, "
                                 + "COALESCE((SELECT SUM(m.amount_minor) FROM match m WHERE m.tenant_id = o.tenant_id AND m.order_id = o.id "
                                 + "AND m.state IN ('AUTO', 'CONFIRMED')), 0) AS applied, "
@@ -251,7 +256,7 @@ public class MatchRepository {
                             out.add(new OrderFacts(rs.getObject("id", UUID.class), rs.getLong("total_minor"), rs.getLong("applied"),
                                     rs.getString("currency").strip(), rs.getObject("created_at", OffsetDateTime.class).toInstant(),
                                     rs.getString("order_ref"), rs.getString("display_name"), rs.getString("phone_hash"),
-                                    last4 == null ? null : last4.strip(), rs.getLong("ref_n") > 1));
+                                    last4 == null ? null : last4.strip(), rs.getLong("ref_n") > 1, rs.getBoolean("flagged")));
                         }
                         return out;
                     }
@@ -296,7 +301,8 @@ public class MatchRepository {
                         "SELECT p.id, p.amount_minor, p.currency, p.tx_id IS NOT NULL AS has_tx, p.reference, p.sender_name, p.sender_phone_hash, "
                                 + "p.sender_last4, p.paid_at, COALESCE((SELECT u.role FROM audit_log a "
                                 + "LEFT JOIN app_user u ON u.id = a.actor AND u.tenant_id = a.tenant_id WHERE a.tenant_id = p.tenant_id "
-                                + "AND a.action = 'PAYMENT_INGESTED' AND a.subject = p.id::text ORDER BY a.at, a.id LIMIT 1), 'HELPER') AS recorded_by "
+                                + "AND a.action = 'PAYMENT_INGESTED' AND a.subject = p.id::text ORDER BY a.at, a.id LIMIT 1), 'HELPER') AS recorded_by, "
+                                + "EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.payment_id = p.id AND f.order_id IS NULL) AS flagged "
                                 + "FROM payment p WHERE p.tenant_id = ? AND p.status IN ('RECEIVED', 'UNVERIFIED') "
                                 + "AND (CAST(? AS CHAR(3)) IS NULL OR p.currency = ?) AND (CAST(? AS UUID) IS NULL OR p.id = ?) "
                                 + "ORDER BY p.created_at DESC, p.id LIMIT ?")) {
@@ -314,7 +320,7 @@ public class MatchRepository {
                             PaymentFacts facts = new PaymentFacts(rs.getObject("id", UUID.class), rs.getLong("amount_minor"), rs.getString("currency").strip(),
                                     rs.getBoolean("has_tx"), rs.getString("reference"), rs.getString("sender_name"),
                                     rs.getString("sender_phone_hash"), last4 == null ? null : last4.strip(),
-                                    paidAt == null ? null : paidAt.toInstant());
+                                    paidAt == null ? null : paidAt.toInstant(), rs.getBoolean("flagged"));
                             out.add(new PaymentCandidate(facts, recorderOf(rs.getString("recorded_by"))));
                         }
                         return out;

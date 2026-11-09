@@ -109,7 +109,14 @@
     <span th:if="${card.last4 != null}"><span aria-hidden="true" th:text="${@phone.display(card.last4)}">1234</span><span class="sr" th:text="${@phone.spoken(card.last4)}">phone ending 1234</span></span>
     <span th:text="${@times.format(card.at, tenant.zone)}">03 Nov, 11:02</span>
   </p>
-  <p class="flag" th:if="${card.flagged or card.status == 'DUPLICATE' or card.status == 'UNVERIFIED'}" th:text="#{card.flagged}">Needs a look</p>
+  <!--/* The first open flag in its fixed sentence (from the code, never from the message), and the button to mark it checked. */-->
+  <div class="flag" th:if="${card.flagId != null}">
+    <p><strong th:text="#{card.flagged}">Needs a look</strong>: <span th:text="#{${'flag.' + card.flagCode}}">Reason</span>
+      <span th:if="${card.openFlags > 1}" th:text="#{card.flags.more(${card.openFlags - 1})}">and 1 more</span></p>
+    <form th:if="${canResolve}" th:action="@{/app/flags/{id}/resolve(id=${card.flagId})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
+      <button type="submit" class="secondary" th:text="#{action.resolve}">I checked this</button>
+    </form>
+  </div>
 
   <!--/* A suggestion waiting for the seller: confirm or reject it right here. */-->
   <div class="actions" th:if="${canDecide and card.suggestionId != null}">

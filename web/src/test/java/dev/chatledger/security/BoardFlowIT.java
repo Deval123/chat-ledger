@@ -28,8 +28,8 @@ class BoardFlowIT extends BoardIT {
         assertThat(path(order)).startsWith("/app?n=ORDER_RECORDED&r=");
         String board = b.get(path(order)).body();
         assertThat(board).contains("Order recorded.").contains("Awaiting 1").contains("Ana Kamga").contains("5,000 XAF");
-        assertThat(board).as("the Flagged column says it is partial until the suspicion rules (weakened defense 8)")
-                .contains("Flags from the other suspicion rules arrive with a later step.");
+        assertThat(board).as("task 7, D13: the suspicion rules exist, so the Flagged column no longer says it is partial")
+                .doesNotContain("Flags from the other suspicion rules arrive with a later step.").doesNotContain("Partial");
 
         Browser.Response payment = pastePayment(b, sms(5000, "Ana Kamga", PHONE, "A-1042"));
         assertThat(path(payment)).startsWith("/app?n=PAYMENT_RECORDED&r=");
@@ -122,7 +122,7 @@ class BoardFlowIT extends BoardIT {
         assertThat(path(post(seller, "/app/payments/" + lone + "/set-aside", Map.of()))).isEqualTo("/app?n=PAYMENT_SET_ASIDE");
         assertThat(one("SELECT status FROM payment WHERE id = ?", lone)).isEqualTo("UNMATCHED");
         String home = seller.get("/app").body();
-        assertThat(home).contains("Payments you set aside: 1");
+        assertThat(home).contains("Payments set aside or repeated: 1");
         assertThat(seller.get("/app/columns/aside").body()).contains("Set aside by the seller").contains("Take back");
         assertThat(path(post(seller, "/app/payments/" + lone + "/take-back", Map.of()))).isEqualTo("/app?n=PAYMENT_TAKEN_BACK");
         assertThat(one("SELECT status FROM payment WHERE id = ?", lone)).isEqualTo("RECEIVED");

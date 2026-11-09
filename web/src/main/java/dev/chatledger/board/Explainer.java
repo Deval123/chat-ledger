@@ -43,6 +43,15 @@ public class Explainer {
      * @param balanceMinor  what the order still needs
      */
     public Shown explain(UUID tenantId, UUID viewer, MatchView match, UUID orderId, UUID paymentId, long paymentMinor, long balanceMinor) {
+        return explain(tenantId, viewer, match, orderId, paymentId, paymentMinor, balanceMinor, false);
+    }
+
+    /**
+     * @param pairFlagged true if the pair itself has a flag (open or resolved). The re-score cannot see it (facts carry only the payment's
+     *                    and the order's own flags), so it is added to the missing conditions here.
+     */
+    public Shown explain(UUID tenantId, UUID viewer, MatchView match, UUID orderId, UUID paymentId, long paymentMinor, long balanceMinor,
+                         boolean pairFlagged) {
         Reason.Parsed parsed = Reason.fromJson(match.reasonsJson());
         List<ReasonCode> codes = new ArrayList<>();
         for (Reason reason : parsed.reasons()) {
@@ -57,6 +66,9 @@ public class Explainer {
                 var scored = MatchScorer.score(order.get(), payment.get().facts(), payment.get().recorder(), config);
                 var absent = EnumSet.allOf(FloorCode.class);
                 absent.removeAll(scored.floorsMet());
+                if (pairFlagged) {
+                    absent.add(FloorCode.NOT_FLAGGED);
+                }
                 missing = List.copyOf(absent);
                 rescored = true;
             }
