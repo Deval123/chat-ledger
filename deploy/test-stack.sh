@@ -62,6 +62,9 @@ if docker run --rm --network container:chat-ledger-web-1 --entrypoint curl "$CUR
 fi
 echo "PASS web has no route out"
 
+# Who runs, as which uid, on which root (register 155 for db): web and refresh only as 65532, db only as 70, nothing as root, no gosu.
+sh deploy/check-processes.sh
+
 # An exposed port reads "8080/tcp"; only a published one has "->" (for example "0.0.0.0:8080->8080/tcp").
 ports="$(docker ps --filter label=com.docker.compose.project=chat-ledger --format '{{.Names}} {{.Ports}}' | grep -e '->' || true)"
 if [ -n "$ports" ]; then echo "FAIL published ports: $ports"; exit 1; fi

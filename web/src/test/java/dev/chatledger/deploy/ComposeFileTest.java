@@ -197,7 +197,7 @@ class ComposeFileTest {
     @Test
     void the_memory_budget_is_the_design_s() throws IOException {
         assertThat(mib(service("web").get("mem_limit"))).isEqualTo(640);
-        assertThat(mib(service("refresh").get("mem_limit"))).isEqualTo(192);
+        assertThat(mib(service("refresh").get("mem_limit"))).as("raised from 192 after the amd64 seed was killed").isEqualTo(256);
         assertThat(mib(service("db").get("mem_limit"))).isEqualTo(384);
         assertThat(mib(service("tunnel").get("mem_limit"))).isEqualTo(96);
         assertThat(mib(service("migrate").get("mem_limit"))).isEqualTo(256);
@@ -205,10 +205,10 @@ class ComposeFileTest {
         for (String s : List.of("web", "refresh", "db", "tunnel")) {
             running += mib(service(s).get("mem_limit"));
         }
-        assertThat(running).as("D7: at most 1,312 MiB while serving").isLessThanOrEqualTo(1312);
+        assertThat(running).as("D7 as amended: at most 1,376 MiB while serving").isLessThanOrEqualTo(1376);
         assertThat(list(service("web").get("entrypoint"))).contains("-Xmx288m", "-XX:MaxMetaspaceSize=160m", "-XX:ReservedCodeCacheSize=48m",
                 "-XX:MaxDirectMemorySize=32m", "-XX:+ExitOnOutOfMemoryError");
-        assertThat(list(service("refresh").get("entrypoint"))).contains("-Xmx96m", "-XX:+ExitOnOutOfMemoryError");
+        assertThat(list(service("refresh").get("entrypoint"))).as("the heap stays at 96m").contains("-Xmx96m", "-XX:+ExitOnOutOfMemoryError");
         assertThat(String.valueOf(map(service("web").get("healthcheck")).get("test"))).contains("health-probe", "-Xmx16m");
     }
 
@@ -247,6 +247,9 @@ class ComposeFileTest {
         assertThat(list(echo.get("cap_drop"))).containsExactly("ALL");
         assertThat(list(echo.get("security_opt"))).containsExactly("no-new-privileges:true");
         assertThat(echo.get("memswap_limit")).isEqualTo(echo.get("mem_limit"));
+        assertThat(echo.get("restart")).as("time-boxed: never restarted (register 157)").isEqualTo("no");
+        assertThat(echo.get("user")).isEqualTo("65532:65532");
+        assertThat(list(echo.get("command"))).as("not on a privileged port").containsExactly("--port", "8080");
         assertThat(echo.keySet()).doesNotContain("ports", "privileged", "volumes", "network_mode", "secrets", "environment");
         assertThat(yaml("hops-echo.yaml").keySet()).containsExactly("services");
     }

@@ -9,6 +9,7 @@
 # (deploy/make-secrets.sh), mounted with `secrets:` under /run/secrets/; no secret is in this file, in .env, in an image or in an
 # environment variable, so `docker inspect` shows none.
 #
+# Memory: web 640 + refresh 256 + db 384 + tunnel 96 = 1,376 MiB while serving (migrate 256 runs only while refresh is stopped).
 # Every service: read-only root, no capabilities, no-new-privileges, a pids limit, a memory limit equal to its memory+swap limit (no swap),
 # bounded json-file logs. No service publishes a port, runs privileged, uses the host network or mounts the Docker socket.
 # deploy/ComposeFileTest (web module) fails the build if any of this changes.
@@ -240,8 +241,10 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 100
-    mem_limit: 192m
-    memswap_limit: 192m
+    # 256 MiB, not the 192 of the first plan: the amd64 seed was killed at 192 under emulation (peak about 218 MiB; 119 natively on
+    # arm64). The heap stays at 96m; the rest is room for metaspace, code and native memory (register 158).
+    mem_limit: 256m
+    memswap_limit: 256m
     cpus: 0.5
     restart: unless-stopped
     logging:

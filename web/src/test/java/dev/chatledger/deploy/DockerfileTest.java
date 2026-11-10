@@ -28,7 +28,12 @@ class DockerfileTest {
     void both_bases_are_pinned_by_digest() throws IOException {
         List<String> froms = instructions().stream().filter(l -> l.startsWith("FROM ")).toList();
         assertThat(froms).hasSize(2).allMatch(l -> FROM_PINNED.matcher(l).matches());
-        assertThat(froms.get(1)).as("the runtime is distroless, nonroot").startsWith("FROM gcr.io/distroless/java21-debian12:nonroot@sha256:");
+        assertThat(froms.get(1)).as("the runtime is distroless Debian 13, nonroot (debian12 carried fixable findings; register 152)")
+                .startsWith("FROM gcr.io/distroless/java21-debian13:nonroot@sha256:");
+        // One Java major on both sides: the build JDK compiles for 21 and the runtime JRE runs 21.
+        assertThat(froms.get(0)).startsWith("FROM maven:3.9-eclipse-temurin-21@sha256:");
+        assertThat(froms.get(1)).contains("/java21-");
+        assertThat(Files.readString(ROOT.resolve("Dockerfile"))).as("no debian12 base left").doesNotContain("java21-debian12:nonroot@");
     }
 
     @Test

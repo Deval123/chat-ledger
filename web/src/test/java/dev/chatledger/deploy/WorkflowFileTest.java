@@ -152,6 +152,26 @@ class WorkflowFileTest {
         assertThat(used).containsExactlyInAnyOrder("NVD_API_KEY", "GITHUB_TOKEN");
         assertThat(String.valueOf(job("image-push").get("steps"))).contains("secrets.GITHUB_TOKEN");
         assertThat(Files.readString(WORKFLOWS.resolve("uptime.yml"))).doesNotContain("secrets.").doesNotContain("uses:");
+        assertThat(Files.readString(WORKFLOWS.resolve("digests.yml"))).doesNotContain("secrets.").doesNotContain("uses:")
+                .doesNotContain("GITHUB_TOKEN").doesNotContain("git push").doesNotContain("gh ");
+    }
+
+    @Test
+    void the_weekly_report_only_reads_and_scans_with_the_ci_scanner() throws IOException {
+        Map<String, Object> digests = workflow("digests.yml");
+        assertThat(digests).containsKey("permissions");
+        assertThat(map(digests.get("permissions"))).as("no permission at all").isEmpty();
+        Map<String, Object> jobs = map(digests.get("jobs"));
+        assertThat(jobs.keySet()).containsExactlyInAnyOrder("report", "scan");
+        for (Object job : jobs.values()) {
+            assertThat(map(job)).doesNotContainKey("permissions");
+            assertThat(uses(map(job))).as("no action").isEmpty();
+        }
+        assertThat(runs(map(jobs.get("report")))).contains("sh deploy/check-digests.sh");
+        assertThat(runs(map(jobs.get("scan")))).contains("sh deploy/scan-runtime.sh \"ghcr.io/deval123/chat-ledger:");
+        String scanner = "aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb";
+        assertThat(Files.readString(Path.of("..", "deploy", "scan-runtime.sh"))).as("the same pinned scanner as CI").contains(scanner);
+        assertThat(String.valueOf(map(digests.get(true)).get("schedule"))).as("weekly").contains("cron=17 6 * * 1");
     }
 
     @Test

@@ -1581,7 +1581,8 @@ cloudflared can read one (it can). Work stays on `task-13-deploy`; nothing was c
 another project; I cannot reach it, so every step there is the owner's and **unverified** until its output is pasted back.
 
 ### What was built
-- **The image** (`Dockerfile`, `.dockerignore`): Maven build stage, distroless `java21-debian12:nonroot` runtime, both by digest; uid
+- **The image** (`Dockerfile`, `.dockerignore`): Maven build stage, distroless `java21-debian12:nonroot` runtime (since replaced by
+  `java21-debian13:nonroot`, see "The base moves to Debian 13" below), both by digest; uid
   65532; the jar root-owned 0444; no shell; an allowlist build context. 261 MB for amd64 (166 MB base, 69 MB jar).
 - **Three commands before Spring**: `db-migrate` (Flyway only, the schema owner's login, refuses options, placeholders, a non-PostgreSQL
   URL and the application's login; a failure names its class only), `health-probe` (one loopback request; no redirect followed),
@@ -1758,3 +1759,122 @@ mutant was set aside as equivalent.
 - What Cloudflare and cloudflared write to `X-Forwarded-For` (the hops), and Cloudflare's free-plan limits for this account.
 - That a `DOCKER-USER` rule persists across a reboot on this host.
 - Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.
+
+### The first CI run: the image scan caught what the OWASP check did not
+The PR's `Image, scan` job failed on fixable HIGH and CRITICAL findings: ten Debian packages in the pinned distroless base
+(libbrotli1 CRITICAL, libexpat1 eight HIGH, liblcms2-2 HIGH), and five advisories in Jackson 3.1.5 (jackson-core and
+jackson-databind), the version Spring Boot 4.1.1 manages. The owner's rule: fix, no ignore file for any finding with a fix.
+
+- **Jackson.** `jackson-bom.version` is overridden to 3.1.8 in the root POM (the newest of the 3.1 line; 3.2 is a new minor). Every module
+  now resolves 3.1.8. The rebuilt image has no Jackson finding (Trivy, locally). `JacksonVersionTest` reads the versions the libraries
+  report: it fails without the override (3.1.5) and when databind alone is left behind (both mutants killed).
+- **The OWASP check had passed on 3.1.5.** I re-ran it on a copy without the override, with the NVD data updated in the same session:
+  it identified `jackson-core-3.1.5.jar` and `jackson-databind-3.1.5.jar` with the right CPEs and matched none of the five CVEs. With
+  3.1.8 it passes too. So for these advisories the OWASP check was blind and Trivy was not. Why NVD had no match is a guess (version
+  data not yet attached in NVD, while Trivy also reads the GitHub advisory database by Maven coordinates); **unverified**. Register
+  item 154.
+- **The base was not fixed, by the owner's rule.** `gcr.io/distroless/java21-debian12:nonroot` still points to the digest already pinned
+  (`7e37784d…`), and Trivy finds the same ten packages in it: the publisher has not rebuilt it. I stopped there and did not add an
+  exclusion. The image job keeps failing, so nothing is pushed (register item 152). Measured, to choose from:
+  `java21-debian13:nonroot@sha256:d978eefd…` (Java 21.0.13, uid 65532) has no fixable HIGH or CRITICAL finding, and an image built on it
+  passes `check-image.sh` (not drilled); `cc-debian12:nonroot` carries a libssl3 HIGH.
+- **The digest report alone would not have caught this.** Every pin was CURRENT: the vulnerabilities appeared against pins that had
+  not moved. So the weekly read-only workflow (`digests.yml`, `permissions: {}`, no action) does both: `deploy/check-digests.sh`
+  reports moved tags, and `deploy/scan-runtime.sh` rescans the images that run on the VPS.
+- **That rescan found two more.** CI had never scanned the PostgreSQL and cloudflared images. postgres 16.15-alpine: 26 HIGH/CRITICAL,
+  all Go standard-library CVEs in its bundled `gosu`, which its entrypoint runs only when started as root (`db` starts as uid 70).
+  cloudflared 2026.10.7: zlib1g twice and golang.org/x/net. Not re-pinned: pending the owner's decision (register item 153).
+- **Runbook section 10** has the read-only checks, why the image job fails by design, and the steps to fix a base finding, a library
+  finding, and the two other images.
+- **Mutations for the new guards:** 15 of 15 killed. Jackson (override removed; databind behind), the digest report (always CURRENT; a
+  stale pin passing; an unknown hidden; a file not read), the runtime scan (a finding passing; the application image not scanned; the
+  scan never failing; another scanner; the compose pins missed), and the workflow (a write permission, an action, the scan job gone, a
+  push).
+- **Tests:** unit phase with Docker stopped **613** (31 + 156 + 31 + 67 + 23 + 10 + 295); full verify **653** integration tests, 2
+  skipped. `mvn -P security-check verify -DskipTests`: BUILD SUCCESS with 3.1.8.
+- **Not verified:** the CI jobs on the next push (the scan job will still fail on the base until it is decided); that 3.1.8 has no other
+  advisory than the scanners know today; the reason for the NVD gap.
+
+### The base moves to Debian 13, and the other three images
+The owner chose option (a): the runtime base is `gcr.io/distroless/java21-debian13:nonroot@sha256:d978eefd…`, re-resolved today (the
+same digest as when it was proposed). Behind it: Temurin 21.0.13+9 on amd64 and arm64, Debian 13.7, uid 65532. The build stage stays
+`maven:3.9-eclipse-temurin-21` (Temurin 21.0.12.1). **Both are Java 21**; the runtime is now newer than the build JDK, where debian12's
+21.0.10 was older.
+
+**The full drill on the new base:**
+- images built for amd64 (261 MB) and arm64 (271 MB); `check-image.sh` passes on both, including a new check that the runtime is
+  Java 21 (a Java 17 twin is refused);
+- Trivy on both archives, as CI runs it: no fixable HIGH or CRITICAL (Debian 0, `app.jar` 0), exit 0;
+- arm64, natively, in Docker-in-Docker: from nothing, smoke 25 of 25, web healthy 12 s after `up` (Spring 5.9 s), 30 workspaces seeded
+  in 53 s; web 290 MiB at rest, 305 MiB under eight request loops and three smoke runs (NMT 349 MiB committed), refresh 85, db 31;
+  no route out for web, refresh and db; no published port;
+- every process as its uid, read from `/proc` by the new `check-processes.sh`: web and refresh 65532, db 70, nothing as root; every
+  root file system read-only, no capability, no-new-privileges; a root twin and a writable-root twin are refused;
+- the secret files as uid 65532 sees them: `root:65532 0440`, readable by 65532, not by another uid;
+- **amd64 under emulation: the first run failed.** The refresh seed was killed at its 192 MiB limit (`OOMKilled true`, peak about
+  218 MiB); natively on arm64 the same seed peaks at about 119 MiB. My reading is the emulator's translation cache, counted in the
+  container; unverified on a real amd64 CPU. With more memory for that run only (a throwaway override, not in the repository), the
+  amd64 image passed the whole drill (37 checks; web 457 MiB at rest and a 21.9 s start, both emulated). The limits in `compose.yaml`
+  are unchanged; CI's image job runs the drill natively on amd64 with the real limits, and the runbook checks `OOMKilled` after the
+  first seed on the VPS (register 158).
+
+**PostgreSQL, cloudflared, the hops echo.** The newest releases are the digests already pinned (`16-alpine` = 16.15-alpine; cloudflared
+2026.10.7 = latest; whoami v1.12.0 = latest), so re-pinning changed nothing and the findings stand.
+- **PostgreSQL: accepted, with evidence** (register 155). All 26 findings are the Go standard library in `/usr/local/bin/gosu`. The
+  image calls gosu in three places, each `exec gosu postgres "$BASH_SOURCE" "$@"` directly under `if [ "$(id -u)" = '0' ]; then`
+  (docker-entrypoint.sh line 341, and the two initdb helpers); gosu is 0755 and the image has no setuid file; db starts as 70:70,
+  read-only, with no capabilities and no-new-privileges. `deploy/check-gosu.sh` checks all of it on the pinned image and traces the
+  image's own entrypoint with `bash -x` under those settings: gosu is never executed, and the server comes up as uid 70; started as
+  root, the same trace does show gosu (the control). `CheckGosuIT` runs it and shows each check failing on a broken compose file or
+  image (db as root, a writable root, an unguarded call, a fourth call, a setuid gosu, no call at all). `scan-runtime.sh` leaves out
+  that one file only in a run where the evidence passes: re-checked every week, and the acceptance ends when it fails.
+- **cloudflared: not accepted, pending the owner** (register 156). zlib1g twice (its Debian 13 base; the binary is static, so libz is
+  never loaded) and golang.org/x/net v0.61.0 (an `x/net/html` DoS; that package is not linked into the binary). Checked on both
+  architectures.
+- **whoami: not accepted, pending the owner** (register 157). 17 findings in its binary; it runs only for the hops measurement.
+- **The weekly scan covers four images** (application, PostgreSQL, cloudflared, hops echo). The image job's gate in `ci.yml` is
+  unchanged. Until 156 and 157 are decided, the weekly scan fails, which is its notification.
+
+**Mutations for this round:** 18 of 18 killed. The base in `DockerfileTest` (back to debian12; a Java 17 runtime; a JDK 17 build); the
+gosu acceptance in `scan-runtime.sh` (skipped without evidence; skipped everywhere; broadened to a directory; the echo or the
+application image left out; any application image accepted); and every check of `check-gosu.sh` (each check made to pass always, the
+trace run as root). Detector runs: a Java 17 twin (`check-image.sh`), and a root twin and a writable-root twin (`check-processes.sh`).
+Two checks were deleted as redundant (register 159).
+
+**Not verified:** the amd64 memory and start time on a real CPU (CI's next run and the VPS); CI's three image jobs and the weekly
+workflow on GitHub; whether Debian 13's newer system libraries change anything at run time beyond the drill.
+
+### cloudflared and the hops echo accepted, refresh at 256 MiB
+The owner's decisions: cloudflared accepted on the evidence, whoami for the one hops measurement only, refresh raised to 256 MiB.
+
+- **cloudflared (register 156).** `deploy/check-cloudflared.sh` proves it from the pinned image, on both architectures: the entrypoint
+  is `cloudflared` and compose does not override it; the binary has no program interpreter, so no dynamic loader runs and libz is
+  never loaded; it keeps its symbol table (about 41,000 symbols); and no `golang.org/x/net/html` symbol is in it. `CheckCloudflaredIT`
+  builds twins of the pinned image with a small Go program in place of the binary (a local module stands in for `x/net`, so no network
+  is needed) and shows each check refusing its twin: dynamically linked, stripped, with the html package, another entrypoint, and a
+  compose file that overrides it; a static twin without the package passes. `scan-runtime.sh` accepts, and only in a run where that
+  evidence passes, any zlib1g finding and CVE-2026-78661 by id; another x/net finding still fails, because other x/net packages are
+  linked. No ignore file.
+- **whoami (register 157).** Time-boxed: pinned by digest, hardened like every service, on the `edge` network only (no route out),
+  never restarted. The runbook now creates the DNS record and tunnel route for `ledger.nkap.dev` at the moment of the measurement,
+  pointed at the echo; removes the echo right after; and routes the hostname to web only then. `check-host.sh` fails whenever a
+  hops-echo container exists (a detector run with a running echo twin: FAIL; removed: PASS). The weekly scan lists its findings.
+- **refresh 256 MiB (register 158).** `-Xmx96m` kept. 1,376 MiB (1.34 GiB) while serving: at the other project's current use that leaves
+  about 1.36 GiB free on the 3.7 GiB host; with both projects at their limits, 3,680 MiB, about 110 MiB for the host itself. The amd64
+  image passed the drill under emulation with the real limits this time (37 checks, refresh 136 MiB of 256 at rest, web 450 of 640; a
+  10-workspace seed). The out-of-memory check after the first seed on the VPS stays in the runbook (step 3.11).
+- **Mutations:** 16 of 16 killed: the cloudflared acceptance in `scan-runtime.sh` (without evidence; any x/net finding; any OS package;
+  an uncovered finding passing; an unreadable image passing), the echo listing (unreadable passing), the compose limits and the echo's
+  hardening, and each check of `check-cloudflared.sh`. Two checks were deleted as redundant (register 160): the `CGO_ENABLED` flag and
+  the `NEEDED` count, which no twin could tell from the interpreter check.
+- **Not verified:** a real amd64 CPU (CI's next run, then the VPS); the 30-workspace seed on amd64 at 256 MiB (only a 10-workspace seed
+  ran there); the Cloudflare behaviour of creating the DNS record with the public hostname, which is how the dashboard works as far
+  as I know, not something I could try.
+- **Found, not fixed: the task 9 intermittent property failure is now reproducible.** The final `mvn -o clean verify` ran 665
+  integration tests: 664 passed, 2 skipped, and `MatchingBooksPropertyIT` "a rematch repeated reaches a point where it changes
+  nothing" failed ("a rematch kept changing things for more passes than there are free payments"). jqwik replays a stored failure
+  first, so every rerun here fails with seed `3454080274824834196` (kept in the git-ignored `web/.jqwik-database`). The same seed fails
+  on the owner's commit `641436d`, checked in a separate worktree, and that commit passes with fresh random seeds, so this round's
+  changes do not cause it (and the Jackson override alone does not change it). It is a defect in the rematch logic or in the property,
+  outside task 13; reproduce with `@Property(seed = "3454080274824834196")` on that property. The unit phase with Docker stopped is
+  green (616).

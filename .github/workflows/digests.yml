@@ -1,0 +1,40 @@
+name: Pinned digests
+
+# Weekly and read-only (task 13; RUNBOOK.md, "Pinned digests go stale"): reports pinned image digests whose tag has moved, and scans
+# the images that run on the VPS. No permission, no secret, no action: it clones the public repository anonymously and reads the
+# registries. A stale pin or a finding fails the run, so GitHub's notification for failed scheduled workflows tells the owner; nothing
+# is changed, opened or pushed.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  report:
+    name: Compare each pinned digest with its tag today
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Report
+        run: |
+          git clone --depth 1 --quiet "https://github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          sh deploy/check-digests.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The four images that run on the VPS (the application image, PostgreSQL, cloudflared, the hops echo), scanned again every week: a
+  # finding can appear against a pin that has not changed. Accepted only with their evidence in the same run: PostgreSQL's gosu
+  # (check-gosu.sh, register 155) and cloudflared's zlib1g and CVE-2026-78661 (check-cloudflared.sh, 156); the hops echo is listed,
+  # time-boxed to the measurement (157). The image job's gate in ci.yml is unchanged.
+  scan:
+    name: Scan the images that run on the VPS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Scan
+        run: |
+          git clone --depth 1 --quiet "https://github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          # The application image CI pushed for this commit of main (public, read anonymously).
+          sh deploy/scan-runtime.sh "ghcr.io/deval123/chat-ledger:$(git rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"

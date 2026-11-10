@@ -101,7 +101,8 @@ say when.
 
 | Image | Tag | Version behind the tag | Index digest |
 |---|---|---|---|
-| Runtime | `gcr.io/distroless/java21-debian12:nonroot` | Java 21.0.10 | `sha256:7e37784d94dccbf5ccb195c73b295f5ad00cd266512dfbac12eb9c3c28f8077d` |
+| Runtime (until the first CI run) | `gcr.io/distroless/java21-debian12:nonroot` | Java 21.0.10 | `sha256:7e37784d94dccbf5ccb195c73b295f5ad00cd266512dfbac12eb9c3c28f8077d` |
+| Runtime (now, section 9) | `gcr.io/distroless/java21-debian13:nonroot` | Temurin 21.0.13+9, Debian 13.7, uid 65532 | `sha256:d978eefd303c59c42f382aef811a0e41f2c68a6e5c319a23769cd3d1d5bf8e3c` |
 | Build | `maven:3.9-eclipse-temurin-21` | JDK 21.0.12.1+1 | `sha256:99e61abcff91a9b1333463bd8451fb18495d6eba9250ac66a338b518f8278320` |
 | Database | `postgres:16.15-alpine` (= `16-alpine` today) | PostgreSQL 16.15 | `sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139` |
 | Tunnel | `cloudflare/cloudflared:latest` | **not shown by the image's labels** | `sha256:4955524aeaa379e154023d5a027c250f7b35041a2e7e950cf13f144bc9b9c5ba` |
@@ -198,17 +199,18 @@ Nothing else is reachable through it. The management port (8081, section 5) is n
 | Container | Limit | Inside it |
 |---|---|---|
 | web | 640 MiB | heap `-Xms192m -Xmx288m`, `-XX:MaxMetaspaceSize=160m`, `-XX:ReservedCodeCacheSize=48m`, `-XX:MaxDirectMemorySize=32m`, `-Xss512k`, `-XX:+UseSerialGC`, `-XX:+ExitOnOutOfMemoryError`; Tomcat `threads.max=40`; Hikari `maximum-pool-size=8`; about 30 MiB for the health probe |
-| refresh | 192 MiB | `-Xmx96m`, `-XX:MaxMetaspaceSize=64m`, `-XX:ReservedCodeCacheSize=24m`, `-Xss512k`, `-XX:+UseSerialGC`, `-XX:TieredStopAtLevel=1`, `-XX:+ExitOnOutOfMemoryError`; one Argon2 hash (19 MiB) per workspace created |
+| refresh | ~~192~~ **256 MiB** (amended after the first CI run: the emulated amd64 seed was killed at 192; register 158) | `-Xmx96m` (unchanged), `-XX:MaxMetaspaceSize=64m`, `-XX:ReservedCodeCacheSize=24m`, `-Xss512k`, `-XX:+UseSerialGC`, `-XX:TieredStopAtLevel=1`, `-XX:+ExitOnOutOfMemoryError`; one Argon2 hash (19 MiB) per workspace created |
 | db | 384 MiB | `shared_buffers=64MB`, `work_mem=2MB`, `maintenance_work_mem=32MB`, `effective_cache_size=192MB`, `max_connections=30`, `shm_size` 64 MiB (counted in the limit) |
 | tunnel | 96 MiB | cloudflared (Nkap Agent gives its own 128 MiB; actual use **unverified**) |
-| **Total** | **1,312 MiB (1.28 GiB)** | `migrate` (256 MiB) runs only during a deploy, while `refresh` is stopped |
+| **Total** | ~~1,312~~ **1,376 MiB (1.34 GiB)** | `migrate` (256 MiB) runs only during a deploy, while `refresh` is stopped |
 
 **What this leaves.**
-- With the owner's figures (about 2.7 GiB available with Nkap Agent up), chat-ledger at its full limits leaves about **1.4 GiB free**.
-  That is at least 1 GiB, as asked.
+- With the owner's figures (about 2.7 GiB available with Nkap Agent up), chat-ledger at its full limits leaves about **1.4 GiB free**
+  (as amended, 1,376 MiB: about **1.36 GiB free**). That is at least 1 GiB, as asked.
 - This holds against Nkap Agent's **current use** (about 515 MiB), **not against its limits** (2,304 MiB). If both projects hit their
-  limits at once they would need about 3.6 GiB of the 3.7 GiB, and the host would have almost nothing left. The hard limits make sure
-  chat-ledger can never take more than 1.28 GiB, whatever happens inside it.
+  limits at once they would need about 3.6 GiB of the 3.7 GiB, and the host would have almost nothing left (as amended: 3,680 MiB,
+  about 110 MiB left for the host itself). The hard limits make sure chat-ledger can never take more than 1.28 GiB (as amended,
+  1.34 GiB), whatever happens inside it.
 - The heap and native estimates are mine: **unverified**. Stop 2 measures them locally with `-XX:NativeMemoryTracking=summary` while
   seeding 30 workspaces and running the smoke script. On the VPS, `sudo docker stats --no-stream` after the first full refresh pass
   confirms them.
@@ -560,8 +562,8 @@ These are read-only checks unless stated. Each result is pasted back before the 
    this demo.
 8. **The health probe runs a second small JVM** inside the web container every 60 s. 30 MiB for about 1 s, counted in the limit; the
    alternative was a shell in the image.
-9. **Memory is safe against the other project's current use, not its limits.** Hard limits keep chat-ledger at 1.28 GiB whatever happens
-   inside it; both projects at their limits would leave the host almost nothing.
+9. **Memory is safe against the other project's current use, not its limits.** Hard limits keep chat-ledger at 1.28 GiB (1.34 GiB as amended)
+   whatever happens inside it; both projects at their limits would leave the host almost nothing.
 10. **CPU limits add up to 2.5 of 2 vCPU** (soft overcommit). They are caps; the busy moments (a JVM start, the first refresh pass) are
     short and outside judging when planned.
 11. **Uptime checks run from GitHub on a best-effort schedule.** No third party; late runs are possible; the smoke script is the real
@@ -586,11 +588,11 @@ These are read-only checks unless stated. Each result is pasted back before the 
 |---|---|---|---|
 | D1 | Who builds the image | CI on pushes to `main`, after the tests, multi-stage `Dockerfile`, runtime distroless `java21-debian12:nonroot`, all bases pinned by digest | Reproducible; no shell in production; the VPS never builds |
 | D2 | Registry and how the VPS pulls | GHCR, public package, pushed with the job-scoped `GITHUB_TOKEN` (`packages: write` on that job only), pulled by digest with no credential | No new secret anywhere; a moved tag changes nothing that runs |
-| D3 | Web and refresh loop | Two containers from one image (web 640 MiB, refresh 192 MiB); `docker/demo-entrypoint.sh` is kept for single-container hosts and not used here | Per-process memory limits; the web container never even receives `DEMO_DB_*` |
+| D3 | Web and refresh loop | Two containers from one image (web 640 MiB, refresh 192 MiB, amended to 256); `docker/demo-entrypoint.sh` is kept for single-container hosts and not used here | Per-process memory limits; the web container never even receives `DEMO_DB_*` |
 | D4 | Migrations | A one-shot `migrate` service (`db-migrate` command, Flyway only, no Spring) holds the schema owner's login; the web process runs with Flyway off | The web process never holds the owner's password |
 | D5 | Tunnel | Its own cloudflared container and token (owner's decision), on `edge` and `egress` only; ingress `ledger.nkap.dev` → `http://web:8080`, catch-all 404 | One route to one port; nothing shared with Nkap Agent |
 | D6 | Secrets | One file each under `/opt/chat-ledger/secrets/` (root, 0440 to the one reading uid), Compose `secrets:`; `*_FILE` support in the role script and the commands, `configtree` in the web process | `docker inspect` shows none; nothing in the repository or the image |
-| D7 | Memory and heap | web 640 MiB (`-Xmx288m`, metaspace 160m, code 48m, direct 32m, SerialGC, 40 threads), refresh 192 MiB (`-Xmx96m`, metaspace 64m, code 24m, C1 only), db 384 MiB (settings in section 4), tunnel 96 MiB: 1.28 GiB in total, no swap | The owner's budget; leaves about 1.4 GiB at the other project's current use; measured in stop 2 |
+| D7 | Memory and heap | web 640 MiB (`-Xmx288m`, metaspace 160m, code 48m, direct 32m, SerialGC, 40 threads), refresh 192 MiB (amended to 256; `-Xmx96m`, metaspace 64m, code 24m, C1 only), db 384 MiB (settings in section 4), tunnel 96 MiB: 1.28 GiB in total (1.34 GiB as amended), no swap | The owner's budget; leaves about 1.4 GiB at the other project's current use; measured in stop 2 |
 | D8 | Disk | 5 GB for chat-ledger: database volume 3 GB, reset at 2.4 GB; logs 3 × 10 MB per container; two image versions kept | 80% line from the owner's rule; logs cannot fill the disk |
 | D9 | PostgreSQL version | 16.15-alpine by digest, and the tests move to the same digest | One version under test and in production; 16.4 lacks two years of fixes |
 | D10 | HSTS | `app.security.hsts=always` in `prod` (one year, `includeSubDomains`, no preload), refused under `dev` | The application sees HTTP behind the tunnel; Cloudflare's own HSTS is zone-wide |
@@ -727,3 +729,19 @@ I tested the pinned release on my machine:
 
 So the compose file uses `--token-file /run/secrets/tunnel_token`, and the token is in no environment variable. A real connection with
 a real token is **unverified** until the first deploy.
+
+### After the first CI run: the image scan, and a new base
+The PR's image scan failed on fixable HIGH and CRITICAL findings. The owner decided (no ignore file for any finding with a fix):
+- **Jackson 3.1.5 → 3.1.8** (`jackson-bom.version` in the root POM; `JacksonVersionTest`). Register 154.
+- **The runtime base moved to `gcr.io/distroless/java21-debian13:nonroot`** (the digest above), because the newest
+  `java21-debian12:nonroot` digest was the one pinned and still carried ten fixable Debian findings. Both stages are Java 21 (build
+  Temurin 21.0.12.1, runtime Temurin 21.0.13+9; `check-image.sh` refuses another major). On debian13 the scan is clean on amd64 and
+  arm64, and the full drill passed (natively on arm64; on amd64 under emulation, with more memory for that run only: register 158).
+  Register 152, 146.
+- **PostgreSQL, cloudflared and the hops echo**, scanned weekly with the application image (`digests.yml`, four images). Each newest
+  release is the digest already pinned. PostgreSQL's `gosu` findings are accepted only with the evidence of `deploy/check-gosu.sh`
+  (register 155); cloudflared's and whoami's are not accepted and wait for the owner (156, 157).
+- **The owner's next decisions:** cloudflared's three findings accepted on the evidence of `deploy/check-cloudflared.sh` (no program
+  interpreter on either architecture; no `x/net/html` symbol), re-checked weekly (register 156); whoami accepted for the one hops
+  measurement only, the hostname created at that moment and routed to web only after the echo is removed (157); the refresh limit
+  raised from 192 to 256 MiB, 1,376 MiB in all (158).

@@ -56,6 +56,14 @@ for id in $(docker ps -aq --filter label=com.docker.compose.project=chat-ledger)
     if docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$id" | grep -q 'docker.sock'; then fail "$name mounts the Docker socket"; fi
 done
 
+# 4a. The hops echo is time-boxed to the hops measurement (register 157): at any other time no hops-echo container may exist.
+echo_ids="$(docker ps -aq --filter label=com.docker.compose.project=chat-ledger --filter label=com.docker.compose.service=hops-echo)"
+if [ -z "$echo_ids" ]; then pass "no hops echo container"
+else fail "a hops echo container exists outside the measurement: remove it (RUNBOOK.md section 4, step 5)"; fi
+
+# 4b. Who runs, as which uid (db only as 70, so gosu never runs: register 155), on a read-only root, without capabilities.
+if sh /opt/chat-ledger/check-processes.sh; then pass "every process runs as its own uid"; else fail "a process check failed (above)"; fi
+
 # 5. Nothing new listening on the host (only SSH, plus whatever was there before; LLMNR 5355 should be gone, section 7).
 info "listening sockets on the host:"
 ss -lntup

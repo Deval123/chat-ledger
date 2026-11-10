@@ -27,6 +27,10 @@ else
     pass "the build history names no password, secret or token"
 fi
 
+# The runtime is Java 21, the release the build compiles for (`<release>21</release>` in the root POM).
+java_version="$(docker run --rm --network none --entrypoint java "$IMAGE" -version 2>&1 | sed -n 's/^openjdk version "\([0-9]*\)\..*/\1/p' | head -n 1)"
+if [ "$java_version" = 21 ]; then pass "the runtime is Java 21"; else fail "the runtime is Java [$java_version], not 21"; fi
+
 # No shell: a distroless runtime. (The run must fail to start /bin/sh.)
 if docker run --rm --network none --entrypoint /bin/sh "$IMAGE" -c true >/dev/null 2>&1; then
     fail "the image has a shell"
