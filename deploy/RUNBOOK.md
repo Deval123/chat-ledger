@@ -32,6 +32,18 @@ Nothing below has been run on the VPS by the author. Each step says what to expe
 
 `smoke.sh` runs from the owner's laptop, not from the VPS.
 
+## Deployed state
+
+What runs now, so a change starts from the right place. Update this table with every deploy.
+
+| Item | Value | Since |
+|---|---|---|
+| Release | `ghcr.io/deval123/chat-ledger@sha256:116d11ebe436f62dc1395c53cb05f0aecf5a1d5dbb9f39f17b0fc32d6567dbe2` (CI run #55, commit `ad490cd`) | 2026-11-10 |
+| `APP_SECURITY_TRUSTED_PROXY_HOPS` | `1`, measured through the tunnel over IPv4 (section 4); the IPv6 repeat is still open | 2026-11-10 |
+| Public hostname | `ledger.nkap.dev` → `http://web:8080`; catch-all `http_status:404` | 2026-11-10 |
+| Zone settings of `nkap.dev` (D19) | Rocket Loader off, Bot Fight Mode off, Email Address Obfuscation off, Always Use HTTPS on, zone HSTS off; **zone-wide**, see section 2, step 3 | 2026-11-10 |
+| Demo pool | 30 workspaces | 2026-11-10 |
+
 ## 1. Host preparation (once, before the first deploy)
 
 1. **LLMNR (port 5355).**
@@ -77,6 +89,11 @@ Nothing below has been run on the VPS by the author. Each step says what to expe
 3. For `ledger.nkap.dev` only (a Configuration Rule where the plan allows it), D19: Rocket Loader off, Email Obfuscation off, Web
    Analytics automatic injection off, Zaraz off, Auto Minify off, Bot Fight Mode off; Always Use HTTPS on. These would break the CSP or
    the no-JavaScript path; the smoke script fails if they are on.
+   - **As set on 2026-11-10, zone-wide.** The settings were changed for the whole `nkap.dev` zone, not by a rule for this hostname:
+     Email Address Obfuscation was on and is now off, Always Use HTTPS was off and is now on. Rocket Loader, Bot Fight Mode and the zone
+     HSTS were already off. The zone is shared with another project, so these two changes apply to its hostnames too; tell its owner
+     before changing them again, and prefer a Configuration Rule scoped to `ledger.nkap.dev` if the plan offers one.
+   - Check: `curl -sI http://ledger.nkap.dev/ | head -3` answers `301` with a `Location` on `https://`.
 4. Optional (D14): one rate-limiting rule on `POST /demo` per client address.
 5. Do not turn on the zone's HSTS setting: it is zone-wide and would change the other project's hostnames. The application writes HSTS
    for its own hostname.
@@ -104,6 +121,19 @@ Nothing below has been run on the VPS by the author. Each step says what to expe
    # expected: Written: /opt/chat-ledger/secrets/db (5 files, root:70 0440) and .../app (4 files, root:65532 0440) ...
    sudo sh /opt/chat-ledger/make-secrets.sh --tunnel-token
    # paste the tunnel token at the prompt (not shown), Enter. expected: Written: .../app/tunnel_token (root:65532 0440).
+   ```
+   **Check the token's shape** before starting the tunnel (it prints the shape, never the token):
+   ```sh
+   sudo sh -c 't=$(cat /opt/chat-ledger/secrets/app/tunnel_token); case "$t" in eyJ*) s=ok ;; *) s="does NOT start with eyJ" ;; esac; case "$t" in *" "*) s="$s, has a space" ;; esac; echo "start: $s; length: ${#t} bytes"'
+   # expected: start: ok; length: a few hundred bytes
+   ```
+   The token is the long string from the dashboard's install command, starting `eyJ`. The tunnel id (a 36-character UUID) is not the
+   token: pasting it gives `Provided Tunnel token is not valid` in `DC logs tunnel` and a restart loop. `make-secrets.sh` refuses to
+   overwrite a token, so to replace a wrong one, remove it first:
+   ```sh
+   sudo shred -u /opt/chat-ledger/secrets/app/tunnel_token
+   sudo sh /opt/chat-ledger/make-secrets.sh --tunnel-token
+   DC up -d tunnel
    ```
    Keep an encrypted copy of `/opt/chat-ledger/secrets/` offline (password manager). Losing it means re-creating the demo database,
    nothing more (D13).
@@ -144,6 +174,14 @@ Nothing below has been run on the VPS by the author. Each step says what to expe
     ```
     Expected: every `OOMKilled=false restarts=0`. refresh has 256 MiB (raised from 192 after the emulated amd64 seed was killed at
     192); if it, or web at 640 MiB, was killed anyway, paste it back: the limits are the owner's to change.
+    The peak since each container started (cgroup v2 `memory.peak`; the cgroup directory is found by the container id, so the
+    command does not depend on the cgroup driver's layout):
+    ```sh
+    for c in web refresh; do id=$(sudo docker inspect -f '{{.Id}}' chat-ledger-$c-1); f=$(sudo find /sys/fs/cgroup -type d -name "*$id*" | head -n 1); echo "$c peak $(( $(sudo cat "$f/memory.peak") / 1048576 )) MiB"; done
+    ```
+    First deploy, 2026-11-10, after three demo rounds: web 311 MiB (peak 349) of 640, refresh 123 MiB (peak 129) of 256, db 37 of
+    384, tunnel 21 of 96; no OOM kill, no restart. The refresh peak does not yet cover a full retire-and-recreate cycle of the pool
+    (section 8).
 
 ## 4. Measure the hops (D12), then route the hostname
 
@@ -173,7 +211,10 @@ whenever a hops-echo container exists at any other time.
    - The hops are the number of entries to the right of `198.51.100.7`, counted so that the entry `hops` places from the right equals
      `Cf-Connecting-Ip`. For example `198.51.100.7, 203.0.113.20` with `Cf-Connecting-Ip: 203.0.113.20` is 1.
    - The plain request must show exactly `hops` entries.
-   - If an IPv6 client is available, repeat from it.
+   - If an IPv6 client is available, repeat from it. (Still open after the first deploy: no IPv6 client was available. Repeating it
+     means running this whole section again, echo and ten-minute limit included.)
+   - Run the two requests from a machine with unrestricted outbound HTTPS. A workspace whose outbound access is restricted cannot reach
+     the hostname; the first measurement ran from a laptop outside it.
    - If the count is not fixed, the value stays 0 and the owner reports it (a new design decision would read `Cf-Connecting-Ip`).
 5. **Remove the echo, right away**, before anything else:
    ```sh
@@ -184,6 +225,10 @@ whenever a hops-echo container exists at any other time.
 6. **Only now, route the hostname to web.** Set `APP_SECURITY_TRUSTED_PROXY_HOPS=<n>` in `.env`, run `DC up -d web` and wait for
    `(healthy)`; then in the dashboard change the public hostname's service to `http://web:8080`. Paste the two curl outputs into the
    notes, then continue with section 3, step 10.
+
+Measured on 2026-11-10 over IPv4: the forged request showed 2 entries, 1 to the right of `198.51.100.7`, and that last entry equal to
+`Cf-Connecting-Ip`; the plain request showed exactly 1 entry. So `APP_SECURITY_TRUSTED_PROXY_HOPS=1`. The echo was reachable for
+about nine minutes (22:08 to 22:17 Paris time), then removed; `check-host.sh` reported no hops echo container.
 
 ## 5. A new version (D15: 30 to 60 s of downtime, unverified)
 
@@ -240,6 +285,11 @@ Only this project's database is touched; no trigger is changed. Visitors in a wo
 - `sudo sh /opt/chat-ledger/check-host.sh`: log settings, size, containers and memory, no published port, no privileged container, the
   secret files' modes, LLMNR, the metadata rule. Expected: no FAIL.
 - The `Uptime` workflow in GitHub Actions checks `/health` and `/demo` every 30 minutes; a failed run emails the owner.
+- **Memory peaks, after the first full refresh cycle** (a lease ends after 30 minutes and the next refresh pass, every 10 minutes,
+  retires and recreates those workspaces; so about an hour after visitors started claiming): read `memory.peak` for web and refresh
+  (the command in section 3, step 11). A **refresh peak above 220 MiB** is the signal to raise its limit (today 256 MiB, heap 96m):
+  it leaves less than 15 % of headroom. A web peak near 640 MiB means lowering `-Xmx` and Tomcat's threads first (design stop,
+  section 2). The first deploy's peaks (web 349, refresh 129) did not yet include such a cycle.
 
 ## 9. The end of judging
 
