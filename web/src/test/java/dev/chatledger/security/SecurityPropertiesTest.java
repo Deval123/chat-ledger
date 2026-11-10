@@ -31,7 +31,24 @@ class SecurityPropertiesTest {
         assertThatThrownBy(() -> new SecurityProperties.Hashing(1, Duration.ZERO)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new SecurityProperties(new SecurityProperties.Session(ok, ok, ok),
                 new SecurityProperties.Hashing(1, ok), new SecurityProperties.Limits("1/1m", "1/1m", "1/1m", "1/1m", "1/1m", "1/1h", "1/1m", "1/1m"),
-                new SecurityProperties.Size(org.springframework.util.unit.DataSize.ofKilobytes(4), org.springframework.util.unit.DataSize.ofKilobytes(4), org.springframework.util.unit.DataSize.ofKilobytes(4)), Duration.ZERO, 0)).isInstanceOf(IllegalArgumentException.class);
+                new SecurityProperties.Size(org.springframework.util.unit.DataSize.ofKilobytes(4), org.springframework.util.unit.DataSize.ofKilobytes(4), org.springframework.util.unit.DataSize.ofKilobytes(4)), Duration.ZERO, 0, SecurityProperties.Hsts.IF_SECURE)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void hsts_is_if_secure_by_default_always_on_request_and_never_missing() {
+        java.util.function.Function<java.util.Map<String, String>, SecurityProperties> bind = props ->
+                new org.springframework.boot.context.properties.bind.Binder(
+                        new org.springframework.boot.context.properties.source.MapConfigurationPropertySource(props))
+                        .bindOrCreate("app.security", SecurityProperties.class);
+        assertThat(bind.apply(java.util.Map.of()).hsts()).isEqualTo(SecurityProperties.Hsts.IF_SECURE);
+        assertThat(bind.apply(java.util.Map.of("app.security.hsts", "always")).hsts()).isEqualTo(SecurityProperties.Hsts.ALWAYS);
+        assertThatThrownBy(() -> bind.apply(java.util.Map.of("app.security.hsts", "never"))).isInstanceOf(RuntimeException.class);
+        Duration ok = Duration.ofMinutes(1);
+        assertThatThrownBy(() -> new SecurityProperties(new SecurityProperties.Session(ok, ok, ok),
+                new SecurityProperties.Hashing(1, ok), new SecurityProperties.Limits("1/1m", "1/1m", "1/1m", "1/1m", "1/1m", "1/1h", "1/1m", "1/1m"),
+                new SecurityProperties.Size(org.springframework.util.unit.DataSize.ofKilobytes(4), org.springframework.util.unit.DataSize.ofKilobytes(4),
+                        org.springframework.util.unit.DataSize.ofKilobytes(4)), ok, 0, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("app.security.hsts");
     }
 
     @Test

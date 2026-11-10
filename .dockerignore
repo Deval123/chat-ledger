@@ -1,0 +1,22 @@
+# Only what the build stage copies is needed; everything else stays out of the build context (task 13).
+*
+!pom.xml
+!ledger-core/pom.xml
+!ledger-core/src/**
+!extraction/pom.xml
+!extraction/src/**
+!ingestion/pom.xml
+!ingestion/src/**
+!matching/pom.xml
+!matching/src/**
+!suspicion/pom.xml
+!suspicion/src/**
+!demo/pom.xml
+!demo/src/**
+!web/pom.xml
+!web/src/**
+!web/third-party/**
+**/.env*
+**/*.pem
+**/id_*
+**/target

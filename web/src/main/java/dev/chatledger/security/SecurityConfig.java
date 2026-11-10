@@ -160,7 +160,13 @@ public class SecurityConfig {
                 .permissionsPolicyHeader(permissions -> permissions.policy(PERMISSIONS_POLICY))
                 // Sent only on HTTPS requests; behind a TLS-terminating proxy it stays off until deployment
                 // names the proxy (task 13). No preload: it is hard to undo.
-                .httpStrictTransportSecurity(hsts -> hsts.includeSubDomains(true).maxAgeInSeconds(31_536_000).preload(false)))
+                .httpStrictTransportSecurity(hsts -> {
+                    hsts.includeSubDomains(true).maxAgeInSeconds(31_536_000).preload(false);
+                    if (properties.hsts() == SecurityProperties.Hsts.ALWAYS) {
+                        // Task 13, D10: behind the tunnel the application sees HTTP; the browser sees HTTPS at the edge.
+                        hsts.requestMatcher(org.springframework.security.web.util.matcher.AnyRequestMatcher.INSTANCE);
+                    }
+                }))
             .authorizeHttpRequests(authorize -> {
                 authorize.requestMatchers("/health", "/actuator/health", "/login", "/error", "/").permitAll();
                 // The stylesheet and the htmx script: the same for everyone, no tenant data. Nothing else lives under /assets.

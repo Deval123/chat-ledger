@@ -44,7 +44,7 @@ class InitScriptIT {
     @Container
     @SuppressWarnings("resource")
     static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:16.4-alpine")
+            new PostgreSQLContainer<>(LedgerDatabase.image())
                     .withDatabaseName("chatledger_init")
                     .withUsername("tc_superuser")
                     .withPassword(UUID.randomUUID().toString())

@@ -65,6 +65,6 @@ class ClientAddressTest {
         var size = org.springframework.util.unit.DataSize.ofKilobytes(4);
         return new SecurityProperties(new SecurityProperties.Session(ok, ok, ok), new SecurityProperties.Hashing(1, ok),
                 new SecurityProperties.Limits("1/1m", "1/1m", "1/1m", "1/1m", "1/1m", "1/1h", "1/1m", "1/1m"),
-                new SecurityProperties.Size(size, size, size), ok, hops);
+                new SecurityProperties.Size(size, size, size), ok, hops, SecurityProperties.Hsts.IF_SECURE);
     }
 }

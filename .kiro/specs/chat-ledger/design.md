@@ -780,11 +780,38 @@ The decisions D1 to D25 are in `task-9-design-stop.md` (approved; D3 and D4 chan
 - Integration tests on PostgreSQL for tenant isolation and immutability.
 - One end-to-end test per demo scenario.
 
-## Deployment
+## Deployment (task 13)
 
-Docker image, PostgreSQL, health endpoint, migrations with Flyway. Target a free
-container host and confirm its limits (memory, sleep behavior) before the final week.
-The demo credentials go in the Devpost testing field.
+The decisions D1 to D19 are in `task-13-design-stop.md` (approved with three changes, its section 9). The host is the owner's VPS
+(Debian 12, 2 vCPU, 3.7 GiB), shared with another project; the public name is `ledger.nkap.dev` behind chat-ledger's own Cloudflare
+tunnel. The operator's steps are in `deploy/RUNBOOK.md`. What was built:
+
+- **One image** (`Dockerfile`): built by Maven on `maven:3.9-eclipse-temurin-21`, run on `gcr.io/distroless/java21-debian12:nonroot`,
+  both by digest. No shell; uid 65532; the jar root-owned and read-only. Three commands from it: the web process, `demo-refresh`, and
+  `db-migrate` (Flyway alone, no Spring). `health-probe` is the container health check (one loopback request, no shell needed).
+- **CI in three jobs**: `image-build` builds an archive, checks it (`deploy/check-image.sh`) and runs the whole stack from nothing on it
+  with the smoke script (`deploy/test-stack.sh`); `image-scan` scans that archive with Trivy, without any write permission;
+  `image-push` (main only, `packages: write`) loads the same archive, checks its id, and pushes it by commit; it runs only GitHub's
+  artifact action and the Docker CLI. Every action is pinned by a full commit SHA. The VPS pulls by digest, anonymously (a public
+  package).
+- **The stack** (`deploy/compose.yaml`, project `chat-ledger`): `db` (PostgreSQL 16.15 as uid 70, no published port), `migrate`
+  (one-shot, the only holder of the schema owner's login), `web` (prod profile, Flyway off, 640 MiB), `refresh` (the demo pool loop),
+  `tunnel` (cloudflared, token from a file). Three networks of its own: `internal` and `edge` have no route out; only the tunnel is on
+  `egress`. Every container: read-only root, no capabilities, `no-new-privileges`, pids and memory limits without swap, rotated logs.
+  `ComposeFileTest` refuses any change to that.
+- **Secrets as files** (`deploy/make-secrets.sh`): under `/opt/chat-ledger/secrets/`, root-owned, 0440 to the group of the one uid that
+  reads each; the commands read `NAME_FILE` (`SecretFiles`), the role script reads `NAME_FILE`, the web process reads
+  `/run/secrets/` through Spring's configtree. No secret in an environment variable, the compose file, the image or `docker inspect`.
+- **The prod profile**: HSTS on every response (`app.security.hsts=always`, refused under dev), relative redirects, no forwarded-header
+  rewriting (only `ClientAddress` reads `X-Forwarded-For`, at `app.security.trusted-proxy-hops`, 0 until measured through the tunnel),
+  the actuator on 127.0.0.1:8081, sized pools. `StartupGuards` refuses prod with dev, with Flyway on, or with forwarded headers.
+- **PostgreSQL logs** no statement text, no bound value and no failing row (`log_error_verbosity=terse`, `log_min_error_statement=panic`,
+  the parameter lengths at 0).
+- **Operations**: smoke script from outside (`deploy/smoke.sh`), read-only host check (`deploy/check-host.sh`), hops measurement with a
+  throwaway echo (`deploy/hops-echo.yaml`), deploy, rollback by digest, the reset at 2.4 GB, the end of judging and what never to run
+  on the shared host. Uptime: a scheduled GitHub Actions check with no permission.
+
+### Trade-offs and weakened defenses (task 13): register items 130 to 150, below.
 
 ## Risks
 
@@ -908,3 +935,24 @@ The demo credentials go in the Devpost testing field.
 | 127 | **The browser walk and the fixture run outside CI** | They need Chrome and a running server | `DemoBrowserFixtureIT` is skipped without `-Dbrowser.demo=true`; the walk's checks are listed in the notes |
 | 128 | **Size on a free tier is estimated, not measured** | The host is chosen in task 13 | Measured on the test container (`DemoSizeIT`); the operator watches `pg_database_size` and drops the demo database before 80% of the tier |
 | 129 | **Four redundant guards were deleted**, each a mutant no test could kill: the Java check that a leased workspace is a demo one (`demo_claim` reads only `kind = 'DEMO'`, and a `demo_tenant` row can name no other kind); `disabled_at` in `demo_claim` (a READY workspace is never disabled: retire disables and retires in one transaction, and the state never goes back); the `enabled` field of `DemoProperties` (the switch is read where it acts); `tenant_kind` in the forward-only trigger (its CHECK keeps it DEMO) | A guard no test can tell apart from its absence is noise that looks like a defense | Each named here; every remaining guard is killed by a test |
+| 130 | **The VPS's kernel and Docker daemon are shared with another project** | The owner's one server | Non-root containers, no capabilities, `no-new-privileges`, read-only roots, distroless (no shell), no socket, no host network, three networks of its own, web and db with no route out (tested in `ComposeFileTest`, measured in the drill). User namespaces are not on: a daemon-wide change would touch the other project. A container escape on either side still reaches both |
+| 131 | **`sudo docker` on the VPS is root, for both projects** | The owner's machine and choice | Every runbook command names `-f /opt/chat-ledger/compose.yaml`; the "never run" list (prunes, unscoped `down`, daemon restarts) |
+| 132 | **`trusted-proxy-hops` stays 0 until measured through the real tunnel** | Not guessed (D12) | Until it is set, every visitor reaches the application from cloudflared's one address, so the per-address claim limit (5 an hour) applies to everyone together. The runbook measures it before the hostname is announced; the global limit and the pool hold either way |
+| 133 | **The demo database is not backed up** (D13) | A backup would keep free text that retire scrubs; the data is synthetic | The reset rebuilds it in minutes (drilled locally); the secrets are kept offline, encrypted |
+| 134 | **Every deploy has 30 to 60 s of downtime** (D15, unverified on the VPS) and signs visitors out | A second web container does not fit the memory budget | Deploys outside judging hours; rollback by the previous digest; limits are in memory and restart at full value |
+| 135 | **The image is public and unsigned** | An anonymous pull needs no credential on the VPS; a private package's read token reads every package of the account | No secret in the image (`check-image.sh`, `DockerfileTest`); the source is public anyway; pulled by digest, so a moved tag changes nothing. Signing (cosign) named, not done |
+| 136 | **Cloudflare sees all traffic in clear, and cloudflared reaches web over plain HTTP** | TLS ends at Cloudflare's edge (the owner's tunnel choice) | The `edge` network holds only web and the tunnel and has no route out; HSTS and `__Host-` cookies hold at the browser; only synthetic data in this demo |
+| 137 | **The health probe starts a second small JVM in the web container every 60 s** | The image has no shell or `wget` | `-Xmx16m`, C1 only, counted in the 640 MiB limit; one loopback request; it cannot follow a redirect (tested) |
+| 138 | **The memory plan holds against the other project's current use, not its limits; the web JVM's ceilings add up close to its limit** | 3.7 GiB for two projects | Hard limits keep chat-ledger at 1,312 MiB whatever happens inside it. Measured locally (arm64): web 293 MiB under concurrent load, NMT 351 MiB committed; the sum of every reserved ceiling is about 600 of 640 MiB; `ExitOnOutOfMemoryError` and a restart if it is ever reached. Not measured on the VPS |
+| 139 | **CPU limits add up to 2.5 of 2 vCPU** | Caps, not reservations | The busy moments (a JVM start, the first seed: 49 s for 30 workspaces locally at 0.5 CPU) are short and planned outside judging |
+| 140 | **Uptime is checked by a best-effort GitHub schedule** | No third party, no account | `permissions: {}`, no secret, no action; runs may be late and stop after 60 days without activity; the smoke script is the real check after a deploy |
+| 141 | **The Cloudflare features that would break the CSP are zone settings, outside the repository** (D19) | Shared with the other project's hostnames | A Configuration Rule for `ledger.nkap.dev` where the plan allows it, else the owner decides; the smoke script fails on any change to the CSP or on a script outside `/assets/` |
+| 142 | **Three values are on disk twice, and the tunnel token shares the application's group** | A file has one group; PostgreSQL (70) and the application (65532) both need the migrate, application and demo operator passwords; cloudflared runs as 65532 too | Root-only 0700 directories, 0440 files; each container mounts only its own files (`ComposeFileTest` checks every service's secrets); `check-host.sh` checks every owner, group and mode and that no other file is there; shredded at the end of judging |
+| 143 | **The web process reads its secrets through Spring's configtree, which does not check file modes** | `SecretFiles` refuses a world-readable file for the commands; the web process uses Spring's own reader | The files are written 0440 by `make-secrets.sh` (tested as root in `MakeSecretsScriptIT`) and checked on the host by `check-host.sh`; only uid 65532 runs in the container |
+| 144 | **Inside the db container, Unix-socket connections are trusted** (the official image's default), and a bootstrap superuser password exists | The image needs one; the runbook's size and reset commands use the socket | The socket is reachable only by a process inside the db container, which needs root on the host (131). Over TCP every login needs its password (scram); the superuser's is in a file nobody else mounts |
+| 145 | **Third-party code in CI is trusted at its pinned version**: five GitHub actions by SHA, Trivy by image digest, and Trivy's vulnerability database fetched at scan time | No image scan without a scanner; no build without checkout | Each SHA is the owner's release tag (checked with `git ls-remote` and the release API, not reviewed); the checkout and setup-java tags are not on their default branches (unverified provenance beyond the tag); the scanner runs in a job with no write permission and sees only the archive; the push job runs no third-party code |
+| 146 | **The runtime JRE (21.0.10) lags the build JDK (21.0.12)** | Distroless publishes later than Temurin | The Trivy scan fails on any fixable HIGH or CRITICAL finding in the image; the digest is refreshed with each release |
+| 147 | **The metadata address (169.254.169.254) is not blocked by default, and a `DOCKER-USER` rule does not survive a reboot by itself** (D17) | Not assumed; the owner decides any firewall change on the shared host | Only the tunnel has a route out (web, refresh and db cannot reach the address: measured); a fixed egress subnet (`10.213.7.0/28`) so a rule can name it; `check-host.sh` reports whether it is there. Docker refuses to create the subnet if another network already overlaps it |
+| 148 | **The tunnel container has internet egress and a token that can serve the hostname** | It is the way in | Its own token, from a file; metrics on its loopback only; remote diagnostics off; no autoupdate; read-only, no capabilities, 96 MiB; the tunnel is deleted at the end of judging, which revokes the token |
+| 149 | **Stop 2 was verified on my machine, not on the VPS** | I cannot reach the VPS | The stack ran from nothing in Docker-in-Docker (a real Linux file system, so modes and uids were enforced) on arm64, and CI repeats it on an amd64 Linux runner on every push. The VPS steps, the tunnel, the hops, the Cloudflare settings, start times and memory there are unverified until the owner pastes the outputs |
+| 150 | **Two redundant guards were deleted**, each a mutant no test could kill: the `_`-to-`-` replacement in the dev HSTS check (it compares with `always`, which has none), and the parent-directory check in `make-secrets.sh` (`mkdir` refuses the same way, and nothing is written) | A guard no test can tell apart from its absence is noise | Each named here; every remaining guard is killed by a test |

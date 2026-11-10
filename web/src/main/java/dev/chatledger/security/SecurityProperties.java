@@ -40,13 +40,23 @@ public record SecurityProperties(
         @DefaultValue Limits limits,
         @DefaultValue Size size,
         @DefaultValue("60s") Duration userRecheckInterval,
-        @DefaultValue("0") int trustedProxyHops) {
+        @DefaultValue("0") int trustedProxyHops,
+        @DefaultValue("if-secure") Hsts hsts) {
+
+    /**
+     * When {@code Strict-Transport-Security} is written (task 13, D10). {@code IF_SECURE}: on HTTPS requests only (Spring's default).
+     * {@code ALWAYS}: on every response, for a deployment whose TLS ends at a proxy, so the application itself sees plain HTTP.
+     */
+    public enum Hsts { IF_SECURE, ALWAYS }
 
     /** At most two proxies may be trusted to report the client's address (task 9, D23). */
     public static final int MAX_TRUSTED_PROXY_HOPS = 2;
 
     public SecurityProperties {
         requirePositive("app.security.user-recheck-interval", userRecheckInterval);
+        if (hsts == null) {
+            throw new IllegalArgumentException("app.security.hsts must be if-secure or always");
+        }
         if (trustedProxyHops < 0 || trustedProxyHops > MAX_TRUSTED_PROXY_HOPS) {
             throw new IllegalArgumentException("app.security.trusted-proxy-hops must be between 0 and " + MAX_TRUSTED_PROXY_HOPS);
         }

@@ -1,0 +1,26 @@
+name: Uptime
+
+# The public demo, checked from outside every 30 minutes (task 13, D16). No permission, no secret, no action: two curl requests.
+# A failed run emails the owner through GitHub's notification for failed scheduled workflows. Best effort: scheduled runs can be late,
+# and GitHub disables the schedule after 60 days without repository activity. It never claims a demo workspace.
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    name: /health and /demo answer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: /health says UP
+        run: |
+          body="$(curl -sS --max-time 20 --retry 2 --retry-delay 10 --fail https://ledger.nkap.dev/health)"
+          test "$body" = '{"status":"UP"}' || { echo "Unexpected /health body."; exit 1; }
+      - name: /demo answers 200
+        run: |
+          status="$(curl -sS --max-time 20 --retry 2 --retry-delay 10 -o /dev/null -w '%{http_code}' https://ledger.nkap.dev/demo)"
+          test "$status" = 200 || { echo "/demo answered ${status}."; exit 1; }

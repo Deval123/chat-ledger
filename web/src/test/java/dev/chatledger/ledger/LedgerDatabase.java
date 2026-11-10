@@ -3,6 +3,7 @@ package dev.chatledger.ledger;
 import org.flywaydb.core.Flyway;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -92,10 +93,15 @@ public final class LedgerDatabase {
                 .migrate();
     }
 
+    /** {@link PostgresRelease#IMAGE}, the deployment's release (task 13, D9), as Testcontainers takes it. */
+    public static DockerImageName image() {
+        return DockerImageName.parse(PostgresRelease.IMAGE).asCompatibleSubstituteFor("postgres");
+    }
+
     /** A new, unstarted PostgreSQL container with a random superuser password. */
     @SuppressWarnings("resource") // lifetime managed by Testcontainers (Ryuk)
     public static PostgreSQLContainer<?> newContainer() {
-        return new PostgreSQLContainer<>("postgres:16.4-alpine")
+        return new PostgreSQLContainer<>(image())
                 .withDatabaseName("chatledger_ledger")
                 .withUsername("tc_superuser")
                 .withPassword(UUID.randomUUID().toString());

@@ -22,6 +22,16 @@ public class ChatLedgerApplication {
             System.exit(ProvisioningCommand.main(args));
             return;
         }
+        if (args.length > 0 && dev.chatledger.ops.MigrateCommand.NAME.equals(args[0])) {
+            // Task 13: the migrations, as the schema owner, in a process of their own (the web process never holds that login).
+            System.exit(dev.chatledger.ops.MigrateCommand.main(args));
+            return;
+        }
+        if (args.length > 0 && dev.chatledger.ops.HealthProbe.NAME.equals(args[0])) {
+            // Task 13: the container health check (the image has no shell).
+            System.exit(dev.chatledger.ops.HealthProbe.main(args));
+            return;
+        }
         if (args.length > 0 && args[0].startsWith("demo-")) {
             // The demo operator's commands (task 9): no web server, the demo operator login and the application login only.
             System.exit(dev.chatledger.demo.ops.DemoCommand.main(args));

@@ -44,7 +44,7 @@ class FlywayStartupIT {
 
     @SuppressWarnings("resource") // lifetime managed by the JVM / Ryuk
     private static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:16.4-alpine")
+            new PostgreSQLContainer<>(dev.chatledger.ledger.LedgerDatabase.image())
                     .withDatabaseName("chatledger_startup")
                     .withUsername("tc_superuser")
                     .withPassword(UUID.randomUUID().toString());

@@ -1572,3 +1572,189 @@ Nothing survives. I did not set any mutant aside as equivalent.
 - PostgreSQL 16.4 only.
 - The npm packages of the browser tool are still not in the CI vulnerability scan. No Maven dependency was added (the `demo` module uses jqwik at the pinned version).
 - Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.
+
+## Task 13 - deployment (stop 2)
+
+The owner approved D1 to D19 of `.kiro/specs/chat-ledger/task-13-design-stop.md` with three changes: the image pipeline in three jobs with
+every third-party action pinned by SHA, a runbook step to make the GHCR package public, and the tunnel token from a file if the pinned
+cloudflared can read one (it can). Work stays on `task-13-deploy`; nothing was committed by me. The host is the owner's VPS, shared with
+another project; I cannot reach it, so every step there is the owner's and **unverified** until its output is pasted back.
+
+### What was built
+- **The image** (`Dockerfile`, `.dockerignore`): Maven build stage, distroless `java21-debian12:nonroot` runtime, both by digest; uid
+  65532; the jar root-owned 0444; no shell; an allowlist build context. 261 MB for amd64 (166 MB base, 69 MB jar).
+- **Three commands before Spring**: `db-migrate` (Flyway only, the schema owner's login, refuses options, placeholders, a non-PostgreSQL
+  URL and the application's login; a failure names its class only), `health-probe` (one loopback request; no redirect followed),
+  and the existing `demo-*`.
+- **Secrets as files**: `SecretFiles` for the commands (`NAME_FILE`; refuses both set, a non-regular file, a world-readable or
+  -writable file, over 4 KiB, empty, more than one line); `file_env` in the role script (the same refusals); configtree for the web
+  process; `deploy/make-secrets.sh` writes them (root, 0700 directories, 0440 files to the reader's group, never overwrites, never
+  prints, the token one line of token characters).
+- **The prod profile**: Flyway off, `app.security.hsts=always` (a new bounded setting, refused under dev), relative redirects, no
+  forwarded-header rewriting, actuator on 127.0.0.1:8081, sized pools. `StartupGuards` refuses prod with dev, with Flyway on, or with
+  forwarded headers.
+- **The stack** (`deploy/compose.yaml`): db, migrate, web, refresh, tunnel; three networks of its own; every container hardened and
+  bounded; no published port. Companions: `compose.test.yaml` (CI and local only: swaps the image), `hops-echo.yaml`, `env.example`.
+- **Scripts**: `smoke.sh` (25 checks from outside), `check-host.sh` (read-only, on the VPS), `check-image.sh` (CI), `test-stack.sh`
+  (the drill from nothing, CI and local).
+- **CI**: every action pinned by SHA with its release in a comment; `persist-credentials: false`; `image-build` (build, check, drill,
+  archive), `image-scan` (Trivy by digest on the archive, no write permission), `image-push` (main only, the same archive by id,
+  `--password-stdin`, by commit, digest in the job summary; GitHub's artifact action and the Docker CLI only). `uptime.yml`:
+  `permissions: {}`, two curl requests every 30 minutes.
+- **D9**: every test and the local dev compose now run PostgreSQL 16.15 by the deployment's digest (`PostgresRelease`).
+- **Docs**: `deploy/RUNBOOK.md` (host preparation, Cloudflare, first deploy, the public package, the hops, update, rollback, reset,
+  checks, end of judging, never run); design.md "Deployment (task 13)" and register items 130 to 150; README demo URL and warm-up note.
+
+### The owner's three changes, as built
+- **Three jobs.** As above. How the pins were checked is in the design stop, section 9: each SHA is what the action's own repository's
+  tag resolves to (`git ls-remote ... refs/tags/<tag>^{}`), and the release of that tag exists, not a draft or pre-release. Not
+  verified: the code behind them (no review), and branch evidence for the checkout and setup-java tags (their tags are not on the
+  default branch). `WorkflowFileTest` refuses an unpinned `uses:` or one without its release comment.
+- **Public package.** RUNBOOK step 3.5, with the check: `docker logout ghcr.io`, then an anonymous pull of the digest from the VPS.
+- **Token from a file.** cloudflared 2026.10.7 has `--token-file`. Tested with a read-only root, no capabilities and a made-up token:
+  the file is read ("Provided Tunnel token is not valid"), and a missing file is reported. A real connection is unverified.
+
+### Defects found while building
+- `COPY --chmod=0444` also gave the created `/app` directory 0444, so the jar could not be opened ("Unable to access jarfile"). The
+  mode is set in the build stage now; `check-image.sh` checks both.
+- The Dockerfile's `dependency:go-offline || true` hid any resolution failure. It passes without the mask; the mask is gone.
+- Tomcat turned redirects into absolute `http://` links behind the tunnel (`server.tomcat.use-relative-redirects=true`; found earlier
+  in stop 2 by `ProdProfileIT`).
+- **The drill caught a real deploy defect**: with the role script's directory at 0750, PostgreSQL (uid 70) could not list it, so no
+  role was created and the database never became healthy. It is 0755 (no secret in it), in the drill, the runbook and the layout table.
+- A non-executable initdb script is sourced into the image's entrypoint, where its `file_env` would replace the entrypoint's own. It is
+  installed executable.
+- The role script joined a multi-line password file into one value (`tr -d '\n'`). It refuses anything but one line now.
+- `make-secrets.sh --tunnel-token` kept the first line of piped input and dropped the rest. It refuses more than one line now.
+- `SourceRulesTest` caught `ComposeFileTest` reaching the test-database helper for the image name (it would have needed Docker in the
+  unit phase). The name lives in `PostgresRelease`, a plain constant.
+- `check-image.sh` checked only the health probe's exit code; an image without the command dispatch also exits 1 (Spring fails without
+  a database). It checks the probe's exact output and `db-migrate`'s usage now; proved on a mutated image.
+- My own mistakes in the scripts: the smoke script expected `/login` after sign-out (the demo deployment sends visitors to `/demo`);
+  `check-host.sh` printed the firewall struct and had a route check that matched the egress bridge itself (removed);
+  `test-stack.sh` counted exposed ports as published.
+
+### What each check refuses
+| Check | Refuses |
+|---|---|
+| `SecretFiles` (commands) | both `NAME` and `NAME_FILE`; a missing, non-regular (FIFO, directory) file; world-readable or -writable; over 4096 bytes; empty; more than one line; CR |
+| `file_env` (role script) | both set; an unreadable file; empty; more than one line; CR |
+| `db-migrate` | any option; a missing or blank value; a placeholder; a non-PostgreSQL URL; `MIGRATE_USER` equal to `DB_USER`; prints a failure's class only |
+| `health-probe` | anything but a 200 whose body says UP; a redirect; a port outside 1..65535; extra arguments |
+| `StartupGuards` | prod with dev; Flyway on (or unset) under prod; forwarded headers other than none under prod; `hsts=always` under dev |
+| `make-secrets.sh` | not root; a relative or extra path; an existing directory; a token before the values, empty, over 4096, with other characters, more than one line, or when one exists; a failure leaves nothing behind |
+| `ComposeFileTest` | a service not hardened or unbounded; swap; a published port, privilege, host namespace, device, socket, bind outside the project; another network or a shared name; a route out for anything but the tunnel; an unpinned image or a tag; a secret in `environment` or a wrong-uid secret file; `DEMO_DB_*`, `MIGRATE_*` or a dev profile on web; `JAVA_TOOL_OPTIONS`; a memory plan over 1,312 MiB; a missing log setting; the token on the command line or metrics on every address; a weakened echo or test override |
+| `WorkflowFileTest` | an action not pinned by SHA or without its release; packages permission outside the push job; any write permission elsewhere; a push job that runs another image, action or downloader, or pushes off main, by tag, or without the id check; a scanner not pinned or not failing; a checkout that keeps its token; a secret beyond the two |
+| `DockerfileTest` | an unpinned base; a secret-like ARG or ENV, a secret or ssh mount, ADD; a runtime stage with RUN or another user; a writable jar; a build context that is not an allowlist or that admits an environment file, a key or `.git` |
+| `check-image.sh` | root or another uid; another entrypoint; no revision; a password, secret or token in the history; a working shell; a jar or `/app` not root's; a probe or `db-migrate` not dispatched before Spring |
+| `smoke.sh` | the entry, the CSP by one byte, HSTS, a Server header from the origin, X-Powered-By, cached pages, a script outside `/assets/`, the actuator on the public port, `/health` saying more than UP, the cookie's flags, the board, a scenario, the books, sign-out, any absolute redirect |
+| `check-host.sh` | the six log settings; size at or over 2.4 GB; a published port; a privileged or writable-root container; a socket mount; LLMNR listening; any secret file's owner, group or mode; any extra file under `secrets/` |
+
+### Run locally, and only on the VPS
+**Locally** (my machine, Apple silicon; the faithful runs inside a Docker-in-Docker host, a real Linux file system, so modes and uids
+were enforced; Docker Desktop's own bind mounts show every file as root's and readable by all, so they prove nothing about modes):
+- the image built for amd64 and arm64; `check-image.sh` on it and on eight broken images (all refused);
+- `make-secrets.sh` and every refusal; the secret files read as uid 70 and 65532 under 0440 (a configtree file with a trailing newline
+  accepted; a wrong password refused);
+- PostgreSQL as uid 70 with a read-only root and no capabilities (no fallback needed); the six log settings;
+- migrate (20 migrations), `demo-init`, a 30-workspace seed in 49 s at 0.5 CPU;
+- web healthy 9 to 13 s after `up` (5.6 s JVM start at 1 CPU, native arm64; the VPS's amd64 time is unverified);
+- the smoke script from the edge network: all 25 checks; and 4 defects (HSTS, absolute redirects, a Server header, the demo off) each
+  refused by it;
+- web, refresh and db have no route out and cannot reach 169.254.169.254; the edge network cannot reach db or port 8081; the egress
+  network reaches out; the tunnel reads its token file and is refused by Cloudflare's parser;
+- no secret value in `docker inspect`, the logs or the image history;
+- memory: web 276 to 293 MiB of 640 under eight concurrent request loops and three smoke runs (NMT: 351 MiB committed; heap 192,
+  metaspace 68, symbols 27, code 26), refresh 86 of 192, db 31 to 49 of 384;
+- the reset at 2.4 GB, word for word; `check-host.sh` (with a DROP rule present and absent, and a loosened mode);
+- `test-stack.sh` from nothing, end to end, on the final image.
+
+**Only on the VPS** (unverified until pasted back): host preparation (LLMNR, the metadata rule and firewall backend, no collision,
+room), the Cloudflare tunnel, ingress and zone settings, the public package and the anonymous pull, the first deploy, the hops
+measurement, the smoke script through `https://ledger.nkap.dev`, `check-host.sh`, `docker stats` there, start times at 1 CPU on amd64,
+one rollback rehearsal. CI's three image jobs have not run either: they run on the next push.
+
+### Mutation checks
+Three workers, each on its own copy of the repository; a kill counts only when the build reports a failing test.
+
+- **Before the run**, reading the guards showed gaps, now closed: a FIFO secret (the regular-file check is what stops a reader from
+  blocking forever; the first version of that test hung a worker, so the test attaches a writer), `DB_PASSWORD_FILE` in `DemoCommand`,
+  the management address that `ProdProfileIT` set itself, the token-before-values message, cleanup after a failure half-way, and the
+  role script joining lines (a code change). Two guards were deleted as redundant (register item 150).
+- **First pass**: 117 mutants, 110 killed, 7 survived. Each exposed a missing or weak test: a blank migrate value; a redirect to an UP
+  page; the probe's exit code; a null HSTS setting; the scanner pinned in only one of two steps; Flyway and the management port in the
+  prod file, which `ProdProfileIT`'s own test properties mask (`ProdPropertiesTest` now reads the shipped files alone and runs the real
+  guards on them).
+- **Second pass**, on fresh copies: the five fixable survivors, the FIFO mutant and four new prod-file mutants. 10 of 10 killed. The two
+  masked IT mutants are the same edits as two of these and are counted once.
+
+| Group | Mutants | Killed |
+|---|---|---|
+| `SecretFiles` | 10 | 10 |
+| `db-migrate` | 7 | 7 |
+| `health-probe` | 6 | 6 |
+| HSTS setting, `StartupGuards`, prod profile | 16 | 16 |
+| `DemoCommand` secrets from files | 2 | 2 |
+| `compose.yaml` and its companions | 29 | 29 |
+| Workflows | 18 | 18 |
+| `Dockerfile` and `.dockerignore` | 11 | 11 |
+| `make-secrets.sh` | 16 | 16 |
+| Role script `file_env` | 5 | 5 |
+| **Total** | **120** | **120** |
+
+Detector runs (scripts that check something outside the build): `check-image.sh` refused 8 of 8 broken images; `smoke.sh` refused 4 of
+4 defects and passed the good build; `check-host.sh` refused a loosened mode and found a DROP rule when present. Nothing survives; no
+mutant was set aside as equivalent.
+
+### Tests
+- **Unit phase with Docker stopped** (`docker desktop stop`, `mvn -o clean test`): **607** tests, all green (31 + 156 + 31 + 67 + 23
+  + 10 + 289; was 565). The first run failed one: `SourceRulesTest` caught the unit test that reached the test-database helper (above).
+- **Full build with Docker** (`docker desktop start`, `mvn -o clean verify`): the same unit tests and **653** integration tests, all
+  green, 2 skipped (the two browser fixtures; was 643). The intermittent `MatchingBooksPropertyIT` failure of task 9 did not recur in
+  this run; I did not look for its cause in this task.
+- **New**:
+  - unit: `ComposeFileTest`, `WorkflowFileTest`, `DockerfileTest`, `ProdPropertiesTest`, `SecretFilesTest`, `MigrateCommandTest`,
+    `HealthProbeTest`; additions to `StartupGuardsTest`, `SecurityPropertiesTest`, `DemoCommandTest`;
+  - integration: `ProdProfileIT`, `MakeSecretsScriptIT`, `InitScriptFilesIT`; five ITs moved to PostgreSQL 16.15.
+
+### Deviations from the design stop
+- Non-secret settings in the compose project's `.env`, not `config.env`: Compose reads it by itself, so no command can forget an
+  `--env-file`. The rollback copy is `.env.<date>`.
+- `secrets/` is 0700, not 0710: bind sources are resolved by the Docker daemon as root, so no container needs to enter it.
+- The image is built, checked, drilled and scanned on every push and pull request, not only on `main`; only the push is main-only.
+- Trivy is pinned by image digest (it runs from its own image, per the owner's change), not by an action SHA.
+- Additions: the tunnel's metrics on its loopback and its remote diagnostics off; a fixed egress subnet for D17; `check-host.sh` checks
+  the secret files; `start_interval` on the web health check; the role script directory 0755 and the script executable.
+- The CI drill seeds 10 workspaces (speed); the VPS seeds 30.
+
+### Defenses weakened or traded off (design register items 130 to 150)
+- A shared kernel and Docker daemon.
+- `sudo docker` is root.
+- Hops at 0 until measured.
+- No backup.
+- Deploy downtime.
+- A public, unsigned image.
+- Cloudflare sees clear text; plain HTTP on the edge network.
+- A second JVM for the health probe.
+- Memory safe against current use, not limits; JVM ceilings near the limit.
+- CPU overcommit.
+- Best-effort uptime checks.
+- Zone settings outside the repository.
+- Three values on disk twice; the token shares the application's group.
+- configtree checks no modes.
+- Trusted Unix socket in the db container.
+- Third-party code in CI trusted at its pin.
+- The runtime JRE lags the JDK.
+- The metadata address not blocked by default.
+- The tunnel's egress and token.
+- Verified on my machine, not the VPS.
+- Two redundant guards deleted.
+
+### Not verified
+- Everything on the VPS and in the Cloudflare dashboard (listed above), and CI's three new jobs (they run on the next push).
+- The action SHAs' code (not reviewed) and branch evidence for checkout and setup-java.
+- That the image digests are the publishers' signed builds.
+- The memory and start times on the VPS's amd64 CPU (measured on arm64 only).
+- What Cloudflare and cloudflared write to `X-Forwarded-For` (the hops), and Cloudflare's free-plan limits for this account.
+- That a `DOCKER-USER` rule persists across a reboot on this host.
+- Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.

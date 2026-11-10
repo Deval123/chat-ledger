@@ -1,0 +1,335 @@
+# deploy/compose.yaml: the public demo on the shared VPS (task 13, design stop sections 2 to 5).
+#
+# Lives at /opt/chat-ledger/compose.yaml. Always run with the file named, never from another directory:
+#   sudo docker compose -f /opt/chat-ledger/compose.yaml <command>
+# The project name is fixed below, so every container, network and volume is prefixed chat-ledger_ and nothing of the other project
+# on this host can be addressed by a command run with this file.
+#
+# Non-secret settings come from /opt/chat-ledger/.env (deploy/env.example). Secrets are files under /opt/chat-ledger/secrets/
+# (deploy/make-secrets.sh), mounted with `secrets:` under /run/secrets/; no secret is in this file, in .env, in an image or in an
+# environment variable, so `docker inspect` shows none.
+#
+# Every service: read-only root, no capabilities, no-new-privileges, a pids limit, a memory limit equal to its memory+swap limit (no swap),
+# bounded json-file logs. No service publishes a port, runs privileged, uses the host network or mounts the Docker socket.
+# deploy/ComposeFileTest (web module) fails the build if any of this changes.
+name: chat-ledger
+
+services:
+
+  db:
+    image: postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    # The image's own postgres user. Started as it directly: with no capabilities the entrypoint could not switch users anyway.
+    user: "70:70"
+    # Logging (section 4): no statement text, no bound values, no row contents, no connection lines. Memory (D7): 384 MiB in total.
+    command:
+      - postgres
+      - -c
+      - log_error_verbosity=terse
+      - -c
+      - log_statement=none
+      - -c
+      - log_min_duration_statement=-1
+      - -c
+      - log_min_error_statement=panic
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - log_connections=off
+      - -c
+      - log_disconnections=off
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - effective_cache_size=192MB
+      - -c
+      - max_connections=30
+      - -c
+      - max_wal_size=256MB
+    environment:
+      POSTGRES_DB: chatledger
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_superuser_password
+      MIGRATE_USER: chatledger_migrate
+      MIGRATE_PASSWORD_FILE: /run/secrets/migrate_password
+      APP_LOGIN_USER: chatledger_app_login
+      APP_LOGIN_PASSWORD_FILE: /run/secrets/app_password
+      PROVISION_DB_USER: chatledger_provisioner_login
+      PROVISION_DB_PASSWORD_FILE: /run/secrets/provisioner_password
+      DEMO_DB_USER: chatledger_demo_login
+      DEMO_DB_PASSWORD_FILE: /run/secrets/demo_operator_password
+    secrets:
+      - source: db_pg_superuser_password
+        target: pg_superuser_password
+      - source: db_migrate_password
+        target: migrate_password
+      - source: db_app_password
+        target: app_password
+      - source: db_provisioner_password
+        target: provisioner_password
+      - source: db_demo_operator_password
+        target: demo_operator_password
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # The role script (docker/initdb/01_create_roles.sh), run once when the volume is new. No secret in it.
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    tmpfs:
+      - /var/run/postgresql:size=1m
+      - /tmp:size=16m
+    shm_size: 64m
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "chatledger"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 100
+    mem_limit: 384m
+    memswap_limit: 384m
+    cpus: 0.75
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # One-shot (D4): `sudo docker compose -f /opt/chat-ledger/compose.yaml run --rm migrate`. The only holder of the schema owner's login.
+  migrate:
+    profiles: [ops]
+    image: ghcr.io/deval123/chat-ledger@${CHAT_LEDGER_DIGEST:?set CHAT_LEDGER_DIGEST in .env to the sha256 digest of the release}
+    entrypoint: ["java", "-Xmx128m", "-XX:+UseSerialGC", "-XX:TieredStopAtLevel=1", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar"]
+    command: ["db-migrate"]
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/chatledger
+      # Given only so db-migrate can refuse the application's login used as the owner.
+      DB_USER: chatledger_app_login
+      MIGRATE_USER: chatledger_migrate
+      MIGRATE_PASSWORD_FILE: /run/secrets/migrate_password
+    secrets:
+      - source: app_migrate_password
+        target: migrate_password
+    tmpfs:
+      - /tmp:size=16m
+    networks:
+      - internal
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 100
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  web:
+    image: ghcr.io/deval123/chat-ledger@${CHAT_LEDGER_DIGEST:?set CHAT_LEDGER_DIGEST in .env to the sha256 digest of the release}
+    # JVM sizing (D7) for a 640 MiB limit. Set here, not in JAVA_TOOL_OPTIONS, which would also reach the health probe's JVM.
+    entrypoint:
+      - java
+      - -Xms192m
+      - -Xmx288m
+      - -XX:MaxMetaspaceSize=160m
+      - -XX:ReservedCodeCacheSize=48m
+      - -XX:MaxDirectMemorySize=32m
+      - -Xss512k
+      - -XX:+UseSerialGC
+      - -XX:+ExitOnOutOfMemoryError
+      - -jar
+      - /app/app.jar
+    command: ["--app.demo.enabled=true"]
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://db:5432/chatledger
+      DB_USER: chatledger_app_login
+      # 0 until measured through the real tunnel (D12, RUNBOOK "Measure the hops"): 0 ignores X-Forwarded-For.
+      APP_SECURITY_TRUSTED_PROXY_HOPS: ${APP_SECURITY_TRUSTED_PROXY_HOPS:-0}
+    # Read by Spring's configtree (application-prod.properties): one file per property. Never the migrate or demo operator login.
+    secrets:
+      - source: app_app_password
+        target: spring.datasource.password
+      - source: app_app_secret
+        target: app.secret
+    tmpfs:
+      - /tmp:size=64m
+    networks:
+      - internal
+      - edge
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "java", "-Xmx16m", "-XX:TieredStopAtLevel=1", "-XX:+UseSerialGC", "-XX:-UsePerfData", "-jar", "/app/app.jar", "health-probe"]
+      interval: 60s
+      # Docker 25+: checks every 5 s until the first success, so a start is seen without waiting a full interval.
+      start_interval: 5s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 200
+    mem_limit: 640m
+    memswap_limit: 640m
+    cpus: 1.0
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # The demo pool's refresh loop (task 9, D24). One-off commands use it too:
+  #   run --rm refresh demo-init      run --rm refresh demo-refresh --pool 30
+  refresh:
+    image: ghcr.io/deval123/chat-ledger@${CHAT_LEDGER_DIGEST:?set CHAT_LEDGER_DIGEST in .env to the sha256 digest of the release}
+    entrypoint:
+      - java
+      - -Xmx96m
+      - -XX:MaxMetaspaceSize=64m
+      - -XX:ReservedCodeCacheSize=24m
+      - -Xss512k
+      - -XX:+UseSerialGC
+      - -XX:TieredStopAtLevel=1
+      - -XX:+ExitOnOutOfMemoryError
+      - -jar
+      - /app/app.jar
+    command: ["demo-refresh", "--pool", "${DEMO_POOL:-30}", "--every", "600s"]
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/chatledger
+      DB_USER: chatledger_app_login
+      DB_PASSWORD_FILE: /run/secrets/app_password
+      DEMO_DB_USER: chatledger_demo_login
+      DEMO_DB_PASSWORD_FILE: /run/secrets/demo_operator_password
+      # The web process's own secret, so the phone hashes of seeded workspaces agree with what the web process computes.
+      APP_SECRET_FILE: /run/secrets/app_secret
+    secrets:
+      - source: app_app_password
+        target: app_password
+      - source: app_demo_operator_password
+        target: demo_operator_password
+      - source: app_app_secret
+        target: app_secret
+    tmpfs:
+      - /tmp:size=16m
+    networks:
+      - internal
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 100
+    mem_limit: 192m
+    memswap_limit: 192m
+    cpus: 0.5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # chat-ledger's own tunnel (D5), with its own token. Its ingress, set in the Cloudflare dashboard for this tunnel only:
+  #   ledger.nkap.dev -> http://web:8080, then a catch-all http_status:404.
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.7@sha256:4955524aeaa379e154023d5a027c250f7b35041a2e7e950cf13f144bc9b9c5ba
+    user: "65532:65532"
+    # Metrics on the loopback only (the default listens on every address, so web could read them); no remote diagnostics routes.
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --metrics
+      - 127.0.0.1:20241
+      - --management-diagnostics=false
+      - run
+      - --token-file
+      - /run/secrets/tunnel_token
+    secrets:
+      - source: app_tunnel_token
+        target: tunnel_token
+    networks:
+      - edge
+      - egress
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:20241", "ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 50
+    mem_limit: 96m
+    memswap_limit: 96m
+    cpus: 0.25
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  # db, migrate, web, refresh. No route out.
+  internal:
+    internal: true
+  # web and tunnel only: cloudflared reaches http://web:8080 here. No route out.
+  edge:
+    internal: true
+  # tunnel only, so it can reach Cloudflare. A fixed subnet, so the metadata-address rule (D17) can name it.
+  egress:
+    ipam:
+      config:
+        - subnet: 10.213.7.0/28
+
+volumes:
+  db-data:
+
+# Each file is root-owned, mode 0440, group of the one uid that reads it: secrets/db/* gid 70 (PostgreSQL), secrets/app/* gid 65532
+# (the chat-ledger image and cloudflared). A value read by both uids is written twice. deploy/make-secrets.sh writes them.
+secrets:
+  db_pg_superuser_password:
+    file: ./secrets/db/pg_superuser_password
+  db_migrate_password:
+    file: ./secrets/db/migrate_password
+  db_app_password:
+    file: ./secrets/db/app_password
+  db_provisioner_password:
+    file: ./secrets/db/provisioner_password
+  db_demo_operator_password:
+    file: ./secrets/db/demo_operator_password
+  app_migrate_password:
+    file: ./secrets/app/migrate_password
+  app_app_password:
+    file: ./secrets/app/app_password
+  app_demo_operator_password:
+    file: ./secrets/app/demo_operator_password
+  app_app_secret:
+    file: ./secrets/app/app_secret
+  app_tunnel_token:
+    file: ./secrets/app/tunnel_token
