@@ -1927,3 +1927,67 @@ unique index, which was already the guard.
 
 **Observed, not changed:** the `OVERPAYMENT` flag of step 4 stays open after step 5 although the payment no longer overpays, so the
 pair stays a suggestion until the seller looks at it. That is D3 as designed (the seller has the last word on a flagged pair).
+
+## Task 13 - first production deployment (2026-11-10)
+
+The release `ghcr.io/deval123/chat-ledger@sha256:116d11ebe436f62dc1395c53cb05f0aecf5a1d5dbb9f39f17b0fc32d6567dbe2` (CI run #55, commit
+`ad490cd`) runs on the VPS behind its own tunnel at `https://ledger.nkap.dev`. These are the outputs recorded during the deploy; what
+they changed in the procedure is in `deploy/RUNBOOK.md` ("Deployed state", sections 2, 3, 4 and 8).
+
+### First deploy
+- The anonymous pull of the public GHCR package worked (RUNBOOK step 3.5).
+- `migrate` applied 20 migrations, schema version 020; `demo-init` reported mode DEMO; `demo-refresh --pool 30` created 30
+  workspaces, 0 failed, in about 3 min 20 s.
+
+### Hops (D12), through the real tunnel
+- With the throwaway echo: the forged `X-Forwarded-For: 198.51.100.7` arrived as 2 entries, 1 to the right of the forged one, and that
+  last entry equalled `Cf-Connecting-Ip`; a plain request arrived with exactly 1 entry. So `APP_SECURITY_TRUSTED_PROXY_HOPS=1`.
+- The echo was reachable for about nine minutes (22:08 to 22:17 Paris time), then removed; `check-host.sh` reports no hops echo
+  container. The time box of register item 157 held.
+- The two requests ran from a laptop outside the deployment workspace, whose outbound access is restricted.
+- **Open:** the IPv6 repeat. No IPv6 client was available. Until it is done, the value is measured for IPv4 clients only; an IPv6
+  client's entry is accepted only if it is an IP literal (`ClientAddress`), but the count itself was not observed over IPv6.
+
+### Zone settings of `nkap.dev` (D19), checked in the dashboard
+- Rocket Loader off, Bot Fight Mode off, zone HSTS off (the application sends its own: one year, `includeSubDomains`, no preload).
+- Two deviations, fixed: Email Address Obfuscation was on (now off), Always Use HTTPS was off (now on). Checked: `http://ledger.nkap.dev`
+  answers 301 to `https://`.
+- **Zone-wide.** They were changed for the whole zone, which another project shares, so both changes apply to its hostnames too. A
+  Configuration Rule scoped to `ledger.nkap.dev` was not used. This is the case register item 141 anticipated; the runbook now says to
+  tell the other project's owner before changing them again.
+
+### Checks after the deploy
+- `smoke.sh` against `https://ledger.nkap.dev` ran all 25 checks, `Failures: 0` (the pasted output was a tail of the last 25 lines,
+  so the first check line was not displayed).
+- `check-host.sh`: `Failures: 0`.
+
+### Memory under use
+After three demo rounds (claim a workspace, the happy path, the books, sign out):
+
+| Container | Now | Peak | Limit |
+|---|---|---|---|
+| web | 311 MiB | 349 MiB | 640 MiB |
+| refresh | 123 MiB | 129 MiB | 256 MiB |
+| db | 37 MiB | | 384 MiB |
+| tunnel | 21 MiB | | 96 MiB |
+
+No OOM kill, no restart. Host: 2.1 GiB available of 3.8 GiB, disk 16 % used. The refresh peak is since the container started and does
+not yet cover a full retire-and-recreate cycle of the pool. The runbook's regular checks now read `memory.peak` for web and refresh
+after that cycle; a refresh peak above 220 MiB is the signal to raise its limit. On amd64 these are the first measurements on real
+hardware (register 158 had only emulated ones): refresh at 129 MiB peak is far from the 218 MiB the emulator showed.
+
+### Lesson: the tunnel token
+The first token entered was the tunnel's id (a UUID), not its token. It showed as `Provided Tunnel token is not valid` and a restart
+loop of the tunnel container. The runbook now has a shape check right after `make-secrets.sh --tunnel-token` (a token starts with
+`eyJ`, has no space, and is a few hundred bytes), and says that `make-secrets.sh` refuses to overwrite, so a wrong token is removed
+with `shred -u` first.
+
+### Open for polish (task 12): two "money in" figures
+The summary page says "Collected 36,400 XAF" and the books page says "Mobile money received 18,000 XAF". Both are labelled correctly:
+"Collected" counts every payment with a transaction id, matched or not; the books count what was applied to orders. A reader can still
+take them for a contradiction. Proposal:
+- on the summary, "Collected (all confirmations with a transaction id, matched or not)", with a link to the books;
+- on the books, a line under "Mobile money received": "Applied to orders. Payments not yet matched are on the board.", with a link back.
+
+Before wording it, check which accounts the books figure sums (for example whether an overpayment's excess, held as customer credit,
+is in it), so the sentence says exactly what the number is.
