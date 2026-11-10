@@ -1878,3 +1878,52 @@ The owner's decisions: cloudflared accepted on the evidence, whoami for the one 
   changes do not cause it (and the Jackson override alone does not change it). It is a defect in the rematch logic or in the property,
   outside task 13; reproduce with `@Property(seed = "3454080274824834196")` on that property. The unit phase with Docker stopped is
   green (616).
+
+## The non-convergent rematch (found in task 13, fixed in the matching engine)
+
+`MatchingBooksPropertyIT` "a rematch repeated reaches a point where it changes nothing" failed with jqwik seed `3454080274824834196`.
+Treated as an engine bug until proven otherwise; it was one, in what the engine reports, not in what it decides.
+
+**The scenario, shrunk by hand** (jqwik's own shrinking stopped at 17 steps; a temporary test removed one step at a time while the
+failure held, down to 5):
+1. a payment of 1,000 arrives without a transaction id (a forwarded text);
+2. an order of 2,500 with its own reference arrives;
+3. the seller matches the 1,000 to it by hand: 1,500 left to pay;
+4. a payment of 2,500 mirroring the order arrives; against 1,500 left it overpays, so the pair is flagged `OVERPAYMENT` and suggested;
+5. the seller unmatches the 1,000: 2,500 left again, so the 2,500 payment now fits exactly and the planner proposes it as automatic.
+
+Every rematch pass from then on: `examined=2 applied=0 suggested=1`, and the books' fingerprint (matches, flags, orders, payments,
+ledger) did not change at all. The automatic step, under the lock, found the pair's open flag (task 7, D3: any flag keeps a pair
+suggestion-only), kept the suggestion already stored, and `onPaymentRecorded` counted that as one new suggestion, unconditionally.
+So `suggested()` never reached 0 although nothing changed.
+
+**The cause, against the candidates.** A suggestion counted on every pass although nothing changed: yes (the line
+`result.reason() == Reason.FLAGGED ? new Run(RunKind.SUGGESTED, null, 1)`). D3 is what makes the pair degrade each time, and it is
+right: the stale overpayment flag stays until the seller resolves it. Not the cause: flags written between passes (the flag set is
+identical on every pass), candidate order (one candidate), the clock (the scenario fails the same on four commits run at different
+times).
+
+**Which task.** The same seed and the 5-step scenario, each in a throwaway worktree (sibling modules built in the reactor, nothing
+installed): the task 6 merge `cb8bc6e` and the task 8 merge `a583271` pass (pass 0 matches the pair automatically, then nothing);
+the task 7 merge `197c9dd` and main `8405def` fail exactly as above. Introduced by task 7, with the degrade-on-flag step.
+
+**The property was right; the engine was fixed.** Repeated rematch must settle, and re-reporting a stored suggestion is not a change.
+`ApplyResult` now carries `suggestionWritten`, true only when the flagged automatic step stored a new suggestion, and the run counts
+from it. The decision is unchanged: the pair is still never matched automatically while flagged, and the existing suggestion is kept.
+The Java check "insert only if no suggestion exists" was dropped as redundant: the unique index `uq_match_open_pair` already refuses a
+second open suggestion, and the insert's result says whether a row was written.
+
+**Tests.** `RematchSettlesIT.a_flagged_pair_already_suggested_is_not_counted_again_so_a_repeated_rematch_settles` (the 5-step
+scenario: three passes report nothing and change nothing; D3 still holds); `FlagMatchingIT` gains
+`a_flagged_run_counts_the_suggestion_it_wrote_once_and_never_again` and checks `suggestionWritten` both ways; the seed is kept as
+`MatchingBooksPropertyIT.the_sequences_of_seed_3454080274824834196_settle` (fixed seed, 5 tries), and the random property is unchanged
+(20 tries, same bound, no retry).
+
+**Mutations:** 6 of 6 killed: counting every degrade (the original bug), counting none, `suggestionWritten` always true, always false,
+or meaning "kept", and the existing suggestion not kept. The first run left "count none" alive; the new `FlagMatchingIT` test kills it.
+
+**Weakened defenses:** none. No decision changed, no check was loosened, and the dropped Java pre-check is enforced by the database's
+unique index, which was already the guard.
+
+**Observed, not changed:** the `OVERPAYMENT` flag of step 4 stays open after step 5 although the payment no longer overpays, so the
+pair stays a suggestion until the seller looks at it. That is D3 as designed (the seller has the last word on a flagged pair).

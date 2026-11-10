@@ -112,10 +112,15 @@ public class MatchingService implements MatchTrigger {
         void after(ApplyStep step, Connection connection) throws SQLException;
     }
 
-    /** What {@link #apply} did. Ids, amounts and codes only. */
-    public record ApplyResult(Outcome outcome, UUID matchId, long appliedMinor, long excessMinor, String orderStatus, Reason reason) {
+    /**
+     * What {@link #apply} did. Ids, amounts and codes only. {@code suggestionWritten}: this call stored a new suggestion (only a flagged
+     * automatic step does, inside its transaction); false when the pair's suggestion already existed, so a caller that counts what it
+     * changed never counts the same suggestion twice.
+     */
+    public record ApplyResult(Outcome outcome, UUID matchId, long appliedMinor, long excessMinor, String orderStatus, Reason reason,
+                              boolean suggestionWritten) {
         static ApplyResult notApplicable(Reason reason) {
-            return new ApplyResult(Outcome.NOT_APPLICABLE, null, 0, 0, null, reason);
+            return new ApplyResult(Outcome.NOT_APPLICABLE, null, 0, 0, null, reason, false);
         }
     }
 
@@ -215,8 +220,9 @@ public class MatchingService implements MatchTrigger {
                 ApplyResult result = apply(tenantId, plan.auto().orderId(), paymentId, Mode.AUTO, null);
                 return switch (result.outcome()) {
                     case APPLIED -> new Run(RunKind.APPLIED, result.matchId(), 0);
-                    // A flagged pair was already stored as a suggestion, with its flags, inside the automatic step.
-                    case DEGRADED_TO_SUGGESTION -> result.reason() == Reason.FLAGGED ? new Run(RunKind.SUGGESTED, null, 1)
+                    // A flagged pair is stored as a suggestion, with its flags, inside the automatic step. It counts only if that step wrote it:
+                    // a suggestion that was already there is not a change (a repeated rematch must settle; MatchingBooksPropertyIT).
+                    case DEGRADED_TO_SUGGESTION -> result.reason() == Reason.FLAGGED ? new Run(RunKind.SUGGESTED, null, result.suggestionWritten() ? 1 : 0)
                             : new Run(RunKind.SUGGESTED, null, storeSuggestions(tenantId, List.of(plan.auto()), orders, Map.of(paymentId, payment)));
                     case NOT_APPLICABLE -> new Run(RunKind.SKIPPED, null, 0);
                 };
@@ -404,13 +410,15 @@ public class MatchingService implements MatchTrigger {
         if (mode == Mode.AUTO && (before.payment() || before.order() || pairFlagged)) {
             // Task 7, D3 and D12: a flagged pair is never matched automatically. It becomes a suggestion, written here so that the flags and
             // the suggestion commit together (the seller sees why on the card). An existing suggestion of the pair is kept as it is.
-            Optional<UUID> kept = suggestion.isPresent() ? suggestion
-                    : matches.insertSuggestionWithin(c, tenantId, orderId, paymentId, scored.score(), scored.reasonsJson());
+            // The insert does nothing when the pair already has its suggestion (uq_match_open_pair), so `written` says whether this step
+            // stored one; the existing one is kept as it is.
+            Optional<UUID> written = matches.insertSuggestionWithin(c, tenantId, orderId, paymentId, scored.score(), scored.reasonsJson());
+            Optional<UUID> kept = suggestion.isPresent() ? suggestion : written;
             hook.after(ApplyStep.FLAGGED, c);
-            return new ApplyResult(Outcome.DEGRADED_TO_SUGGESTION, kept.orElse(null), 0, 0, null, Reason.FLAGGED);
+            return new ApplyResult(Outcome.DEGRADED_TO_SUGGESTION, kept.orElse(null), 0, 0, null, Reason.FLAGGED, written.isPresent());
         }
         if (mode == Mode.AUTO && !scored.autoEligible()) {
-            return new ApplyResult(Outcome.DEGRADED_TO_SUGGESTION, null, 0, 0, null, Reason.AUTO_NOT_ELIGIBLE);
+            return new ApplyResult(Outcome.DEGRADED_TO_SUGGESTION, null, 0, 0, null, Reason.AUTO_NOT_ELIGIBLE, false);
         }
 
         // 3. What is applied and what is over.
@@ -460,7 +468,7 @@ public class MatchingService implements MatchTrigger {
         String action = mode == Mode.AUTO ? "MATCH_AUTO" : confirmSuggestion ? "MATCH_CONFIRMED" : "MATCH_MANUAL";
         AuditLogRepository.appendWithin(c, tenantId, actor, action, matchId.toString());
         hook.after(ApplyStep.AUDIT, c);
-        return new ApplyResult(Outcome.APPLIED, matchId, applied, excess, orderStatus, null);
+        return new ApplyResult(Outcome.APPLIED, matchId, applied, excess, orderStatus, null, false);
     }
 
     // ── The seller's other decisions ───────────────────────────────────────
@@ -611,7 +619,8 @@ public class MatchingService implements MatchTrigger {
      * The seller asks the engine to look again at the tenant's open payments (the most recent {@code candidateCap}), for the case where
      * a trigger was missed. Each payment is its own run, exactly as when it arrives: it can be matched automatically if everything
      * holds, suggested, or left alone; a pair the seller rejected or reversed is never touched. A failure on one payment is logged and
-     * does not stop the others. A pass can only add matches and suggestions, never undo one; because a match made late in a pass can
+     * does not stop the others. A pass can only add matches and suggestions, never undo one, and it reports only what it added (a
+     * suggestion that was already stored is not counted again); because a match made late in a pass can
      * clear a rival for an earlier payment, a second pass may add more, and the passes stop changing things after at most as many passes as
      * there are free payments (a property test checks this).
      */
