@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.demo.entry})}">
+</head>
+<body>
+<main>
+  <h1 th:text="#{demo.entry.title}">Try chat-ledger</h1>
+  <p th:text="#{demo.entry.what}">chat-ledger matches the orders a shop gets in its chats with the mobile money payments that pay them.</p>
+  <p class="ok" th:text="#{demo.entry.synthetic}">This is a demo with made-up shops, customers and payments. Nothing here is real.</p>
+  <p th:if="${busy}" class="alert" role="alert" th:text="#{demo.entry.busy}">All demo workspaces are in use. Try again in a few minutes.</p>
+  <!--/* No field but the CSRF token: the server decides which demo workspace the visitor gets. */-->
+  <form th:action="@{/demo}" method="post">
+    <button type="submit" th:text="#{demo.entry.button}">Try the demo</button>
+  </form>
+  <p class="hint" th:text="#{demo.entry.lease}">You get your own workspace for 30 minutes. If your demo has ended, start a new one.</p>
+</main>
+</body>
+</html>

@@ -20,7 +20,8 @@ class BoardRateLimitsTest {
 
     private final MutableClock clock = new MutableClock();
     private final RateLimits limits = new RateLimits(new SecurityConfig().rateLimiter(clock,
-            new Binder(new MapConfigurationPropertySource(Map.of())).bindOrCreate("app.security", SecurityProperties.class)));
+            new Binder(new MapConfigurationPropertySource(Map.of())).bindOrCreate("app.security", SecurityProperties.class),
+            new Binder(new MapConfigurationPropertySource(Map.of())).bindOrCreate("app.demo", dev.chatledger.demo.web.DemoProperties.class)));
 
     @Test
     void rematch_is_three_a_minute_per_tenant() {

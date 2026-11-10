@@ -174,7 +174,13 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
     reads it as text. Verify with hostile cells from `HostileCorpus` (task 4).
   - _Requirements: 6, 4.5_
 
-- [ ] 9. Simulators and demo tenant
+- [x] 9. Simulators and demo tenant
+  - Done (stop 2, decisions D1 to D25 of `task-9-design-stop.md`, D3 and D4 changed by the owner, D22 to D25 added): a demo is its own
+    deployment and database (`deployment_mode`, V020) behind `app.demo.enabled`, both off by default; one-click entry with no credentials
+    (`POST /demo`, `demo_claim`), a pool of 30 pre-seeded workspaces leased 30 minutes each; the `demo` module (names, catalog, generator,
+    seven scenarios, seed); the scenarios page; `demo-init` and `demo-refresh` (once or `--every`) on the demo operator's login; retire
+    disables and overwrites personal data and deletes nothing; `app.security.trusted-proxy-hops`. Notes: `docs/kiro-notes.md`, "Task 9";
+    register items 111 to 129.
   - Chat simulator, confirmation feed, seven one-click scenarios, seeded synthetic data, scheduled reset.
   - **Simulators generate timestamps inside the payment plausibility window relative to the current time** (not more than 15
     minutes ahead, not more than 35 days back; `PaymentLimits`), in each template's own time zone and date format, so demo payments
@@ -210,7 +216,16 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
   - _Requirements: 6.3, 10_
 
 - [ ] 13. Deployment
-  - Docker image, free container host, health check, demo credentials documented, warm-up note.
+  - Docker image, free container host, health check, demo URL documented (there are no demo credentials: task 9, D19), warm-up note.
+  - **Set `app.security.trusted-proxy-hops` for the host** (task 9, D23): the number of proxies in front of the application that append to
+    `X-Forwarded-For` (0 to 2). At 0 behind a proxy every visitor shares one address key and the sixth judge in an hour is refused a demo.
+    Check it with a request through the real proxy before the demo goes public.
+  - **The demo deployment runs two processes** (task 9, D24): `docker/demo-entrypoint.sh` starts the web process and the refresh loop
+    (`demo-refresh --every 600s`, the demo operator login). If the chosen host cannot run a second process in the container, use its
+    scheduled job to run the one-shot `demo-refresh` every 10 minutes instead; without either the pool drains and `/demo` says "all in
+    use". Its own database, made a demo once with `demo-init`; `DEMO_DB_*` only there.
+  - **Demo database size** (task 9, D25): watch `pg_database_size`; before 80% of the tier, drop the demo database and run `demo-init`
+    and `demo-refresh` again (the demo database holds no real workspace; no trigger is touched).
   - **Database server logging**: PostgreSQL writes the failing row (`DETAIL: Failing row contains (...)`) and, with some settings, bound
     parameter values to its own log. Order rows hold message text and names. Set `log_error_verbosity = terse`, `log_statement = none`
     and `log_min_duration_statement = -1` (or hand the log to the operator only) and add that to the deployment checklist.

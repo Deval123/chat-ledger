@@ -43,11 +43,12 @@ public class LoginController {
     private final KeyedHasher hasher;
     private final AuditLogRepository audit;
     private final RateLimits limits;
+    private final boolean demoEnabled;
 
     public LoginController(AuthenticationManager authenticationManager, SessionAuthenticationStrategy sessionStrategy,
                            SecurityContextRepository contextRepository, Clock clock, SecurityProperties properties,
                            SecurityEvents events, KeyedHasher hasher, AuditLogRepository audit,
-                           RateLimits limits) {
+                           RateLimits limits, @org.springframework.beans.factory.annotation.Value("${app.demo.enabled:false}") boolean demoEnabled) {
         this.authenticationManager = authenticationManager;
         this.sessionStrategy = sessionStrategy;
         this.contextRepository = contextRepository;
@@ -57,16 +58,18 @@ public class LoginController {
         this.hasher = hasher;
         this.audit = audit;
         this.limits = limits;
+        this.demoEnabled = demoEnabled;
     }
 
     @GetMapping("/login")
-    public String loginPage(HttpServletRequest request) {
+    public String loginPage(HttpServletRequest request, org.springframework.ui.Model model) {
         Authentication current = SecurityContextHolder.getContext().getAuthentication();
         if (current != null && current.isAuthenticated() && !(current instanceof AnonymousAuthenticationToken)) {
             return "redirect:/app";
         }
         // The page carries a CSRF token, which lives in a session. Keep that session short.
         request.getSession(true).setMaxInactiveInterval((int) properties.session().anonymousTimeout().toSeconds());
+        model.addAttribute("demoEnabled", demoEnabled);
         return "login";
     }
 

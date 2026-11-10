@@ -19,6 +19,10 @@ public class RateLimits {
     static final String REMATCH_HOUR = "rematch-hour";
     static final String EXPORT_TENANT = "export-tenant";
     static final String ACTIONS_USER = "actions-user";
+    static final String DEMO_PAGE_IP = "demo-page-ip";
+    static final String DEMO_CLAIM_IP = "demo-claim-ip";
+    static final String DEMO_CLAIM_ALL = "demo-claim-all";
+    static final String DEMO_SCENARIO_TENANT = "demo-scenario-tenant";
 
     private final RateLimiter limiter;
 
@@ -68,6 +72,28 @@ public class RateLimits {
     /** One CSV export for one tenant. */
     public RateDecision export(UUID tenantId) {
         return limiter.tryAcquire(EXPORT_TENANT, tenantId.toString());
+    }
+
+    /** Each request to the public demo page, GET or POST, from one address (task 9). */
+    public RateDecision demoPageFromAddress(String address) {
+        return limiter.tryAcquire(DEMO_PAGE_IP, address);
+    }
+
+    /**
+     * One demo workspace asked for: the per-address and the global limit must both allow it; the first refusal is returned. A refusal by
+     * the address limit spends nothing from the global one, so one address cannot drain it.
+     */
+    public RateDecision demoClaim(String address) {
+        RateDecision perAddress = limiter.tryAcquire(DEMO_CLAIM_IP, address);
+        if (!perAddress.allowed()) {
+            return perAddress;
+        }
+        return limiter.tryAcquire(DEMO_CLAIM_ALL, "all");
+    }
+
+    /** One scenario step in one demo workspace. */
+    public RateDecision demoScenario(UUID tenantId) {
+        return limiter.tryAcquire(DEMO_SCENARIO_TENANT, tenantId.toString());
     }
 
     /** Each state-changing action of one signed-in user (confirm, reject, approve, paste, ...). */

@@ -39,6 +39,10 @@
       <groupId>dev.chatledger</groupId>
       <artifactId>suspicion</artifactId>
     </dependency>
+    <dependency>
+      <groupId>dev.chatledger</groupId>
+      <artifactId>demo</artifactId>
+    </dependency>
 
     <!--
       spring-boot-starter-web is deprecated in Boot 4.1.1 in favour of

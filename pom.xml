@@ -19,6 +19,7 @@
     <module>ingestion</module>
     <module>matching</module>
     <module>suspicion</module>
+    <module>demo</module>
     <module>web</module>
   </modules>
 
@@ -118,6 +119,11 @@
       <dependency>
         <groupId>dev.chatledger</groupId>
         <artifactId>suspicion</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.chatledger</groupId>
+        <artifactId>demo</artifactId>
         <version>${project.version}</version>
       </dependency>
 

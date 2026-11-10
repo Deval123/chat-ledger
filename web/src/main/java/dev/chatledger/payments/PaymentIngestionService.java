@@ -88,11 +88,22 @@ public class PaymentIngestionService {
             return replay(tenantId, existing.get(), text);
         }
 
-        TenantMoney money = tenants.money(tenantId)
+        TenantRepository.Intake intake = tenants.intake(tenantId)
                 .orElseThrow(() -> new IllegalStateException("unknown or disabled tenant"));   // fail closed
+        if (intake.full()) {
+            // A demo workspace at its row cap (task 9, D12). The database's trigger refuses it too; this answers with a sentence.
+            events.rejected(tenantId, RejectReason.DEMO_WORKSPACE_FULL);
+            return new PaymentIngestionResult(PaymentIngestionResult.Outcome.REJECTED_INPUT, null, null, null, RejectReason.DEMO_WORKSPACE_FULL, 0);
+        }
+        TenantMoney money = intake.money();
         OrderParseContext context = new OrderParseContext(money.currency(), money.scale());
         PaymentDecider.Draft draft = PaymentPipeline.run(text, templates, context, clock.instant());
         ParsedPayment parsed = draft.parsed();
+        if (intake.demo() && parsed != null && parsed.senderPhone() != null && !parsed.senderPhone().inSyntheticRange()) {
+            // A demo workspace takes made-up numbers only (requirement 7.3, task 9, D11).
+            events.rejected(tenantId, RejectReason.REAL_PHONE_IN_DEMO);
+            return new PaymentIngestionResult(PaymentIngestionResult.Outcome.REJECTED_INPUT, null, null, null, RejectReason.REAL_PHONE_IN_DEMO, 0);
+        }
 
         String phoneHash = null;
         if (parsed != null && parsed.senderPhone() != null) {

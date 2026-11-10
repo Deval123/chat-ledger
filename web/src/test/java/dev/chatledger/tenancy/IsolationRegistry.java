@@ -50,7 +50,14 @@ final class IsolationRegistry {
 
     /** Tables that hold no tenant data, with the reason. */
     static final Map<String, String> NON_TENANT_TABLES = Map.of(
-            "flyway_schema_history", "Flyway's own bookkeeping; the application role has no privileges on it");
+            "flyway_schema_history", "Flyway's own bookkeeping; the application role has no privileges on it",
+            // Task 9 (V020). One row, no tenant: the deployment's mode. Row-level security on, no policy, no grant: the application reads it
+            // through demo_mode() only (DemoSchemaIT).
+            "deployment_mode", "the deployment's mode (REGULAR or DEMO), one row, no tenant data; no grant to the application role",
+            // The demo pool: a workspace's state and lease, no personal data. The application role holds no privilege on it at all (the
+            // demo functions read and write it); row-level security is on with a tenant policy anyway, and its rows can only name demo
+            // workspaces (fk_demo_tenant_is_demo). Proven by DemoSchemaIT, not by the per-table probe, whose seeds are regular tenants.
+            "demo_tenant", "the demo pool (state and lease of demo workspaces); no grant to the application role, only the V020 functions use it");
 
     /**
      * Foreign keys from a table that has no tenant column are allowed only here, with the
@@ -65,7 +72,17 @@ final class IsolationRegistry {
     static final Set<String> ALLOWED_DEFINER_FUNCTIONS = Set.of(
             "resolve_tenant_for_login",   // login: workspace code to tenant id, nothing else (V013)
             "provision_tenant",           // operator only, via the provisioner role (V013)
-            "provision_user");            // operator only, via the provisioner role (V013)
+            "provision_user",             // operator only, via the provisioner role (V013)
+            // Task 9 (V020), each with one grantee and tested in DemoSchemaIT:
+            "demo_mode",                  // the application: the deployment's mode, for its startup check
+            "demo_claim",                 // the application: one lease of a ready demo workspace, nothing else
+            "demo_init",                  // the demo operator: REGULAR to DEMO on a database with no regular workspace
+            "demo_create_tenant",         // the demo operator: a demo workspace and its seller, on a demo database only
+            "demo_seed_catalog",          // the demo operator: the catalog of a demo workspace being seeded
+            "demo_mark_ready",            // the demo operator: SEEDING to READY when the seed is complete
+            "demo_due_for_retirement",    // the demo operator: which demo workspaces to retire
+            "demo_retire",                // the demo operator: disable and overwrite personal data; delete nothing
+            "demo_refresh_lock");         // the demo operator: one refresh at a time
 
     /** Every repository class and the test that proves it cannot read another tenant. */
     static final Map<String, String> REPOSITORY_CONTRACT_TESTS = Map.ofEntries(

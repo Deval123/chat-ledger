@@ -32,6 +32,16 @@ public class SecurityEvents {
         LOG.warn("login refused, too many password checks at once client={}", clientAddress);
     }
 
+    /** A visitor was given a demo workspace (task 9). */
+    public void demoEntered(UUID userId, UUID tenantId) {
+        LOG.info("demo entered user={} tenant={}", userId, tenantId);
+    }
+
+    /** @param reason a fixed label: no workspace was ready, or the database returned one that is not a usable demo seller */
+    public void demoRefused(String reason) {
+        LOG.warn("demo refused reason={}", reason);
+    }
+
     public void loggedOut(UUID userId, UUID tenantId) {
         LOG.info("logout user={} tenant={}", userId, tenantId);
     }

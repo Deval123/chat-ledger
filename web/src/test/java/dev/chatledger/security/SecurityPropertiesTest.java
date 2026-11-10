@@ -31,7 +31,7 @@ class SecurityPropertiesTest {
         assertThatThrownBy(() -> new SecurityProperties.Hashing(1, Duration.ZERO)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new SecurityProperties(new SecurityProperties.Session(ok, ok, ok),
                 new SecurityProperties.Hashing(1, ok), new SecurityProperties.Limits("1/1m", "1/1m", "1/1m", "1/1m", "1/1m", "1/1h", "1/1m", "1/1m"),
-                new SecurityProperties.Size(org.springframework.util.unit.DataSize.ofKilobytes(4), org.springframework.util.unit.DataSize.ofKilobytes(4), org.springframework.util.unit.DataSize.ofKilobytes(4)), Duration.ZERO)).isInstanceOf(IllegalArgumentException.class);
+                new SecurityProperties.Size(org.springframework.util.unit.DataSize.ofKilobytes(4), org.springframework.util.unit.DataSize.ofKilobytes(4), org.springframework.util.unit.DataSize.ofKilobytes(4)), Duration.ZERO, 0)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

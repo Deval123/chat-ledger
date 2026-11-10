@@ -170,4 +170,17 @@ class ProvisioningCommandTest {
         assertThat(ProvisioningCommand.consoleOrStdin(new java.io.ByteArrayInputStream(new byte[0])).read(true)).isEmpty();
         assertThat(ProvisioningCommand.consoleOrStdin(new java.io.ByteArrayInputStream("\n".getBytes(StandardCharsets.UTF_8))).read(true)).isEmpty();
     }
+
+    /** V020 (task 9): a demo deployment refuses real workspaces; the command says so and exits as refused, not as a failure. */
+    @Test
+    void a_demo_deployment_refuses_provisioning_with_its_own_sentence() {
+        env.put("PROVISION_DB_URL", "jdbc:postgresql://localhost:1/none");
+        env.put("PROVISION_DB_USER", "provisioner");
+        env.put("PROVISION_DB_PASSWORD", UUID.randomUUID().toString());
+        ProvisioningCommand demo = new ProvisioningCommand(env, confirm -> Optional.of(GOOD_PASSWORD),
+                (url, user, pass) -> { throw new SQLException("workspaces cannot be provisioned on a demo deployment", "55000"); },
+                new PrintStream(outBytes, true, StandardCharsets.UTF_8), new PrintStream(errBytes, true, StandardCharsets.UTF_8));
+        assertThat(demo.run(tenantArgs())).isEqualTo(ProvisioningCommand.REFUSED);
+        assertThat(output()).contains("this is a demo deployment").doesNotContain(GOOD_PASSWORD);
+    }
 }

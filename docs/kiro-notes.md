@@ -1385,3 +1385,190 @@ The application may now write `flag` (INSERT and the resolution columns); the ru
 - The npm packages of the browser tool are still not in the CI vulnerability scan; jqwik was added to `suspicion` at the version the project already pins, so no new artifact entered the Maven scan.
 - PostgreSQL 16.4 only.
 - Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.
+
+## Task 9 - simulators and demo tenant (stop 2)
+
+The owner approved D1 to D21 of `.kiro/specs/chat-ledger/task-9-design-stop.md` with D3 and D4 changed (a pool of 30, bounds 10 to 50; a lease of 30 minutes, bounds 10 minutes to 4 hours) and four decisions added (D22 to D25, section 7 of the design stop). Work stays on `task-9-demo`; nothing was committed by me.
+
+### What was built
+- **Two switches, both off by default.** `app.demo.enabled` and the database's `deployment_mode` (V020). The demo operator's `demo_init` moves it from REGULAR to DEMO once, and only on a database with no regular workspace. The application does not start with the demo on against a regular database (`DemoStartupGuard`). In DEMO mode `provision_tenant` refuses; in REGULAR mode every demo function refuses.
+- **Workspaces.**
+  - `tenant.kind` is tied to the `demo-` slug and frozen with it by a trigger, for the owner too.
+  - `demo_tenant` is the pool: forward-only states, never deleted, and its key includes the tenant's kind, so a row can name only a demo workspace.
+  - Password sign-in and `provision_user` reach regular workspaces only.
+- **Entry (D2, D22).** `GET /demo` shows one sentence and one button. `POST /demo` carries no field but the CSRF token:
+  - `demo_claim` hands out the oldest fresh ready workspace (SKIP LOCKED);
+  - the principal is read back from the seller row, as sign-in does;
+  - the session id and CSRF token are renewed, a `DEMO_ENTERED` audit row is written, and the session ends with the lease;
+  - a visitor already in a workspace goes back to it and takes no new lease.
+- **The `demo` module (pure).**
+  - Fictional names in three groups that never agree by initial or surname, and synthetic phones `+999 000`.
+  - The catalog: eight items, each with an English and a French row.
+  - The generator writes confirmations from the loaded template specs (their text, holes, zone and format), "now minus an age" between 0 and 4 days, cut to the minute.
+  - The seven scenarios of requirement 7.2 and the seed of tasks.md.
+- **Pages.** The scenarios page shows a simulated chat (bubbles) and a feed (SMS-style items), each scenario with "Send the order", "Send the payment" and "Run both". There is no text field. Every step goes through `OrderIngestionService` and `PaymentIngestionService` as the visitor's seller, with external ids `sim:<uuid>`. The board gets a "Demo, made-up data" chip and a "Scenarios" link, on demo workspaces only.
+- **Demo input rules (D11, D12).** A demo workspace refuses parsed phones outside `+999`. It holds at most 300 orders and payments: the application answers with a sentence, and a database trigger refuses as well.
+- **Upkeep (D6, D7, D24).**
+  - `demo-init` and `demo-refresh [--pool 10..50] [--every 60s..3600s]` run like `provision-*`, with no web server. They use the demo operator's login (EXECUTE on the demo functions only, no table privilege) and the application login for the seed, through the real services.
+  - A pass takes a session lock (`demo_refresh_lock`), retires what is due, and tops the pool up.
+  - Retire disables the workspace and overwrites raw text, names, phone hashes, last four digits, line labels and delivery notes. It deletes nothing and leaves the ledger, the audit log and the flags as they were.
+  - `docker/demo-entrypoint.sh` runs the loop as a second process and starts the web process without `DEMO_DB_*`.
+- **Client address (D23).** `app.security.trusted-proxy-hops`: 0 to 2, default 0, checked at startup, named in the startup log. It is used by the sign-in limits and the demo limits.
+
+### The owner's four additions
+- **D22.** Tested by `DemoEntryIT`:
+  - a second `GET /demo` or `POST /demo` from a visitor in a workspace redirects to `/app`, and the lease count does not move;
+  - right after a retire the visitor may start again, without waiting for the status re-check.
+- **D23.**
+  - At 0 a spoofed header does not change the key (`ClientAddressTest`, `RateLimitFilterTest`, `DemoLimitsIT`: the sixth claim from one socket is refused whatever header it sends).
+  - At 1, six judges behind the proxy are six keys, one judge is limited however it dresses its own part of the header, and the global limit holds (`DemoProxyIT`).
+  - Task 13 has the line to set it for the host.
+- **D24.** `demo-refresh --every` loops until stopped. Two runners never work at once (`DemoRefreshIT`). The entrypoint starts it as its own process (`DemoDeploymentFilesTest`). If the host cannot run a second process, the register (item 122) and task 13 say to use the host's scheduled job with the one-shot form.
+- **D25.** Measured by `DemoSizeIT` on the test container: 129 rows and about 100 KB per seeded workspace, 236 rows and about 150 KB after a typical visit. Thirty days at the claim limits is about 6.5 GB (extrapolated, unverified). Realistic use is under 0.1 GB. It does not fit a 0.5 to 1 GB free tier at the limits; the operator drops the demo database before 80% (task 13).
+
+### Scrub columns checked against their constraints
+| Column | Constraint | Value written |
+|---|---|---|
+| `orders.raw_text` | NOT NULL, `chk_orders_raw_text` 1..4000, no control characters | "Removed when the demo ended." |
+| `orders.delivery_note` | NULL or 1..300 | NULL |
+| `order_line.label` | NOT NULL, `chk_order_line_label` 1..100 | "Removed" |
+| `customer.display_name` | NOT NULL, `chk_customer_name` 1..100 | "Removed" |
+| `customer.phone_hash`, `phone_last4` | NULL or a format; `chk_customer_phone_pair` both NULL together | both NULL |
+| `payment.raw_text` | NOT NULL, `chk_payment_raw_text` 1..1000 | "Removed when the demo ended." |
+| `payment.sender_name` | NULL or 2..40 | NULL |
+| `payment.sender_phone_hash`, `sender_last4` | `chk_payment_sender` (a hash needs its last four; last four NULL or 4 digits) | both NULL |
+
+`DemoSchemaIT` retires a seeded workspace and checks every column, and that the ledger, the audit log and the flags are byte for byte as before (an md5 over every row).
+
+### Defects found while building
+- **The guard tests caught two things.** `NoBackDoorTest` counted the inserts of tenants and users outside V013; V020's three replaced functions and `demo_create_tenant` now have their place in it. `SourceRulesTest` flagged a comment I had put inside a `prepareStatement(...)` argument, and a helper that passed SQL in a variable.
+- **The seed's unverified payment first matched the wrong order.** Its amount (2,000) equalled the balance of the part-paid order, so it was also suggested there and raised R7 and R8 on that pair. It is now 2,800, a balance no other open order has.
+- **`AbstractDemoWebIT` could not extend `AbstractWebIT`.** Spring registers the base class's `@DynamicPropertySource` last, so its database won. It is a sibling class now.
+- **Too many test connections.** With six demo contexts and the demo pool, the shared test cluster ran out of connections and two 16-thread tests failed. Demo test pools now hold no idle connections. This is a test-only setting.
+- **One finding in my own walk script, not the application.** The first browser runs looked at the wrong card (an order card with the same customer name) and used a date range above 366 days for the CSV.
+
+### What each route refuses
+| Route | Who | Also refuses |
+|---|---|---|
+| `GET /demo` | public, only on the demo deployment (404 elsewhere, for everyone) | more than 30 requests per 10 minutes from one address (429 before anything else); a visitor in a workspace is sent to `/app` |
+| `POST /demo` | public, only on the demo deployment | missing or wrong CSRF token (403); the page limit; 5 claims an hour per address and 60 in total (429 with `Retry-After`, no workspace taken); an empty pool ("All demo workspaces are in use"); a leased seller that is disabled or not a seller ("busy", logged); a visitor already in a workspace goes back to it and takes no lease |
+| `GET /app/demo` | `VIEW_BOARD`; a demo workspace only | any other workspace 404; anonymous is sent to `/demo` (htmx: 401 with `HX-Redirect: /demo`) |
+| `POST /app/demo/scenarios/{scenario}/{step}` | `RECORD_ORDER` and `RECORD_PAYMENT`; a demo workspace only | CSRF (403); an unknown scenario or step 404; another workspace 404; 120 actions a minute per user and 20 steps per 10 minutes per workspace (429); the ingestion limit; a full workspace and a payment before its order (sentences); no text is read at all |
+| `POST /app/orders`, `/app/payments` in a demo workspace | as before | a phone outside `+999` ("This demo takes made-up phone numbers only"); a full workspace ("This demo workspace is full. Start a new demo.") |
+| `POST /login` | as before | a demo workspace is never found (generic failure) |
+
+### Browser walk of the video story (390 by 844)
+Ran in headless Chrome (the installed Google Chrome, puppeteer-core) against the real application as the demo deployment (`DemoBrowserFixtureIT`, `-Dbrowser.demo=true`, six seeded workspaces). **39 of 39 checks passed** on the final code. The steps follow the story's order:
+- 0:00 the app's address lands on the demo page with one button and no text field; one click opens a board;
+- 0:15 the seeded board: Matched 1, Review 1, Flagged 6, Unparsed 1, the fixed sentences and "I checked this";
+- the scenarios page lists the seven, as simulated chat and confirmations, with no text field;
+- 0:35 the happy path in two steps, matched by itself;
+- 0:55 the underpayment confirmed from its card (htmx, in place), then "Part paid: 3,000 XAF of 5,000 XAF";
+- 1:10 the overpayment flagged with its sentence and still confirmable;
+- 1:30 the repeat flagged, "I checked this" in place, then with the payments set aside or repeated;
+- 1:45 the screenshot payment flagged for its missing transaction id;
+- 2:00 the wrong sender with both sentences, rejected from its card;
+- 2:15 the late payment with both time sentences;
+- 2:30 the books balance after the whole story, and the orders download is a CSV;
+- opening `/demo` again returns to the same workspace;
+- no console error or CSP violation in the whole walk;
+- no sideways scroll, and every button and link at least 44 px tall, on `/demo` and `/app/demo`;
+- without JavaScript: the button opens a board (another workspace), a scenario runs and returns to the board with its notice, and "I checked this" and Confirm are plain forms that return with their notices.
+
+Thirteen screenshots are in `tools/browser-check/screenshots/demo-*.png` (not committed).
+
+Not run in a browser:
+- a real phone or touch device (the viewport is emulated);
+- Safari, Firefox or an old Android browser;
+- a slow network;
+- a screen reader;
+- the lease ending in a browser (integration tests only);
+- a real proxy in front of the application (D23 is tested with headers set by the test);
+- the video itself (task 14).
+
+### Mutation checks
+Four workers, each on its own copy, with mutated sibling modules built in the same reactor (never installed: the workers share the local repository). A kill counts only when the build reports a failing test.
+
+- **First pass:** 147 mutants, 127 killed, 20 survived.
+  - Three were guards no test could tell from their absence. They are deleted (register item 129): the Java "is it a demo workspace" check after `demo_claim`, `disabled_at` in `demo_claim`, and the unused `enabled` field of `DemoProperties`.
+  - The other 17 exposed missing tests, now written:
+    - the operator cannot change a workspace's seller, and a lease cannot end when it starts;
+    - on a regular database a stray demo row is still refused by the mode (claim, catalog, retire);
+    - a regular workspace has no row cap;
+    - the configured lease is the one used;
+    - a visitor whose workspace was just retired may start again at once;
+    - a disabled or non-seller leased user is never signed in;
+    - a step counts as an action;
+    - a full workspace refuses a scenario and a seed;
+    - a seed that writes too little is never ready;
+    - the refresh refuses a pool out of bounds;
+    - the provisioning command's demo sentence;
+    - the generator refuses a currency with decimals;
+    - the startup log line and the filter's address (two new unit tests).
+- **Second pass:** the whole set again on fresh copies, 145 mutants. 142 were killed. Two needed a sharper or a retargeted test. One more redundant check was deleted: `tenant_kind` in the forward-only trigger, which its CHECK already keeps.
+
+| Group | Mutants | Killed | Deleted as redundant |
+|---|---|---|---|
+| V020: mode, kind, pool states | 14 | 14 | 1 |
+| V020: row cap | 5 | 5 | 0 |
+| V020: sign-in and provisioning | 3 | 3 | 0 |
+| V020: demo functions (mode, kind, bounds, lock, claim, due) | 21 | 21 | 1 |
+| V020: retire (each overwrite, once, disable) | 9 | 9 | 0 |
+| V020: grants | 2 | 2 | 0 |
+| Ingestion: synthetic phones, row cap, intake | 8 | 8 | 0 |
+| Client address and its bound and log | 11 | 11 | 0 |
+| Limits: page, claim per address and total, step, action | 8 | 8 | 0 |
+| Entry, session lease, home, entry point, sign-in link, startup guard | 22 | 22 | 2 |
+| Scenarios page and steps | 13 | 13 | 0 |
+| Generator and names | 11 | 11 | 0 |
+| Seed and seeder | 5 | 5 | 0 |
+| Refresh, commands, entrypoint | 12 | 12 | 0 |
+| **Total (final set)** | **144** | **144** | **4** |
+
+Nothing survives. I did not set any mutant aside as equivalent.
+
+### Tests
+- **Unit phase with Docker stopped** (`docker desktop stop`, `mvn -o clean test`): **565** tests, all green (31 + 156 + 31 + 67 + 23 + 10 + 247; was 530). The new `demo` module has 10.
+- **Full build with Docker** (`mvn -o clean verify`): the same unit tests and **643** integration tests, all green, 2 skipped (the two browser fixtures; was 591).
+- **One intermittent failure, not explained.** On one of the final full runs, `MatchingBooksPropertyIT` "a rematch repeated reaches a point where it changes nothing" failed once: a rematch kept suggesting for more passes than there were free payments. jqwik could not regenerate the falsified sample. Its previous seed then passed, and so did three more runs and the next full build. So it is not reproducible from its seed, which points at timing (the database clock against the test clock) rather than at the generated actions. Task 9 changes no matching code; on regular workspaces it adds only the demo checks in ingestion and the row-cap trigger. I have not found the cause, and I am not claiming the property is flake-free. It should be looked at before task 13.
+- **New:**
+  - unit: `DemoMaterialTest`, `DemoMessagesTest` (jqwik), `DemoCommandTest`, `DemoStartupGuardTest`, `DemoDeploymentFilesTest`, `ClientAddressTest`, `RateLimitFilterTest`;
+  - integration: `DemoSchemaIT`, `DemoSeedIT`, `DemoScenarioIT`, `DemoRefreshIT`, `DemoSizeIT`, `DemoEntryIT`, `DemoRoutesIT`, `DemoLimitsIT`, `DemoProxyIT`, `DemoStepLimitIT`, `DemoActionLimitIT`, `DemoSwitchedOffIT`;
+  - additions to `HandlerCoverageTest` (it now scans the demo-only controllers), `NoBackDoorTest`, `IsolationRegistry`, `ProvisioningIT`, `ProvisioningCommandTest`, `StartupGuardsTest`.
+
+### Deviations from the design stop
+- `/demo` is on the permit list always. Its handler exists only on the demo deployment, so it is a 404 elsewhere. The design said it would be off the list. The result is the same and is tested (`DemoSwitchedOffIT`).
+- The scenarios page uses plain forms (post, then redirect), not htmx swaps, so a scenario lands on the board where its outcome is. Board actions keep htmx.
+- The demo's own name list ("Ana Testa" and others) replaced the design stop's examples, so that no two people agree by initial (which would add identity points).
+- `demo_tenant` has a `tenant_kind` column and the composite key `(tenant_id, tenant_kind)`. This is an extra database defense the design did not have.
+
+### Defenses weakened or traded off (design register items 111 to 129)
+- A public endpoint signs a visitor in without a password.
+- The application may call `demo_claim`.
+- Nine new definer functions.
+- Two tables outside the per-table probe.
+- A new operator role.
+- Visitors act as sellers.
+- Free text may carry real personal data until retired.
+- Retired workspaces stay in the database.
+- Ingestion knows demo workspaces.
+- A trigger on every order and payment insert.
+- The forwarded header is trusted when configured.
+- The reset depends on a process outside the web application.
+- Scripts in the visitor's session.
+- The catalog JSON is built in Java.
+- A row lock between provisioning and `demo_init`.
+- A random password thrown away.
+- The walk outside CI.
+- Size estimated on a free tier.
+- Four redundant guards deleted.
+
+### Not verified
+- The chosen host's limits: whether it can run a second process, its proxy hops and its database size (task 13).
+- That `+999` is not an assigned country calling code (the repository's convention; not checked against the ITU list).
+- `Africa/Douala` staying at +01:00 is pinned by a test against the JDK's tz data, not checked against an official source.
+- The cost of the row-cap trigger on a large regular workspace (not measured).
+- A real proxy, a real phone, other browsers, a screen reader, a slow network.
+- PostgreSQL 16.4 only.
+- The npm packages of the browser tool are still not in the CI vulnerability scan. No Maven dependency was added (the `demo` module uses jqwik at the pinned version).
+- Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.

@@ -63,4 +63,21 @@ class StartupGuardsTest {
         devHostWithoutSecure.setActiveProfiles("dev");
         assertThatThrownBy(() -> check(devHostWithoutSecure)).hasMessageContaining("__Host-");
     }
+
+    @Test
+    void the_number_of_trusted_proxies_is_named_in_the_startup_log() {
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs = new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("security.startup");
+        logger.addAppender(logs);
+        try {
+            new StartupGuards(good().withProperty("app.security.trusted-proxy-hops", "1")).logTrustedProxyHops();
+        } finally {
+            logger.detachAppender(logs);
+        }
+        org.assertj.core.api.Assertions.assertThat(logs.list).singleElement().satisfies(e -> {
+            org.assertj.core.api.Assertions.assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.INFO);
+            org.assertj.core.api.Assertions.assertThat(e.getFormattedMessage()).contains("trusted-proxy-hops=1");
+        });
+    }
 }

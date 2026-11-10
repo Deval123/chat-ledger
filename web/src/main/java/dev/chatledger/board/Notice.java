@@ -17,7 +17,8 @@ public enum Notice {
     REFUSED_NOT_FOUND, REFUSED_PAYMENT_NOT_FREE, REFUSED_ORDER_NOT_OPEN, REFUSED_CURRENCY_MISMATCH, REFUSED_NOTHING_LEFT_TO_PAY,
     REFUSED_AUTO_NOT_ELIGIBLE, REFUSED_NOT_A_SELLER, REFUSED_NOT_SUGGESTED, REFUSED_NOT_ACTIVE, REFUSED_SELLER_DECLINED,
     REFUSED_PAYMENT_STATUS_NOT_ALLOWED, REFUSED_FLAGGED, EXPORT_TOO_LARGE, EXPORT_BAD_DATES,
-    FLAG_RESOLVED, FLAG_ALREADY_RESOLVED;
+    FLAG_RESOLVED, FLAG_ALREADY_RESOLVED,
+    DEMO_REAL_PHONE, DEMO_FULL, DEMO_ORDER_SENT, DEMO_PAYMENT_SENT, DEMO_SEND_ORDER_FIRST;
 
     /** The notice named by {@code code}, or empty for anything else (including null). */
     public static Optional<Notice> parse(String code) {
@@ -35,6 +36,17 @@ public enum Notice {
     /** The sentence for a refusal of the matching service. */
     public static Notice refusal(MatchingService.Reason reason) {
         return valueOf("REFUSED_" + reason.name());
+    }
+
+    /** The sentence for input the ingestion services refused: the demo's own two reasons, or the general one. */
+    public static Notice rejected(dev.chatledger.ingestion.RejectReason reason, Notice general) {
+        if (reason == dev.chatledger.ingestion.RejectReason.REAL_PHONE_IN_DEMO) {
+            return DEMO_REAL_PHONE;
+        }
+        if (reason == dev.chatledger.ingestion.RejectReason.DEMO_WORKSPACE_FULL) {
+            return DEMO_FULL;
+        }
+        return general;
     }
 
     /** The message key. */

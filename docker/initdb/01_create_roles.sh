@@ -15,6 +15,10 @@
 #   PROVISION_DB_USER  Login role, member of chatledger_provisioner. Used only by
 #                    the operator commands provision-tenant and provision-user.
 #                    It has no table privileges.
+#   chatledger_demo_operator  NOLOGIN group role; migration V020 grants it EXECUTE
+#                    on the demo functions and nothing else.
+#   DEMO_DB_USER     Optional login role (a demo deployment only), member of
+#                    chatledger_demo_operator. Used only by demo-init and demo-refresh.
 #
 # Credentials come from environment variables only. They are read by psql with
 # \getenv (never placed on a command line) and quoted by PostgreSQL itself with
@@ -85,6 +89,32 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'prov_user')
 \gexec
 SELECT format('GRANT chatledger_provisioner TO %I', :'prov_user')
 \gexec
+-- The demo operator group role (granted EXECUTE on the demo functions by V020, nothing else). Created on every
+-- database so V020 can grant to it; it only matters on a demo deployment.
+SELECT 'CREATE ROLE chatledger_demo_operator NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'chatledger_demo_operator')
+\gexec
 EOSQL
+
+# The demo operator login exists only where it is asked for (a demo deployment): set DEMO_DB_USER and
+# DEMO_DB_PASSWORD. The demo-init and demo-refresh commands use it; the web process never does.
+if [ -n "${DEMO_DB_USER:-}" ]; then
+    : "${DEMO_DB_PASSWORD:?DEMO_DB_PASSWORD must be set when DEMO_DB_USER is}"
+    psql -v ON_ERROR_STOP=1 \
+         --username "$POSTGRES_USER" \
+         --dbname   "$POSTGRES_DB" \
+<<'EOSQL'
+\getenv demo_user     DEMO_DB_USER
+\getenv demo_password DEMO_DB_PASSWORD
+SELECT format(
+    'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
+    :'demo_user', :'demo_password')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'demo_user')
+\gexec
+SELECT format('GRANT chatledger_demo_operator TO %I', :'demo_user')
+\gexec
+EOSQL
+    echo "Demo operator login created."
+fi
 
 echo "Roles for the migrate and application logins created."

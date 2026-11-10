@@ -103,7 +103,8 @@ public class BoardRepository {
     public record Page(List<Card> cards, Cursor next) {
     }
 
-    public record TenantInfo(String name, String currency, int scale, ZoneId zone) {
+    /** {@code demo} is true for a demo workspace (task 9): the pages say so, and only it has the scenarios page. */
+    public record TenantInfo(String name, String currency, int scale, ZoneId zone, boolean demo) {
     }
 
     public record Line(String label, int qty, Long unitMinor) {
@@ -150,7 +151,7 @@ public class BoardRepository {
         try {
             return scope.call(tenantId, c -> {
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT name, currency, scale, timezone FROM tenant WHERE id = ? AND disabled_at IS NULL")) {
+                        "SELECT name, currency, scale, timezone, kind FROM tenant WHERE id = ? AND disabled_at IS NULL")) {
                     ps.setObject(1, tenantId);
                     try (ResultSet rs = ps.executeQuery()) {
                         if (!rs.next()) {
@@ -162,7 +163,8 @@ public class BoardRepository {
                         } catch (RuntimeException unknown) {
                             zone = ZoneId.of("UTC");   // a zone the Java runtime does not know: fall back to UTC, never fail the page
                         }
-                        return Optional.of(new TenantInfo(rs.getString("name"), rs.getString("currency").strip(), rs.getInt("scale"), zone));
+                        return Optional.of(new TenantInfo(rs.getString("name"), rs.getString("currency").strip(), rs.getInt("scale"), zone,
+                                "DEMO".equals(rs.getString("kind"))));
                     }
                 }
             });

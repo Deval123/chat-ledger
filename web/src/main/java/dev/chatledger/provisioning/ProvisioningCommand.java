@@ -248,6 +248,10 @@ public final class ProvisioningCommand {
                 err.println("The provisioning login is not allowed to do this. See the README on granting "
                         + "chatledger_provisioner.");
                 return INFRASTRUCTURE;
+            case "55000":
+                // V020: a demo deployment holds no real workspace (task 9, D1).
+                err.println("Refused: this is a demo deployment. Real workspaces are never provisioned on it.");
+                return REFUSED;
             default:
                 err.println("The database could not be reached or failed (SQLSTATE " + (state.isEmpty() ? "none" : state)
                         + ").");

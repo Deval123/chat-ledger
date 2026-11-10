@@ -30,14 +30,20 @@ public final class LedgerDatabase {
     public static final String APP_USER = "chatledger_app_login";
 
     public static final String PROVISION_USER = "chatledger_provisioner_login";
+    public static final String DEMO_USER = "chatledger_demo_login";
+    /** The demo deployment's own database, in the same container (task 9, D1). Roles are shared by the cluster. */
+    public static final String DEMO_DATABASE = "chatledger_demo";
 
     private static final String PROVISION_PASS = UUID.randomUUID().toString();
     private static final String MIGRATE_PASS = UUID.randomUUID().toString();
     private static final String APP_PASS = UUID.randomUUID().toString();
+    private static final String DEMO_PASS = UUID.randomUUID().toString();
 
     private static LedgerDatabase instance;
+    private static LedgerDatabase demo;
 
     private final PostgreSQLContainer<?> container;
+    private final String jdbcUrl;
 
     public static synchronized LedgerDatabase get() {
         if (instance == null) {
@@ -46,12 +52,41 @@ public final class LedgerDatabase {
         return instance;
     }
 
+    /**
+     * A second database in the same container, migrated the same way, for the demo deployment's tests: its mode moves to DEMO and never
+     * back, which must not reach the tests of a regular deployment.
+     */
+    public static synchronized LedgerDatabase demo() {
+        if (demo == null) {
+            LedgerDatabase main = get();
+            try (Connection c = DriverManager.getConnection(main.container.getJdbcUrl(), main.container.getUsername(), main.container.getPassword());
+                 Statement s = c.createStatement()) {
+                s.execute("CREATE DATABASE " + DEMO_DATABASE + " OWNER \"" + MIGRATE_USER + "\"");
+            } catch (SQLException e) {
+                throw new IllegalStateException("Could not create the demo database", e);
+            }
+            demo = new LedgerDatabase(main.container, main.container.getJdbcUrl().replace("/chatledger_ledger", "/" + DEMO_DATABASE));
+        }
+        return demo;
+    }
+
     private LedgerDatabase() {
         container = newContainer();
         container.start();
         bootstrapRoles(container);
+        jdbcUrl = container.getJdbcUrl();
+        migrate();
+    }
+
+    private LedgerDatabase(PostgreSQLContainer<?> container, String jdbcUrl) {
+        this.container = container;
+        this.jdbcUrl = jdbcUrl;
+        migrate();
+    }
+
+    private void migrate() {
         Flyway.configure()
-                .dataSource(container.getJdbcUrl(), MIGRATE_USER, MIGRATE_PASS)
+                .dataSource(jdbcUrl, MIGRATE_USER, MIGRATE_PASS)
                 .locations("classpath:db/migration")
                 .load()
                 .migrate();
@@ -87,6 +122,11 @@ public final class LedgerDatabase {
             s.execute("CREATE ROLE \"" + PROVISION_USER + "\" LOGIN PASSWORD '" + PROVISION_PASS
                     + "' NOSUPERUSER NOCREATEDB NOCREATEROLE");
             s.execute("GRANT chatledger_provisioner TO \"" + PROVISION_USER + "\"");
+            // The demo operator: group role first, because V020 grants EXECUTE to it only if it exists (task 9).
+            s.execute("CREATE ROLE chatledger_demo_operator NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE");
+            s.execute("CREATE ROLE \"" + DEMO_USER + "\" LOGIN PASSWORD '" + DEMO_PASS
+                    + "' NOSUPERUSER NOCREATEDB NOCREATEROLE");
+            s.execute("GRANT chatledger_demo_operator TO \"" + DEMO_USER + "\"");
         } catch (SQLException e) {
             throw new IllegalStateException("Could not bootstrap roles", e);
         }
@@ -117,6 +157,15 @@ public final class LedgerDatabase {
         return dataSource(PROVISION_USER, PROVISION_PASS);
     }
 
+    /** Connects as the demo operator login: EXECUTE on the demo functions only. */
+    public DataSource demoOperatorDataSource() {
+        return dataSource(DEMO_USER, DEMO_PASS);
+    }
+
+    public String demoOperatorPassword() {
+        return DEMO_PASS;
+    }
+
     public String appPassword() {
         return APP_PASS;
     }
@@ -133,14 +182,14 @@ public final class LedgerDatabase {
     /** Connects as the bootstrap superuser. Only for creating probe roles in tests. */
     public DataSource superDataSource() {
         PGSimpleDataSource ds = new PGSimpleDataSource();
-        ds.setUrl(container.getJdbcUrl());
+        ds.setUrl(jdbcUrl);
         ds.setUser(container.getUsername());
         ds.setPassword(container.getPassword());
         return ds;
     }
 
     public String jdbcUrl() {
-        return container.getJdbcUrl();
+        return jdbcUrl;
     }
 
     /** Inserts a tenant row (the app role has only SELECT on tenant) and returns its id. */
@@ -163,7 +212,7 @@ public final class LedgerDatabase {
 
     private DataSource dataSource(String user, String password) {
         PGSimpleDataSource ds = new PGSimpleDataSource();
-        ds.setUrl(container.getJdbcUrl());
+        ds.setUrl(jdbcUrl);
         ds.setUser(user);
         ds.setPassword(password);
         return ds;

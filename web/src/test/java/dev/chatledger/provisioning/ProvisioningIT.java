@@ -179,11 +179,21 @@ class ProvisioningIT {
     }
 
     @Test
-    void execute_on_the_three_definer_functions_is_held_by_exactly_the_intended_roles() throws SQLException {
-        Map<String, String> expected = Map.of(
-                "provision_tenant", "chatledger_provisioner",
-                "provision_user", "chatledger_provisioner",
-                "resolve_tenant_for_login", "chatledger_app");
+    void execute_on_every_definer_function_is_held_by_exactly_the_intended_role() throws SQLException {
+        Map<String, String> expected = Map.ofEntries(
+                Map.entry("provision_tenant", "chatledger_provisioner"),
+                Map.entry("provision_user", "chatledger_provisioner"),
+                Map.entry("resolve_tenant_for_login", "chatledger_app"),
+                // Task 9 (V020).
+                Map.entry("demo_mode", "chatledger_app"),
+                Map.entry("demo_claim", "chatledger_app"),
+                Map.entry("demo_init", "chatledger_demo_operator"),
+                Map.entry("demo_create_tenant", "chatledger_demo_operator"),
+                Map.entry("demo_seed_catalog", "chatledger_demo_operator"),
+                Map.entry("demo_mark_ready", "chatledger_demo_operator"),
+                Map.entry("demo_due_for_retirement", "chatledger_demo_operator"),
+                Map.entry("demo_retire", "chatledger_demo_operator"),
+                Map.entry("demo_refresh_lock", "chatledger_demo_operator"));
         try (Connection c = DB.migrateDataSource().getConnection(); Statement s = c.createStatement();
              ResultSet rs = s.executeQuery("SELECT p.proname, "
                      + "(SELECT string_agg(coalesce(nullif(a.grantee, 0)::regrole::text, 'PUBLIC'), ',' ORDER BY a.grantee) "

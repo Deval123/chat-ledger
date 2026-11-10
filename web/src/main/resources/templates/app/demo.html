@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.demo})}">
+</head>
+<!--/* Every page under app/ puts the CSRF token on <body> as an hx-headers attribute (an attribute, not a script). */-->
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main>
+  <h1 th:text="#{demo.title}">Scenarios</h1>
+  <p th:text="#{demo.intro}">Each scenario plays a customer's chat and the payment confirmation that follows.</p>
+  <p class="hint" th:text="#{demo.simulated}">Simulated chat and confirmations: made-up names and numbers.</p>
+
+  <!--/* Plain forms: each button names a scenario and a step and carries no text. The texts shown are for reading. */-->
+  <section th:each="card : ${cards}" th:id="|s-${card.scenario.path()}|" class="scenario" th:attr="aria-labelledby=|t-${card.scenario.path()}|">
+    <h2 th:id="|t-${card.scenario.path()}|" th:text="#{${'demo.scenario.' + card.scenario.name()}}">Happy path</h2>
+    <p class="hint" th:text="#{${'demo.expect.' + card.scenario.name()}}">What to expect.</p>
+    <div class="chat" th:attr="aria-label=#{demo.chat.label}">
+      <p class="bubble from" th:text="${card.script.order}">Order message</p>
+      <p class="bubble to" th:text="#{demo.chat.reply}">Thanks, noted!</p>
+      <p class="bubble from" th:each="line : ${card.script.chatAfterOrder}" th:text="${line}">Paid</p>
+    </div>
+    <div class="feed" th:attr="aria-label=#{demo.feed.label}">
+      <p class="sms" th:each="text : ${card.script.payments}" th:text="${text}">Confirmation</p>
+    </div>
+    <p th:if="${card.waiting}" class="hint" th:text="#{demo.waiting}">The order was sent. Now send the payment.</p>
+    <div class="actions">
+      <form th:action="@{/app/demo/scenarios/{s}/order(s=${card.scenario.path()})}" method="post">
+        <button type="submit" class="secondary" th:text="#{demo.send.order}">Send the order</button>
+      </form>
+      <form th:action="@{/app/demo/scenarios/{s}/payment(s=${card.scenario.path()})}" method="post">
+        <button type="submit" class="secondary" th:text="#{demo.send.payment}">Send the payment</button>
+      </form>
+      <form th:action="@{/app/demo/scenarios/{s}/both(s=${card.scenario.path()})}" method="post">
+        <button type="submit" th:text="#{demo.send.both}">Run both</button>
+      </form>
+    </div>
+  </section>
+</main>
+</body>
+</html>

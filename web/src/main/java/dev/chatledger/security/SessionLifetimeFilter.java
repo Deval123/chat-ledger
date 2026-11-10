@@ -15,7 +15,7 @@ import java.time.Instant;
  * Enforces the absolute session lifetime. The servlet container only has an idle timeout, so a
  * session that stays active could live forever; this ends it a fixed time after sign-in
  * whatever the activity. It runs before the security context is loaded, so an expired session is
- * simply no session.
+ * simply no session. A demo visitor's session also ends when its lease does ({@link SessionAttributes#ENDS_AT}, task 9).
  */
 public class SessionLifetimeFilter extends OncePerRequestFilter {
 
@@ -35,9 +35,14 @@ public class SessionLifetimeFilter extends OncePerRequestFilter {
         HttpSession session = request.getSession(false);
         if (session != null) {
             Object since = session.getAttribute(SessionAttributes.AUTHENTICATED_AT);
-            if (since instanceof Instant signedInAt
-                    && clock.instant().isAfter(signedInAt.plus(properties.session().absoluteTimeout()))) {
+            Object endsAt = session.getAttribute(SessionAttributes.ENDS_AT);
+            Instant now = clock.instant();
+            if (since instanceof Instant signedInAt && now.isAfter(signedInAt.plus(properties.session().absoluteTimeout()))) {
                 events.sessionEnded("absolute-timeout", null, null);
+                session.invalidate();
+            } else if (endsAt instanceof Instant leaseEnd && !now.isBefore(leaseEnd)) {
+                // A demo lease (task 9): the session ends with it even if the refresh job has not retired the workspace yet.
+                events.sessionEnded("demo-lease-ended", null, null);
                 session.invalidate();
             }
         }

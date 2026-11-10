@@ -39,10 +39,17 @@ public record SecurityProperties(
         @DefaultValue Hashing hashing,
         @DefaultValue Limits limits,
         @DefaultValue Size size,
-        @DefaultValue("60s") Duration userRecheckInterval) {
+        @DefaultValue("60s") Duration userRecheckInterval,
+        @DefaultValue("0") int trustedProxyHops) {
+
+    /** At most two proxies may be trusted to report the client's address (task 9, D23). */
+    public static final int MAX_TRUSTED_PROXY_HOPS = 2;
 
     public SecurityProperties {
         requirePositive("app.security.user-recheck-interval", userRecheckInterval);
+        if (trustedProxyHops < 0 || trustedProxyHops > MAX_TRUSTED_PROXY_HOPS) {
+            throw new IllegalArgumentException("app.security.trusted-proxy-hops must be between 0 and " + MAX_TRUSTED_PROXY_HOPS);
+        }
     }
 
     /** Rate limits as text, parsed (and so validated) when the application starts. */

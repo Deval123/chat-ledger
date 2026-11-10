@@ -23,6 +23,23 @@ public class StartupGuards {
         this.environment = environment;
     }
 
+    /**
+     * Names the number of trusted proxies in the startup log (task 9, D23). The value itself is bounded by {@link SecurityProperties},
+     * which stops the application on anything outside 0 to 2.
+     */
+    @PostConstruct
+    void logTrustedProxyHops() {
+        org.slf4j.LoggerFactory.getLogger("security.startup")
+                .info(describeTrustedProxyHops(environment.getProperty("app.security.trusted-proxy-hops", Integer.class, 0)));
+    }
+
+    static String describeTrustedProxyHops(int hops) {
+        return hops == 0
+                ? "app.security.trusted-proxy-hops=0: the client address is the socket address; X-Forwarded-For is ignored"
+                : "app.security.trusted-proxy-hops=" + hops + ": the client address is the X-Forwarded-For entry " + hops
+                        + " from the right; the socket address if the header has fewer entries or a value that is not an address";
+    }
+
     @PostConstruct
     void checkSessionCookie() {
         boolean dev = environment.acceptsProfiles(Profiles.of("dev"));
