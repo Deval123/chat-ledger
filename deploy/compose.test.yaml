@@ -1,0 +1,14 @@
+# deploy/compose.test.yaml: CI and local runs only, never on the VPS. Replaces the release image with one loaded from the archive CI
+# built and scanned (tag chat-ledger:test), so the stack and the smoke script run before anything is pushed:
+#   CHAT_LEDGER_DIGEST=sha256:<64 zeros> docker compose -f compose.yaml -f compose.test.yaml up -d db web refresh
+# The tunnel is not started (no token); the smoke script runs from a curl container on the edge network against http://web:8080.
+services:
+  migrate:
+    image: chat-ledger:test
+    pull_policy: never
+  web:
+    image: chat-ledger:test
+    pull_policy: never
+  refresh:
+    image: chat-ledger:test
+    pull_policy: never

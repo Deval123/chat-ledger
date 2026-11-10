@@ -19,7 +19,8 @@
 
 services:
   postgres:
-    image: postgres:16.4-alpine
+    # The same release and digest as the tests and the deployment (task 13, D9).
+    image: postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     restart: unless-stopped
     environment:
       # Bootstrap superuser — only used during cluster init and by the initdb script.

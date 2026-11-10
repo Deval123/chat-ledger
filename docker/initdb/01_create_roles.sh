@@ -30,6 +30,34 @@
 
 set -euo pipefail
 
+# A password may be given as NAME_FILE instead, the path of a file that holds it (a Compose secret; task 13, D6). Both at once is
+# refused; the value is never printed.
+file_env() {
+    local name="$1" file_name="${1}_FILE"
+    if [ -n "${!name:-}" ] && [ -n "${!file_name:-}" ]; then
+        echo "Refused: both $name and $file_name are set." >&2
+        exit 1
+    fi
+    if [ -n "${!file_name:-}" ]; then
+        if [ ! -r "${!file_name}" ]; then
+            echo "Refused: $file_name does not name a readable file." >&2
+            exit 1
+        fi
+        # The command substitution drops the trailing newline; anything else that is not one line is refused, not joined.
+        local value
+        value="$(cat -- "${!file_name}")"
+        case "$value" in
+            ''|*$'\n'*|*$'\r'*)
+                echo "Refused: the file of $file_name must hold one line." >&2
+                exit 1 ;;
+        esac
+        export "$name"="$value"
+    fi
+}
+for secret in MIGRATE_PASSWORD APP_LOGIN_PASSWORD PROVISION_DB_PASSWORD DEMO_DB_PASSWORD; do
+    file_env "$secret"
+done
+
 : "${MIGRATE_USER:?MIGRATE_USER must be set}"
 : "${MIGRATE_PASSWORD:?MIGRATE_PASSWORD must be set}"
 : "${APP_LOGIN_USER:?APP_LOGIN_USER must be set}"

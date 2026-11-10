@@ -80,4 +80,31 @@ class StartupGuardsTest {
             org.assertj.core.api.Assertions.assertThat(e.getFormattedMessage()).contains("trusted-proxy-hops=1");
         });
     }
+
+    private static void profiles(MockEnvironment env) {
+        new StartupGuards(env).checkProfiles();
+    }
+
+    private static MockEnvironment prod() {
+        MockEnvironment env = good().withProperty("spring.flyway.enabled", "false").withProperty("server.forward-headers-strategy", "none");
+        env.setActiveProfiles("prod");
+        return env;
+    }
+
+    @Test
+    void the_prod_profile_runs_without_flyway_and_without_forwarded_header_rewriting_and_never_with_dev() {
+        assertThatCode(() -> profiles(prod())).doesNotThrowAnyException();
+        assertThatThrownBy(() -> profiles(prod().withProperty("spring.flyway.enabled", "true"))).hasMessageContaining("flyway");
+        MockEnvironment flywayDefault = good().withProperty("server.forward-headers-strategy", "none");
+        flywayDefault.setActiveProfiles("prod");
+        assertThatThrownBy(() -> profiles(flywayDefault)).as("Flyway is on unless switched off").hasMessageContaining("flyway");
+        assertThatThrownBy(() -> profiles(prod().withProperty("server.forward-headers-strategy", "native"))).hasMessageContaining("forward-headers");
+        MockEnvironment both = prod();
+        both.setActiveProfiles("prod", "dev");
+        assertThatThrownBy(() -> profiles(both)).hasMessageContaining("cannot be active together");
+        MockEnvironment devAlways = good().withProperty("app.security.hsts", "always");
+        devAlways.setActiveProfiles("dev");
+        assertThatThrownBy(() -> profiles(devAlways)).hasMessageContaining("hsts");
+        assertThatCode(() -> profiles(good().withProperty("app.security.hsts", "always"))).as("outside dev").doesNotThrowAnyException();
+    }
 }

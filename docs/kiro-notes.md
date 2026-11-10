@@ -1572,3 +1572,358 @@ Nothing survives. I did not set any mutant aside as equivalent.
 - PostgreSQL 16.4 only.
 - The npm packages of the browser tool are still not in the CI vulnerability scan. No Maven dependency was added (the `demo` module uses jqwik at the pinned version).
 - Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.
+
+## Task 13 - deployment (stop 2)
+
+The owner approved D1 to D19 of `.kiro/specs/chat-ledger/task-13-design-stop.md` with three changes: the image pipeline in three jobs with
+every third-party action pinned by SHA, a runbook step to make the GHCR package public, and the tunnel token from a file if the pinned
+cloudflared can read one (it can). Work stays on `task-13-deploy`; nothing was committed by me. The host is the owner's VPS, shared with
+another project; I cannot reach it, so every step there is the owner's and **unverified** until its output is pasted back.
+
+### What was built
+- **The image** (`Dockerfile`, `.dockerignore`): Maven build stage, distroless `java21-debian12:nonroot` runtime (since replaced by
+  `java21-debian13:nonroot`, see "The base moves to Debian 13" below), both by digest; uid
+  65532; the jar root-owned 0444; no shell; an allowlist build context. 261 MB for amd64 (166 MB base, 69 MB jar).
+- **Three commands before Spring**: `db-migrate` (Flyway only, the schema owner's login, refuses options, placeholders, a non-PostgreSQL
+  URL and the application's login; a failure names its class only), `health-probe` (one loopback request; no redirect followed),
+  and the existing `demo-*`.
+- **Secrets as files**: `SecretFiles` for the commands (`NAME_FILE`; refuses both set, a non-regular file, a world-readable or
+  -writable file, over 4 KiB, empty, more than one line); `file_env` in the role script (the same refusals); configtree for the web
+  process; `deploy/make-secrets.sh` writes them (root, 0700 directories, 0440 files to the reader's group, never overwrites, never
+  prints, the token one line of token characters).
+- **The prod profile**: Flyway off, `app.security.hsts=always` (a new bounded setting, refused under dev), relative redirects, no
+  forwarded-header rewriting, actuator on 127.0.0.1:8081, sized pools. `StartupGuards` refuses prod with dev, with Flyway on, or with
+  forwarded headers.
+- **The stack** (`deploy/compose.yaml`): db, migrate, web, refresh, tunnel; three networks of its own; every container hardened and
+  bounded; no published port. Companions: `compose.test.yaml` (CI and local only: swaps the image), `hops-echo.yaml`, `env.example`.
+- **Scripts**: `smoke.sh` (25 checks from outside), `check-host.sh` (read-only, on the VPS), `check-image.sh` (CI), `test-stack.sh`
+  (the drill from nothing, CI and local).
+- **CI**: every action pinned by SHA with its release in a comment; `persist-credentials: false`; `image-build` (build, check, drill,
+  archive), `image-scan` (Trivy by digest on the archive, no write permission), `image-push` (main only, the same archive by id,
+  `--password-stdin`, by commit, digest in the job summary; GitHub's artifact action and the Docker CLI only). `uptime.yml`:
+  `permissions: {}`, two curl requests every 30 minutes.
+- **D9**: every test and the local dev compose now run PostgreSQL 16.15 by the deployment's digest (`PostgresRelease`).
+- **Docs**: `deploy/RUNBOOK.md` (host preparation, Cloudflare, first deploy, the public package, the hops, update, rollback, reset,
+  checks, end of judging, never run); design.md "Deployment (task 13)" and register items 130 to 150; README demo URL and warm-up note.
+
+### The owner's three changes, as built
+- **Three jobs.** As above. How the pins were checked is in the design stop, section 9: each SHA is what the action's own repository's
+  tag resolves to (`git ls-remote ... refs/tags/<tag>^{}`), and the release of that tag exists, not a draft or pre-release. Not
+  verified: the code behind them (no review), and branch evidence for the checkout and setup-java tags (their tags are not on the
+  default branch). `WorkflowFileTest` refuses an unpinned `uses:` or one without its release comment.
+- **Public package.** RUNBOOK step 3.5, with the check: `docker logout ghcr.io`, then an anonymous pull of the digest from the VPS.
+- **Token from a file.** cloudflared 2026.10.7 has `--token-file`. Tested with a read-only root, no capabilities and a made-up token:
+  the file is read ("Provided Tunnel token is not valid"), and a missing file is reported. A real connection is unverified.
+
+### Defects found while building
+- `COPY --chmod=0444` also gave the created `/app` directory 0444, so the jar could not be opened ("Unable to access jarfile"). The
+  mode is set in the build stage now; `check-image.sh` checks both.
+- The Dockerfile's `dependency:go-offline || true` hid any resolution failure. It passes without the mask; the mask is gone.
+- Tomcat turned redirects into absolute `http://` links behind the tunnel (`server.tomcat.use-relative-redirects=true`; found earlier
+  in stop 2 by `ProdProfileIT`).
+- **The drill caught a real deploy defect**: with the role script's directory at 0750, PostgreSQL (uid 70) could not list it, so no
+  role was created and the database never became healthy. It is 0755 (no secret in it), in the drill, the runbook and the layout table.
+- A non-executable initdb script is sourced into the image's entrypoint, where its `file_env` would replace the entrypoint's own. It is
+  installed executable.
+- The role script joined a multi-line password file into one value (`tr -d '\n'`). It refuses anything but one line now.
+- `make-secrets.sh --tunnel-token` kept the first line of piped input and dropped the rest. It refuses more than one line now.
+- `SourceRulesTest` caught `ComposeFileTest` reaching the test-database helper for the image name (it would have needed Docker in the
+  unit phase). The name lives in `PostgresRelease`, a plain constant.
+- `check-image.sh` checked only the health probe's exit code; an image without the command dispatch also exits 1 (Spring fails without
+  a database). It checks the probe's exact output and `db-migrate`'s usage now; proved on a mutated image.
+- My own mistakes in the scripts: the smoke script expected `/login` after sign-out (the demo deployment sends visitors to `/demo`);
+  `check-host.sh` printed the firewall struct and had a route check that matched the egress bridge itself (removed);
+  `test-stack.sh` counted exposed ports as published.
+
+### What each check refuses
+| Check | Refuses |
+|---|---|
+| `SecretFiles` (commands) | both `NAME` and `NAME_FILE`; a missing, non-regular (FIFO, directory) file; world-readable or -writable; over 4096 bytes; empty; more than one line; CR |
+| `file_env` (role script) | both set; an unreadable file; empty; more than one line; CR |
+| `db-migrate` | any option; a missing or blank value; a placeholder; a non-PostgreSQL URL; `MIGRATE_USER` equal to `DB_USER`; prints a failure's class only |
+| `health-probe` | anything but a 200 whose body says UP; a redirect; a port outside 1..65535; extra arguments |
+| `StartupGuards` | prod with dev; Flyway on (or unset) under prod; forwarded headers other than none under prod; `hsts=always` under dev |
+| `make-secrets.sh` | not root; a relative or extra path; an existing directory; a token before the values, empty, over 4096, with other characters, more than one line, or when one exists; a failure leaves nothing behind |
+| `ComposeFileTest` | a service not hardened or unbounded; swap; a published port, privilege, host namespace, device, socket, bind outside the project; another network or a shared name; a route out for anything but the tunnel; an unpinned image or a tag; a secret in `environment` or a wrong-uid secret file; `DEMO_DB_*`, `MIGRATE_*` or a dev profile on web; `JAVA_TOOL_OPTIONS`; a memory plan over 1,312 MiB; a missing log setting; the token on the command line or metrics on every address; a weakened echo or test override |
+| `WorkflowFileTest` | an action not pinned by SHA or without its release; packages permission outside the push job; any write permission elsewhere; a push job that runs another image, action or downloader, or pushes off main, by tag, or without the id check; a scanner not pinned or not failing; a checkout that keeps its token; a secret beyond the two |
+| `DockerfileTest` | an unpinned base; a secret-like ARG or ENV, a secret or ssh mount, ADD; a runtime stage with RUN or another user; a writable jar; a build context that is not an allowlist or that admits an environment file, a key or `.git` |
+| `check-image.sh` | root or another uid; another entrypoint; no revision; a password, secret or token in the history; a working shell; a jar or `/app` not root's; a probe or `db-migrate` not dispatched before Spring |
+| `smoke.sh` | the entry, the CSP by one byte, HSTS, a Server header from the origin, X-Powered-By, cached pages, a script outside `/assets/`, the actuator on the public port, `/health` saying more than UP, the cookie's flags, the board, a scenario, the books, sign-out, any absolute redirect |
+| `check-host.sh` | the six log settings; size at or over 2.4 GB; a published port; a privileged or writable-root container; a socket mount; LLMNR listening; any secret file's owner, group or mode; any extra file under `secrets/` |
+
+### Run locally, and only on the VPS
+**Locally** (my machine, Apple silicon; the faithful runs inside a Docker-in-Docker host, a real Linux file system, so modes and uids
+were enforced; Docker Desktop's own bind mounts show every file as root's and readable by all, so they prove nothing about modes):
+- the image built for amd64 and arm64; `check-image.sh` on it and on eight broken images (all refused);
+- `make-secrets.sh` and every refusal; the secret files read as uid 70 and 65532 under 0440 (a configtree file with a trailing newline
+  accepted; a wrong password refused);
+- PostgreSQL as uid 70 with a read-only root and no capabilities (no fallback needed); the six log settings;
+- migrate (20 migrations), `demo-init`, a 30-workspace seed in 49 s at 0.5 CPU;
+- web healthy 9 to 13 s after `up` (5.6 s JVM start at 1 CPU, native arm64; the VPS's amd64 time is unverified);
+- the smoke script from the edge network: all 25 checks; and 4 defects (HSTS, absolute redirects, a Server header, the demo off) each
+  refused by it;
+- web, refresh and db have no route out and cannot reach 169.254.169.254; the edge network cannot reach db or port 8081; the egress
+  network reaches out; the tunnel reads its token file and is refused by Cloudflare's parser;
+- no secret value in `docker inspect`, the logs or the image history;
+- memory: web 276 to 293 MiB of 640 under eight concurrent request loops and three smoke runs (NMT: 351 MiB committed; heap 192,
+  metaspace 68, symbols 27, code 26), refresh 86 of 192, db 31 to 49 of 384;
+- the reset at 2.4 GB, word for word; `check-host.sh` (with a DROP rule present and absent, and a loosened mode);
+- `test-stack.sh` from nothing, end to end, on the final image.
+
+**Only on the VPS** (unverified until pasted back): host preparation (LLMNR, the metadata rule and firewall backend, no collision,
+room), the Cloudflare tunnel, ingress and zone settings, the public package and the anonymous pull, the first deploy, the hops
+measurement, the smoke script through `https://ledger.nkap.dev`, `check-host.sh`, `docker stats` there, start times at 1 CPU on amd64,
+one rollback rehearsal. CI's three image jobs have not run either: they run on the next push.
+
+### Mutation checks
+Three workers, each on its own copy of the repository; a kill counts only when the build reports a failing test.
+
+- **Before the run**, reading the guards showed gaps, now closed: a FIFO secret (the regular-file check is what stops a reader from
+  blocking forever; the first version of that test hung a worker, so the test attaches a writer), `DB_PASSWORD_FILE` in `DemoCommand`,
+  the management address that `ProdProfileIT` set itself, the token-before-values message, cleanup after a failure half-way, and the
+  role script joining lines (a code change). Two guards were deleted as redundant (register item 150).
+- **First pass**: 117 mutants, 110 killed, 7 survived. Each exposed a missing or weak test: a blank migrate value; a redirect to an UP
+  page; the probe's exit code; a null HSTS setting; the scanner pinned in only one of two steps; Flyway and the management port in the
+  prod file, which `ProdProfileIT`'s own test properties mask (`ProdPropertiesTest` now reads the shipped files alone and runs the real
+  guards on them).
+- **Second pass**, on fresh copies: the five fixable survivors, the FIFO mutant and four new prod-file mutants. 10 of 10 killed. The two
+  masked IT mutants are the same edits as two of these and are counted once.
+
+| Group | Mutants | Killed |
+|---|---|---|
+| `SecretFiles` | 10 | 10 |
+| `db-migrate` | 7 | 7 |
+| `health-probe` | 6 | 6 |
+| HSTS setting, `StartupGuards`, prod profile | 16 | 16 |
+| `DemoCommand` secrets from files | 2 | 2 |
+| `compose.yaml` and its companions | 29 | 29 |
+| Workflows | 18 | 18 |
+| `Dockerfile` and `.dockerignore` | 11 | 11 |
+| `make-secrets.sh` | 16 | 16 |
+| Role script `file_env` | 5 | 5 |
+| **Total** | **120** | **120** |
+
+Detector runs (scripts that check something outside the build): `check-image.sh` refused 8 of 8 broken images; `smoke.sh` refused 4 of
+4 defects and passed the good build; `check-host.sh` refused a loosened mode and found a DROP rule when present. Nothing survives; no
+mutant was set aside as equivalent.
+
+### Tests
+- **Unit phase with Docker stopped** (`docker desktop stop`, `mvn -o clean test`): **607** tests, all green (31 + 156 + 31 + 67 + 23
+  + 10 + 289; was 565). The first run failed one: `SourceRulesTest` caught the unit test that reached the test-database helper (above).
+- **Full build with Docker** (`docker desktop start`, `mvn -o clean verify`): the same unit tests and **653** integration tests, all
+  green, 2 skipped (the two browser fixtures; was 643). The intermittent `MatchingBooksPropertyIT` failure of task 9 did not recur in
+  this run; I did not look for its cause in this task.
+- **New**:
+  - unit: `ComposeFileTest`, `WorkflowFileTest`, `DockerfileTest`, `ProdPropertiesTest`, `SecretFilesTest`, `MigrateCommandTest`,
+    `HealthProbeTest`; additions to `StartupGuardsTest`, `SecurityPropertiesTest`, `DemoCommandTest`;
+  - integration: `ProdProfileIT`, `MakeSecretsScriptIT`, `InitScriptFilesIT`; five ITs moved to PostgreSQL 16.15.
+
+### Deviations from the design stop
+- Non-secret settings in the compose project's `.env`, not `config.env`: Compose reads it by itself, so no command can forget an
+  `--env-file`. The rollback copy is `.env.<date>`.
+- `secrets/` is 0700, not 0710: bind sources are resolved by the Docker daemon as root, so no container needs to enter it.
+- The image is built, checked, drilled and scanned on every push and pull request, not only on `main`; only the push is main-only.
+- Trivy is pinned by image digest (it runs from its own image, per the owner's change), not by an action SHA.
+- Additions: the tunnel's metrics on its loopback and its remote diagnostics off; a fixed egress subnet for D17; `check-host.sh` checks
+  the secret files; `start_interval` on the web health check; the role script directory 0755 and the script executable.
+- The CI drill seeds 10 workspaces (speed); the VPS seeds 30.
+
+### Defenses weakened or traded off (design register items 130 to 150)
+- A shared kernel and Docker daemon.
+- `sudo docker` is root.
+- Hops at 0 until measured.
+- No backup.
+- Deploy downtime.
+- A public, unsigned image.
+- Cloudflare sees clear text; plain HTTP on the edge network.
+- A second JVM for the health probe.
+- Memory safe against current use, not limits; JVM ceilings near the limit.
+- CPU overcommit.
+- Best-effort uptime checks.
+- Zone settings outside the repository.
+- Three values on disk twice; the token shares the application's group.
+- configtree checks no modes.
+- Trusted Unix socket in the db container.
+- Third-party code in CI trusted at its pin.
+- The runtime JRE lags the JDK.
+- The metadata address not blocked by default.
+- The tunnel's egress and token.
+- Verified on my machine, not the VPS.
+- Two redundant guards deleted.
+
+### Not verified
+- Everything on the VPS and in the Cloudflare dashboard (listed above), and CI's three new jobs (they run on the next push).
+- The action SHAs' code (not reviewed) and branch evidence for checkout and setup-java.
+- That the image digests are the publishers' signed builds.
+- The memory and start times on the VPS's amd64 CPU (measured on arm64 only).
+- What Cloudflare and cloudflared write to `X-Forwarded-For` (the hops), and Cloudflare's free-plan limits for this account.
+- That a `DOCKER-USER` rule persists across a reboot on this host.
+- Est. Credits Used: not visible to me from inside the session; read it from the Kiro status bar.
+
+### The first CI run: the image scan caught what the OWASP check did not
+The PR's `Image, scan` job failed on fixable HIGH and CRITICAL findings: ten Debian packages in the pinned distroless base
+(libbrotli1 CRITICAL, libexpat1 eight HIGH, liblcms2-2 HIGH), and five advisories in Jackson 3.1.5 (jackson-core and
+jackson-databind), the version Spring Boot 4.1.1 manages. The owner's rule: fix, no ignore file for any finding with a fix.
+
+- **Jackson.** `jackson-bom.version` is overridden to 3.1.8 in the root POM (the newest of the 3.1 line; 3.2 is a new minor). Every module
+  now resolves 3.1.8. The rebuilt image has no Jackson finding (Trivy, locally). `JacksonVersionTest` reads the versions the libraries
+  report: it fails without the override (3.1.5) and when databind alone is left behind (both mutants killed).
+- **The OWASP check had passed on 3.1.5.** I re-ran it on a copy without the override, with the NVD data updated in the same session:
+  it identified `jackson-core-3.1.5.jar` and `jackson-databind-3.1.5.jar` with the right CPEs and matched none of the five CVEs. With
+  3.1.8 it passes too. So for these advisories the OWASP check was blind and Trivy was not. Why NVD had no match is a guess (version
+  data not yet attached in NVD, while Trivy also reads the GitHub advisory database by Maven coordinates); **unverified**. Register
+  item 154.
+- **The base was not fixed, by the owner's rule.** `gcr.io/distroless/java21-debian12:nonroot` still points to the digest already pinned
+  (`7e37784d…`), and Trivy finds the same ten packages in it: the publisher has not rebuilt it. I stopped there and did not add an
+  exclusion. The image job keeps failing, so nothing is pushed (register item 152). Measured, to choose from:
+  `java21-debian13:nonroot@sha256:d978eefd…` (Java 21.0.13, uid 65532) has no fixable HIGH or CRITICAL finding, and an image built on it
+  passes `check-image.sh` (not drilled); `cc-debian12:nonroot` carries a libssl3 HIGH.
+- **The digest report alone would not have caught this.** Every pin was CURRENT: the vulnerabilities appeared against pins that had
+  not moved. So the weekly read-only workflow (`digests.yml`, `permissions: {}`, no action) does both: `deploy/check-digests.sh`
+  reports moved tags, and `deploy/scan-runtime.sh` rescans the images that run on the VPS.
+- **That rescan found two more.** CI had never scanned the PostgreSQL and cloudflared images. postgres 16.15-alpine: 26 HIGH/CRITICAL,
+  all Go standard-library CVEs in its bundled `gosu`, which its entrypoint runs only when started as root (`db` starts as uid 70).
+  cloudflared 2026.10.7: zlib1g twice and golang.org/x/net. Not re-pinned: pending the owner's decision (register item 153).
+- **Runbook section 10** has the read-only checks, why the image job fails by design, and the steps to fix a base finding, a library
+  finding, and the two other images.
+- **Mutations for the new guards:** 15 of 15 killed. Jackson (override removed; databind behind), the digest report (always CURRENT; a
+  stale pin passing; an unknown hidden; a file not read), the runtime scan (a finding passing; the application image not scanned; the
+  scan never failing; another scanner; the compose pins missed), and the workflow (a write permission, an action, the scan job gone, a
+  push).
+- **Tests:** unit phase with Docker stopped **613** (31 + 156 + 31 + 67 + 23 + 10 + 295); full verify **653** integration tests, 2
+  skipped. `mvn -P security-check verify -DskipTests`: BUILD SUCCESS with 3.1.8.
+- **Not verified:** the CI jobs on the next push (the scan job will still fail on the base until it is decided); that 3.1.8 has no other
+  advisory than the scanners know today; the reason for the NVD gap.
+
+### The base moves to Debian 13, and the other three images
+The owner chose option (a): the runtime base is `gcr.io/distroless/java21-debian13:nonroot@sha256:d978eefd…`, re-resolved today (the
+same digest as when it was proposed). Behind it: Temurin 21.0.13+9 on amd64 and arm64, Debian 13.7, uid 65532. The build stage stays
+`maven:3.9-eclipse-temurin-21` (Temurin 21.0.12.1). **Both are Java 21**; the runtime is now newer than the build JDK, where debian12's
+21.0.10 was older.
+
+**The full drill on the new base:**
+- images built for amd64 (261 MB) and arm64 (271 MB); `check-image.sh` passes on both, including a new check that the runtime is
+  Java 21 (a Java 17 twin is refused);
+- Trivy on both archives, as CI runs it: no fixable HIGH or CRITICAL (Debian 0, `app.jar` 0), exit 0;
+- arm64, natively, in Docker-in-Docker: from nothing, smoke 25 of 25, web healthy 12 s after `up` (Spring 5.9 s), 30 workspaces seeded
+  in 53 s; web 290 MiB at rest, 305 MiB under eight request loops and three smoke runs (NMT 349 MiB committed), refresh 85, db 31;
+  no route out for web, refresh and db; no published port;
+- every process as its uid, read from `/proc` by the new `check-processes.sh`: web and refresh 65532, db 70, nothing as root; every
+  root file system read-only, no capability, no-new-privileges; a root twin and a writable-root twin are refused;
+- the secret files as uid 65532 sees them: `root:65532 0440`, readable by 65532, not by another uid;
+- **amd64 under emulation: the first run failed.** The refresh seed was killed at its 192 MiB limit (`OOMKilled true`, peak about
+  218 MiB); natively on arm64 the same seed peaks at about 119 MiB. My reading is the emulator's translation cache, counted in the
+  container; unverified on a real amd64 CPU. With more memory for that run only (a throwaway override, not in the repository), the
+  amd64 image passed the whole drill (37 checks; web 457 MiB at rest and a 21.9 s start, both emulated). The limits in `compose.yaml`
+  are unchanged; CI's image job runs the drill natively on amd64 with the real limits, and the runbook checks `OOMKilled` after the
+  first seed on the VPS (register 158).
+
+**PostgreSQL, cloudflared, the hops echo.** The newest releases are the digests already pinned (`16-alpine` = 16.15-alpine; cloudflared
+2026.10.7 = latest; whoami v1.12.0 = latest), so re-pinning changed nothing and the findings stand.
+- **PostgreSQL: accepted, with evidence** (register 155). All 26 findings are the Go standard library in `/usr/local/bin/gosu`. The
+  image calls gosu in three places, each `exec gosu postgres "$BASH_SOURCE" "$@"` directly under `if [ "$(id -u)" = '0' ]; then`
+  (docker-entrypoint.sh line 341, and the two initdb helpers); gosu is 0755 and the image has no setuid file; db starts as 70:70,
+  read-only, with no capabilities and no-new-privileges. `deploy/check-gosu.sh` checks all of it on the pinned image and traces the
+  image's own entrypoint with `bash -x` under those settings: gosu is never executed, and the server comes up as uid 70; started as
+  root, the same trace does show gosu (the control). `CheckGosuIT` runs it and shows each check failing on a broken compose file or
+  image (db as root, a writable root, an unguarded call, a fourth call, a setuid gosu, no call at all). `scan-runtime.sh` leaves out
+  that one file only in a run where the evidence passes: re-checked every week, and the acceptance ends when it fails.
+- **cloudflared: not accepted, pending the owner** (register 156). zlib1g twice (its Debian 13 base; the binary is static, so libz is
+  never loaded) and golang.org/x/net v0.61.0 (an `x/net/html` DoS; that package is not linked into the binary). Checked on both
+  architectures.
+- **whoami: not accepted, pending the owner** (register 157). 17 findings in its binary; it runs only for the hops measurement.
+- **The weekly scan covers four images** (application, PostgreSQL, cloudflared, hops echo). The image job's gate in `ci.yml` is
+  unchanged. Until 156 and 157 are decided, the weekly scan fails, which is its notification.
+
+**Mutations for this round:** 18 of 18 killed. The base in `DockerfileTest` (back to debian12; a Java 17 runtime; a JDK 17 build); the
+gosu acceptance in `scan-runtime.sh` (skipped without evidence; skipped everywhere; broadened to a directory; the echo or the
+application image left out; any application image accepted); and every check of `check-gosu.sh` (each check made to pass always, the
+trace run as root). Detector runs: a Java 17 twin (`check-image.sh`), and a root twin and a writable-root twin (`check-processes.sh`).
+Two checks were deleted as redundant (register 159).
+
+**Not verified:** the amd64 memory and start time on a real CPU (CI's next run and the VPS); CI's three image jobs and the weekly
+workflow on GitHub; whether Debian 13's newer system libraries change anything at run time beyond the drill.
+
+### cloudflared and the hops echo accepted, refresh at 256 MiB
+The owner's decisions: cloudflared accepted on the evidence, whoami for the one hops measurement only, refresh raised to 256 MiB.
+
+- **cloudflared (register 156).** `deploy/check-cloudflared.sh` proves it from the pinned image, on both architectures: the entrypoint
+  is `cloudflared` and compose does not override it; the binary has no program interpreter, so no dynamic loader runs and libz is
+  never loaded; it keeps its symbol table (about 41,000 symbols); and no `golang.org/x/net/html` symbol is in it. `CheckCloudflaredIT`
+  builds twins of the pinned image with a small Go program in place of the binary (a local module stands in for `x/net`, so no network
+  is needed) and shows each check refusing its twin: dynamically linked, stripped, with the html package, another entrypoint, and a
+  compose file that overrides it; a static twin without the package passes. `scan-runtime.sh` accepts, and only in a run where that
+  evidence passes, any zlib1g finding and CVE-2026-78661 by id; another x/net finding still fails, because other x/net packages are
+  linked. No ignore file.
+- **whoami (register 157).** Time-boxed: pinned by digest, hardened like every service, on the `edge` network only (no route out),
+  never restarted. The runbook now creates the DNS record and tunnel route for `ledger.nkap.dev` at the moment of the measurement,
+  pointed at the echo; removes the echo right after; and routes the hostname to web only then. `check-host.sh` fails whenever a
+  hops-echo container exists (a detector run with a running echo twin: FAIL; removed: PASS). The weekly scan lists its findings.
+- **refresh 256 MiB (register 158).** `-Xmx96m` kept. 1,376 MiB (1.34 GiB) while serving: at the other project's current use that leaves
+  about 1.36 GiB free on the 3.7 GiB host; with both projects at their limits, 3,680 MiB, about 110 MiB for the host itself. The amd64
+  image passed the drill under emulation with the real limits this time (37 checks, refresh 136 MiB of 256 at rest, web 450 of 640; a
+  10-workspace seed). The out-of-memory check after the first seed on the VPS stays in the runbook (step 3.11).
+- **Mutations:** 16 of 16 killed: the cloudflared acceptance in `scan-runtime.sh` (without evidence; any x/net finding; any OS package;
+  an uncovered finding passing; an unreadable image passing), the echo listing (unreadable passing), the compose limits and the echo's
+  hardening, and each check of `check-cloudflared.sh`. Two checks were deleted as redundant (register 160): the `CGO_ENABLED` flag and
+  the `NEEDED` count, which no twin could tell from the interpreter check.
+- **Not verified:** a real amd64 CPU (CI's next run, then the VPS); the 30-workspace seed on amd64 at 256 MiB (only a 10-workspace seed
+  ran there); the Cloudflare behaviour of creating the DNS record with the public hostname, which is how the dashboard works as far
+  as I know, not something I could try.
+- **Found, not fixed: the task 9 intermittent property failure is now reproducible.** The final `mvn -o clean verify` ran 665
+  integration tests: 664 passed, 2 skipped, and `MatchingBooksPropertyIT` "a rematch repeated reaches a point where it changes
+  nothing" failed ("a rematch kept changing things for more passes than there are free payments"). jqwik replays a stored failure
+  first, so every rerun here fails with seed `3454080274824834196` (kept in the git-ignored `web/.jqwik-database`). The same seed fails
+  on the owner's commit `641436d`, checked in a separate worktree, and that commit passes with fresh random seeds, so this round's
+  changes do not cause it (and the Jackson override alone does not change it). It is a defect in the rematch logic or in the property,
+  outside task 13; reproduce with `@Property(seed = "3454080274824834196")` on that property. The unit phase with Docker stopped is
+  green (616).
+
+## The non-convergent rematch (found in task 13, fixed in the matching engine)
+
+`MatchingBooksPropertyIT` "a rematch repeated reaches a point where it changes nothing" failed with jqwik seed `3454080274824834196`.
+Treated as an engine bug until proven otherwise; it was one, in what the engine reports, not in what it decides.
+
+**The scenario, shrunk by hand** (jqwik's own shrinking stopped at 17 steps; a temporary test removed one step at a time while the
+failure held, down to 5):
+1. a payment of 1,000 arrives without a transaction id (a forwarded text);
+2. an order of 2,500 with its own reference arrives;
+3. the seller matches the 1,000 to it by hand: 1,500 left to pay;
+4. a payment of 2,500 mirroring the order arrives; against 1,500 left it overpays, so the pair is flagged `OVERPAYMENT` and suggested;
+5. the seller unmatches the 1,000: 2,500 left again, so the 2,500 payment now fits exactly and the planner proposes it as automatic.
+
+Every rematch pass from then on: `examined=2 applied=0 suggested=1`, and the books' fingerprint (matches, flags, orders, payments,
+ledger) did not change at all. The automatic step, under the lock, found the pair's open flag (task 7, D3: any flag keeps a pair
+suggestion-only), kept the suggestion already stored, and `onPaymentRecorded` counted that as one new suggestion, unconditionally.
+So `suggested()` never reached 0 although nothing changed.
+
+**The cause, against the candidates.** A suggestion counted on every pass although nothing changed: yes (the line
+`result.reason() == Reason.FLAGGED ? new Run(RunKind.SUGGESTED, null, 1)`). D3 is what makes the pair degrade each time, and it is
+right: the stale overpayment flag stays until the seller resolves it. Not the cause: flags written between passes (the flag set is
+identical on every pass), candidate order (one candidate), the clock (the scenario fails the same on four commits run at different
+times).
+
+**Which task.** The same seed and the 5-step scenario, each in a throwaway worktree (sibling modules built in the reactor, nothing
+installed): the task 6 merge `cb8bc6e` and the task 8 merge `a583271` pass (pass 0 matches the pair automatically, then nothing);
+the task 7 merge `197c9dd` and main `8405def` fail exactly as above. Introduced by task 7, with the degrade-on-flag step.
+
+**The property was right; the engine was fixed.** Repeated rematch must settle, and re-reporting a stored suggestion is not a change.
+`ApplyResult` now carries `suggestionWritten`, true only when the flagged automatic step stored a new suggestion, and the run counts
+from it. The decision is unchanged: the pair is still never matched automatically while flagged, and the existing suggestion is kept.
+The Java check "insert only if no suggestion exists" was dropped as redundant: the unique index `uq_match_open_pair` already refuses a
+second open suggestion, and the insert's result says whether a row was written.
+
+**Tests.** `RematchSettlesIT.a_flagged_pair_already_suggested_is_not_counted_again_so_a_repeated_rematch_settles` (the 5-step
+scenario: three passes report nothing and change nothing; D3 still holds); `FlagMatchingIT` gains
+`a_flagged_run_counts_the_suggestion_it_wrote_once_and_never_again` and checks `suggestionWritten` both ways; the seed is kept as
+`MatchingBooksPropertyIT.the_sequences_of_seed_3454080274824834196_settle` (fixed seed, 5 tries), and the random property is unchanged
+(20 tries, same bound, no retry).
+
+**Mutations:** 6 of 6 killed: counting every degrade (the original bug), counting none, `suggestionWritten` always true, always false,
+or meaning "kept", and the existing suggestion not kept. The first run left "count none" alive; the new `FlagMatchingIT` test kills it.
+
+**Weakened defenses:** none. No decision changed, no check was loosened, and the dropped Java pre-check is enforced by the database's
+unique index, which was already the guard.
+
+**Observed, not changed:** the `OVERPAYMENT` flag of step 4 stays open after step 5 although the payment no longer overpays, so the
+pair stays a suggestion until the seller looks at it. That is D3 as designed (the seller has the last word on a flagged pair).

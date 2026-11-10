@@ -44,7 +44,8 @@ import java.util.Set;
  * services, matcher and suspicion rules the web process uses, on the application's login, so the seed is real input. The pool is changed
  * only through the V020 functions, on the demo operator's login.
  *
- * <p>Configuration comes from the environment only: {@code DB_URL}, {@code DB_USER} and {@code DB_PASSWORD} (the application login),
+ * <p>Configuration comes from the environment only (each password and the secret may be given as {@code NAME_FILE} instead, the path of
+ * a file that holds it): {@code DB_URL}, {@code DB_USER} and {@code DB_PASSWORD} (the application login),
  * {@code DEMO_DB_USER} and {@code DEMO_DB_PASSWORD} (the demo operator), and {@code APP_SECRET} (the web process's own, so phone hashes
  * agree). Nothing secret is printed; a database failure is reported by SQLSTATE only.
  *
@@ -165,6 +166,14 @@ public final class DemoCommand {
             }
         }
 
+        // A secret may come from a file instead (NAME_FILE, a Compose secret; task 13, D6). From here on, env holds the values.
+        Map<String, String> env;
+        try {
+            env = dev.chatledger.security.SecretFiles.resolve(this.env, List.of("DB_PASSWORD", "DEMO_DB_PASSWORD", "APP_SECRET"));
+        } catch (dev.chatledger.security.SecretFiles.Refused e) {
+            err.println(e.getMessage());
+            return REFUSED;
+        }
         for (String name : REQUIRED) {
             String value = env.get(name);
             if (value == null || value.isBlank()) {

@@ -1,0 +1,26 @@
+# deploy/hops-echo.yaml: a throwaway header echo for measuring app.security.trusted-proxy-hops through the real tunnel (D12).
+# Used for about ten minutes, once, then removed (RUNBOOK.md, "Measure the hops"):
+#   sudo docker compose -f /opt/chat-ledger/compose.yaml -f /opt/chat-ledger/hops-echo.yaml up -d hops-echo
+#   (point the tunnel's public hostname at http://hops-echo:8080 in the dashboard, measure, point it back at http://web:8080)
+#   sudo docker compose -f /opt/chat-ledger/compose.yaml -f /opt/chat-ledger/hops-echo.yaml rm -sf hops-echo
+# It prints every request header it receives, so it sits on the edge network only (no route out) with the same hardening as the rest.
+services:
+  hops-echo:
+    image: traefik/whoami:v1.12.0@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44
+    user: "65532:65532"
+    command: ["--port", "8080"]
+    networks:
+      - edge
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 50
+    mem_limit: 32m
+    memswap_limit: 32m
+    cpus: 0.25
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "1"

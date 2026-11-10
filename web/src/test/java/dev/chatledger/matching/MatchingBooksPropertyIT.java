@@ -344,6 +344,20 @@ class MatchingBooksPropertyIT {
 
     @Property(tries = 20)
     void a_rematch_repeated_reaches_a_point_where_it_changes_nothing(@ForAll("sequences") ActionSequence<World> sequence) {
+        rematchSettles(sequence);
+    }
+
+    /**
+     * The regression example for the non-convergent rematch (task 13 follow-up; RematchSettlesIT has the scenario shrunk by hand): this
+     * seed's fifth sequence ends with a pair planned as automatic but kept suggestion-only by an open flag, and the rematch reported its
+     * stored suggestion as new on every pass. Fixed seed, so the same sequences run every time.
+     */
+    @Property(tries = 5, seed = "3454080274824834196")
+    void the_sequences_of_seed_3454080274824834196_settle(@ForAll("sequences") ActionSequence<World> sequence) {
+        rematchSettles(sequence);
+    }
+
+    private static void rematchSettles(ActionSequence<World> sequence) {
         World world = new World();
         sequence.run(world);
         int free = (int) MatchingFixture.count("SELECT count(*) FROM payment WHERE tenant_id = ? AND status IN ('RECEIVED', 'UNVERIFIED')", world.tenant, null);

@@ -215,7 +215,11 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
     the seller (reverse and post again, in one transaction, audited). Seller only, with a check page; until then a wrong total stays.
   - _Requirements: 6.3, 10_
 
-- [ ] 13. Deployment
+- [x] 13. Deployment
+  - **Done in stop 2** (`task-13-design-stop.md`, D1 to D19 and the owner's three changes; register items 130 to 150). The host is the
+    owner's VPS, not a free container host: `deploy/compose.yaml` behind chat-ledger's own Cloudflare tunnel at `ledger.nkap.dev`;
+    image built, checked, drilled, scanned and pushed by CI in three jobs; secrets as files; `deploy/RUNBOOK.md` for every operator
+    step. Each sub-item below is covered there. **The VPS steps are the owner's and unverified until their outputs are pasted back.**
   - Docker image, free container host, health check, demo URL documented (there are no demo credentials: task 9, D19), warm-up note.
   - **Set `app.security.trusted-proxy-hops` for the host** (task 9, D23): the number of proxies in front of the application that append to
     `X-Forwarded-For` (0 to 2). At 0 behind a proxy every visitor shares one address key and the sixth judge in an hour is refused a demo.
@@ -229,6 +233,10 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
   - **Database server logging**: PostgreSQL writes the failing row (`DETAIL: Failing row contains (...)`) and, with some settings, bound
     parameter values to its own log. Order rows hold message text and names. Set `log_error_verbosity = terse`, `log_statement = none`
     and `log_min_duration_statement = -1` (or hand the log to the operator only) and add that to the deployment checklist.
+  - Where each sub-item landed: the image and health check (`Dockerfile`, `health-probe`, `deploy/check-image.sh`); the demo URL and
+    warm-up note (README); the hops (RUNBOOK "Measure the hops", 0 until then); two processes as two containers (`web`, `refresh`;
+    the entrypoint is kept for single-container hosts); the size line (RUNBOOK "Size", `check-host.sh`); the log settings (the `db`
+    command, `ComposeFileTest`, `check-host.sh`).
 
 - [ ] 14. Submission material
   - Under-3-minute video, write-up of how Kiro was used, README, blog post, social post.

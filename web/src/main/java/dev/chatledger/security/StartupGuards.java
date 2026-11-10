@@ -40,6 +40,32 @@ public class StartupGuards {
                         + " from the right; the socket address if the header has fewer entries or a value that is not an address";
     }
 
+    /**
+     * The production profile (task 13): never together with {@code dev}; Flyway off (the web process does not hold the schema owner's
+     * login: migrations run in their own process); no forwarded-header rewriting by Tomcat (only {@code ClientAddress} reads
+     * {@code X-Forwarded-For}, at the configured hops). And {@code app.security.hsts=always} is refused under {@code dev}, which serves
+     * plain HTTP on localhost.
+     */
+    @PostConstruct
+    void checkProfiles() {
+        boolean dev = environment.acceptsProfiles(Profiles.of("dev"));
+        boolean prod = environment.acceptsProfiles(Profiles.of("prod"));
+        if (dev && prod) {
+            throw new IllegalStateException("The dev and prod profiles cannot be active together");
+        }
+        if (dev && "always".equalsIgnoreCase(environment.getProperty("app.security.hsts", "if-secure"))) {
+            throw new IllegalStateException("app.security.hsts=always is refused under the dev profile");
+        }
+        if (prod) {
+            if (environment.getProperty("spring.flyway.enabled", Boolean.class, true)) {
+                throw new IllegalStateException("The prod profile runs with spring.flyway.enabled=false (migrations run in db-migrate)");
+            }
+            if (!"none".equalsIgnoreCase(environment.getProperty("server.forward-headers-strategy", ""))) {
+                throw new IllegalStateException("The prod profile needs server.forward-headers-strategy=none");
+            }
+        }
+    }
+
     @PostConstruct
     void checkSessionCookie() {
         boolean dev = environment.acceptsProfiles(Profiles.of("dev"));

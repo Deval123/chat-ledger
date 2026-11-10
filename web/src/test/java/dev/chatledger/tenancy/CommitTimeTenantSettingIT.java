@@ -42,7 +42,7 @@ class CommitTimeTenantSettingIT {
     @Container
     @SuppressWarnings("resource")
     static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:16.4-alpine")
+            new PostgreSQLContainer<>(dev.chatledger.ledger.LedgerDatabase.image())
                     .withDatabaseName("scratch")
                     .withUsername("scratch_owner")
                     .withPassword(UUID.randomUUID().toString());

@@ -46,7 +46,12 @@ mvn -pl web spring-boot:run
 GitHub Actions runs on every push:
 
 1. `mvn verify` — builds all modules and runs tests.
-2. `mvn -P security-check verify -DskipTests` — OWASP dependency vulnerability scan (fails on CVSS ≥ 7).
+2. `mvn -P security-check verify -DskipTests` — OWASP dependency vulnerability scan (fails on CVSS ≥ 7; pull requests and daily).
+3. The image, in three jobs: build it to an archive and run the whole deployment stack and its smoke test on it; scan the archive with
+   Trivy (fails on a fixable HIGH or CRITICAL finding); on `main` only, push that same archive to `ghcr.io/deval123/chat-ledger`,
+   from a job that runs no third-party code. Every action is pinned by commit SHA.
+
+A separate `Uptime` workflow checks the public demo every 30 minutes.
 
 ## Security notes
 
@@ -57,8 +62,17 @@ GitHub Actions runs on every push:
 
 ## Demo
 
-The demo tenant uses synthetic data only. No real phone numbers, names, or
-operator wording appear anywhere in the repository.
+**https://ledger.nkap.dev** opens a demo workspace in one click. There is no sign-up and no demo password: each visitor gets a
+workspace of made-up data for 30 minutes, with seven scenarios to run (the scenarios page).
+
+The demo uses synthetic data only. No real phone numbers, names, or operator wording appear anywhere in the repository.
+
+**Warm-up.** The demo runs on an always-on server, so there is no cold start for visitors. Right after a deploy or a restart, the
+application takes up to a minute to start (Cloudflare answers 502 until then), and the first pool of demo workspaces about one more
+minute to fill ("All demo workspaces are in use" until then).
+
+How it is deployed (a Docker Compose stack behind its own Cloudflare tunnel, on a server shared with another project):
+`deploy/RUNBOOK.md`.
 
 ## Creating a workspace and users (operator only)
 

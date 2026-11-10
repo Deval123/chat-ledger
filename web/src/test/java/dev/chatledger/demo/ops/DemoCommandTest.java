@@ -93,6 +93,60 @@ class DemoCommandTest {
     }
 
     @Test
+    void a_secret_given_both_ways_or_in_a_world_readable_file_is_refused() throws java.io.IOException {
+        java.nio.file.Path f = java.nio.file.Files.createTempFile("demo", ".secret");
+        try {
+            java.nio.file.Files.writeString(f, "file-value-not-real\n");
+            java.nio.file.Files.setPosixFilePermissions(f, java.nio.file.attribute.PosixFilePermissions.fromString("r--r--r--"));
+            Map<String, String> everyone = env();
+            everyone.remove("DEMO_DB_PASSWORD");
+            everyone.put("DEMO_DB_PASSWORD_FILE", f.toString());
+            assertThat(run(everyone, "demo-init")).isEqualTo(DemoCommand.REFUSED);
+            Map<String, String> both = env();
+            both.put("APP_SECRET_FILE", f.toString());
+            assertThat(run(both, "demo-init")).isEqualTo(DemoCommand.REFUSED);
+            assertThat(errors()).contains("both APP_SECRET and APP_SECRET_FILE").doesNotContain("file-value-not-real");
+        } finally {
+            java.nio.file.Files.deleteIfExists(f);
+        }
+    }
+
+    @Test
+    void every_secret_can_come_from_its_own_file_and_each_login_gets_its_own_value() throws Exception {
+        java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("demo-secrets");
+        try {
+            Map<String, String> env = env();
+            for (String name : new String[]{"DB_PASSWORD", "DEMO_DB_PASSWORD", "APP_SECRET"}) {
+                java.nio.file.Path f = dir.resolve(name);
+                java.nio.file.Files.writeString(f, (name.equals("APP_SECRET") ? "s".repeat(40) : "from-file-" + name) + "\n");
+                java.nio.file.Files.setPosixFilePermissions(f, java.nio.file.attribute.PosixFilePermissions.fromString("r--r-----"));
+                env.remove(name);
+                env.put(name + "_FILE", f.toString());
+            }
+            java.util.List<String> opened = new java.util.ArrayList<>();
+            DemoCommand.Databases recording = (url, user, password) -> {
+                opened.add(user + "|" + password);
+                return (DataSource) java.lang.reflect.Proxy.newProxyInstance(DataSource.class.getClassLoader(), new Class<?>[]{DataSource.class},
+                        (proxy, method, args) -> {
+                            throw new java.sql.SQLException("no database in this test");
+                        });
+            };
+            int code = new DemoCommand(env, recording, d -> false, new PrintStream(out, true, StandardCharsets.UTF_8),
+                    new PrintStream(err, true, StandardCharsets.UTF_8)).run(new String[]{"demo-refresh"});
+            assertThat(code).as(errors()).isNotEqualTo(DemoCommand.USAGE).isNotEqualTo(DemoCommand.REFUSED);
+            assertThat(opened).containsExactly("demo_login|from-file-DEMO_DB_PASSWORD", "app_login|from-file-DB_PASSWORD");
+            assertThat(errors() + out.toString(StandardCharsets.UTF_8)).doesNotContain("from-file-");
+        } finally {
+            try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.list(dir)) {
+                for (java.nio.file.Path f : files.toList()) {
+                    java.nio.file.Files.delete(f);
+                }
+            }
+            java.nio.file.Files.delete(dir);
+        }
+    }
+
+    @Test
     void a_weak_application_secret_is_refused_before_any_seed() {
         Map<String, String> weak = env();
         weak.put("APP_SECRET", "short");

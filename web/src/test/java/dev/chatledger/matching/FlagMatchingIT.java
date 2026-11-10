@@ -203,10 +203,25 @@ class FlagMatchingIT {
         assertThat(r.outcome()).isEqualTo(MatchingService.Outcome.DEGRADED_TO_SUGGESTION);
         assertThat(r.reason()).isEqualTo(MatchingService.Reason.FLAGGED);
         assertThat(r.matchId()).as("the suggestion written with the finding").isNotNull();
+        assertThat(r.suggestionWritten()).as("this step wrote it").isTrue();
         // Both are there after the degrade: the finding and the suggestion committed in one transaction.
         assertThat(flags("PAID_BEFORE_ORDER", payment, order)).isEqualTo(1);
         assertThat(suggested(order, payment)).isEqualTo(1);
         assertThat(f.repository.find(tenant, r.matchId()).orElseThrow().state()).isEqualTo("SUGGESTED");
+        assertThat(auto()).isZero();
+    }
+
+    @Test
+    void a_flagged_run_counts_the_suggestion_it_wrote_once_and_never_again() {
+        UUID payment = payment(smsPaidAgo(5000, "Ana Kamga", PHONE, "A-1", Duration.ofHours(2)));
+        UUID order = order("A-1", "Ana Kamga", PHONE, 5000);
+        MatchingService.Run first = f.matcher.onPaymentRecorded(tenant, payment);
+        assertThat(first.kind()).isEqualTo(MatchingService.RunKind.SUGGESTED);
+        assertThat(first.suggestions()).as("the suggestion this run wrote, with its finding").isEqualTo(1);
+        MatchingService.Run second = f.matcher.onPaymentRecorded(tenant, payment);
+        assertThat(second.kind()).isEqualTo(MatchingService.RunKind.SUGGESTED);
+        assertThat(second.suggestions()).as("the same suggestion, kept: nothing new").isZero();
+        assertThat(suggested(order, payment)).isEqualTo(1);
         assertThat(auto()).isZero();
     }
 
@@ -222,9 +237,14 @@ class FlagMatchingIT {
         assertThatThrownBy(() -> failing.matcher.apply(tenant, order, payment, MatchingService.Mode.AUTO, null)).hasMessageContaining("injected failure");
         assertThat(count("SELECT count(*) FROM flag WHERE tenant_id = ?", tenant, null)).as("no finding without its suggestion").isZero();
         assertThat(count("SELECT count(*) FROM match WHERE tenant_id = ?", tenant, null)).as("no suggestion without its finding").isZero();
-        // and the retry writes both, once
-        assertThat(f.matcher.apply(tenant, order, payment, MatchingService.Mode.AUTO, null).reason()).isEqualTo(MatchingService.Reason.FLAGGED);
-        assertThat(f.matcher.apply(tenant, order, payment, MatchingService.Mode.AUTO, null).reason()).isEqualTo(MatchingService.Reason.FLAGGED);
+        // and the retry writes both, once: the first retry reports the suggestion it wrote, the second keeps it and reports none
+        MatchingService.ApplyResult first = f.matcher.apply(tenant, order, payment, MatchingService.Mode.AUTO, null);
+        MatchingService.ApplyResult second = f.matcher.apply(tenant, order, payment, MatchingService.Mode.AUTO, null);
+        assertThat(first.reason()).isEqualTo(MatchingService.Reason.FLAGGED);
+        assertThat(second.reason()).isEqualTo(MatchingService.Reason.FLAGGED);
+        assertThat(first.suggestionWritten()).isTrue();
+        assertThat(second.suggestionWritten()).as("the suggestion already there is kept, not written again").isFalse();
+        assertThat(second.matchId()).isEqualTo(first.matchId());
         assertThat(flags("PAID_BEFORE_ORDER", payment, order)).isEqualTo(1);
         assertThat(suggested(order, payment)).isEqualTo(1);
     }
