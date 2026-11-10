@@ -149,7 +149,8 @@ Each rule is a small class returning zero or one finding with a code; the reason
 
 - Phone numbers stored hashed with a per-tenant salt plus the last 4 digits for display.
 - Secrets from environment variables only. A pre-commit secret scan.
-- The demo tenant is read-write on synthetic data and reset on a schedule.
+- The demo runs on its own deployment and database; each visitor gets a fresh synthetic workspace for a short lease, which is then
+  retired, never deleted (task 9, section "Demo deployment").
 
 Everything about tenants, login, sessions, roles, request limits and headers is in the next
 section. Status: **proposed, awaiting approval** (task 3, requirement 9).
@@ -742,6 +743,32 @@ The decisions D1 to D22 are in `task-8-design-stop.md` (approved). What was buil
 
 ### Trade-offs and weakened defenses (task 8): register items 76 to 95, below.
 
+## Demo deployment (task 9)
+
+The decisions D1 to D25 are in `task-9-design-stop.md` (approved; D3 and D4 changed, D22 to D25 added by the owner). What was built:
+
+- **Two switches, both off by default.** `app.demo.enabled` (config) and `deployment_mode` (one row in the database, REGULAR until the
+  demo operator's `demo_init` moves it to DEMO on a database with no regular workspace, never back). The application refuses to start
+  with the first on and the second off. In DEMO mode `provision_tenant` refuses; in REGULAR mode every demo function refuses.
+- **Workspaces.** `tenant.kind` (REGULAR or DEMO) is tied to the `demo-` slug prefix and frozen with the slug by a trigger. `demo_tenant`
+  holds the pool (SEEDING, READY, CLAIMED, RETIRED; forward only; never deleted); its key includes the tenant's kind, so a row can name
+  a demo workspace only. Password sign-in (`resolve_tenant_for_login`) and `provision_user` reach regular workspaces only.
+- **Entry.** `GET /demo` (one sentence, one button) and `POST /demo`: no field but the CSRF token; `demo_claim` hands out the oldest fresh
+  ready workspace (SKIP LOCKED); the principal is read back from the seller row as sign-in does; new session id and CSRF token;
+  `DEMO_ENTERED` audit row; the session ends with the lease (30 minutes). A visitor already in a workspace is sent back to it (D22).
+  Limits: the page per address, the claim per address and in total, scenario steps per workspace. The client address comes from
+  `app.security.trusted-proxy-hops` (0 to 2, default 0).
+- **Input.** The scenarios page and its steps take a scenario and a step from fixed lists, never text; every write goes through the
+  ingestion services as the workspace's seller. A demo workspace refuses phone numbers outside `+999` and holds at most 300 orders and
+  payments (application sentence, database trigger).
+- **Upkeep.** `demo-init` and `demo-refresh` (once, or `--every 60s..3600s`) on the demo operator's login (EXECUTE on the demo functions
+  only) and the application login for the seed. Retire disables the workspace and overwrites raw text, names, phone hashes, last four
+  digits, line labels and delivery notes; the ledger, the audit log and the flags are untouched. The entrypoint
+  (`docker/demo-entrypoint.sh`) runs the loop as a second process; the web process never holds the operator's login.
+- **Size** (measured on the test container): about 130 rows and 100 KB a seeded workspace, about 240 rows and 150 KB after a visit.
+
+### Trade-offs and weakened defenses (task 9): register items 111 to 129, below.
+
 ## Testing strategy
 
 - Unit tests for parsers, scoring, and each suspicion rule, with a table of examples.
@@ -862,3 +889,22 @@ The demo credentials go in the Devpost testing field.
 | 108 | **`app.suspicion.disabled` (a list of codes) instead of one `enabled` key per rule** | One setting, validated against the enum at startup; a typo stops the application | A small deviation from the design stop's wording; the switched-off codes are logged at startup |
 | 109 | **Test fixtures share one set of phone keys** (`MatchingFixture.SHARED_KEYS`) | Two fixtures hashed one phone differently and R7 fired in tests that were not about it | Test-only; the production hashing (per-tenant salt) is unchanged |
 | 110 | **The older concurrency tests now give each payer its own phone** | Sixteen payments from one phone are a burst (R6), which those tests are not about | A new test asserts the burst count for sixteen at once from one phone |
+| 111 | **A public endpoint signs a visitor in without a password** (`POST /demo`) | Judges open the URL with no account (requirement 7) | Off by default and only on a database in DEMO mode (startup refuses otherwise); reaches DEMO workspaces only, through `demo_claim`; CSRF, per-address and global limits, session fixation protection, an audit row, a 30-minute lease; password sign-in refuses demo workspaces, so the doors never cross (`DemoEntryIT`, `DemoSchemaIT`) |
+| 112 | **The application role may call `demo_claim`, which writes a row it cannot otherwise write** | The web process must lease a workspace | It changes only `demo_tenant.state`, `claimed_at` and `lease_ends_at` of one READY demo workspace, only in DEMO mode; the application still creates no tenant and no user |
+| 113 | **Nine new `SECURITY DEFINER` functions** | The pool must be changed without table privileges for anyone | Each has a fixed `search_path`, checks the mode and the workspace's kind itself, is on the guard's allowlist and has exactly one grantee (`ProvisioningIT`, `DemoSchemaIT`) |
+| 114 | **Two tables outside the per-table isolation probe** (`deployment_mode`, `demo_tenant`) | One has no tenant column; the other's rows can only name demo workspaces, which the probe's seeds are not | Row-level security on both; no grant to the application on either; named on the coverage allowlist with the reason; behaviour proven in `DemoSchemaIT` |
+| 115 | **A new role, `chatledger_demo_operator`, and its login** | Seed and reset must not run as the web process or the owner | EXECUTE on the demo functions only, no table privilege (tested); its login exists only where `DEMO_DB_USER` is set; the web process is started without it |
+| 116 | **Visitors act as sellers** | The demo must show confirm, undo, resolve and export | Only in their own leased synthetic workspace; the row cap, the ingestion, action and step limits apply |
+| 117 | **Free text in a demo may carry real personal data** | No rule can recognise a real name in text | Parsed phones outside `+999` are refused; only the visitor who typed it sees it, for at most the lease plus one refresh period; retire overwrites it |
+| 118 | **Retired workspaces stay in the database** | The ledger, the audit log and the flags are never deleted | Disabled and overwritten; growth bounded by the claim limits and the row cap; a full wipe is dropping the demo database (task 13 runbook) |
+| 119 | **The ingestion services know about demo workspaces** | The synthetic-phone rule and the row-cap sentence | One read with the tenant's money settings; a regular workspace never pays for the counts (CASE); tested on both kinds |
+| 120 | **Every order and payment insert runs a trigger that looks up its tenant's kind** | The row cap must hold for every path | One primary-key lookup for a regular workspace; the counts run for demo workspaces only; cost not measured on a large workspace |
+| 121 | **The per-address limits trust `X-Forwarded-For` when `app.security.trusted-proxy-hops` > 0** | Behind a proxy every visitor shares one socket address | 0 by default (header ignored, tested); bounded to 2 at startup and named in the startup log; only the entry that many hops from the right, and only an IP literal, else the socket address. A wrong value for the host lets a client choose its key; task 13 sets and checks it |
+| 122 | **The reset depends on a process outside the web application** | Privileged upkeep must not run in the web role | The entrypoint runs the loop; the host's scheduled job is the fallback (task 13); if neither runs, the pool drains and `/demo` says "all in use", never anything less safe |
+| 123 | **A demo script waits in the visitor's session between "Send the order" and "Send the payment"** | The payment must match the order just sent | Server-side session only; texts the application generated; at most seven; gone with the session |
+| 124 | **The seed's catalog JSON is built by string concatenation in Java** | `demo_seed_catalog` takes one JSON argument | Only the application's own constants; values escaped; the database's CHECKs bound each value; a prepared statement carries it |
+| 125 | **`deployment_mode` blocks provisioning with a row lock read** | `provision_tenant` and `demo_init` must not both pass | `FOR SHARE` against `FOR UPDATE` on one row; a provisioning call waits for a concurrent `demo_init` at most |
+| 126 | **The demo seller's password is random and thrown away** | No credentials may exist | A hash in `app_user` that nobody can match; password sign-in refuses demo workspaces anyway |
+| 127 | **The browser walk and the fixture run outside CI** | They need Chrome and a running server | `DemoBrowserFixtureIT` is skipped without `-Dbrowser.demo=true`; the walk's checks are listed in the notes |
+| 128 | **Size on a free tier is estimated, not measured** | The host is chosen in task 13 | Measured on the test container (`DemoSizeIT`); the operator watches `pg_database_size` and drops the demo database before 80% of the tier |
+| 129 | **Four redundant guards were deleted**, each a mutant no test could kill: the Java check that a leased workspace is a demo one (`demo_claim` reads only `kind = 'DEMO'`, and a `demo_tenant` row can name no other kind); `disabled_at` in `demo_claim` (a READY workspace is never disabled: retire disables and retires in one transaction, and the state never goes back); the `enabled` field of `DemoProperties` (the switch is read where it acts); `tenant_kind` in the forward-only trigger (its CHECK keeps it DEMO) | A guard no test can tell apart from its absence is noise that looks like a defense | Each named here; every remaining guard is killed by a test |

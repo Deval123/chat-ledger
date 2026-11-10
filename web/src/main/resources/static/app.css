@@ -68,3 +68,14 @@ th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #d5d9de; }
 .foot { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; margin: 1rem 0; }
 .foot form { margin: 0; }
 .foot a { min-height: 44px; display: inline-flex; align-items: center; }
+
+/* The demo (task 9): a banner, and a simulated chat and confirmation feed in plain blocks. */
+.demo-banner { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; margin: 0.25rem 0; }
+.demo-banner a { min-height: 44px; display: inline-flex; align-items: center; }
+.scenario { background: #fff; border: 1px solid #d5d9de; border-radius: 0.5rem; padding: 0.5rem 0.75rem; margin: 0.75rem 0; }
+.chat { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.5rem 0; }
+.bubble { max-width: 85%; margin: 0; padding: 0.4rem 0.6rem; border-radius: 0.6rem; white-space: pre-line; overflow-wrap: anywhere; }
+.bubble.from { align-self: flex-start; background: #eef0f3; }
+.bubble.to { align-self: flex-end; background: #e8f1fb; }
+.feed { margin: 0.5rem 0; }
+.sms { margin: 0.25rem 0; padding: 0.4rem 0.6rem; border-left: 4px solid #8a94a0; background: #f6f7f9; font-size: 0.95rem; overflow-wrap: anywhere; }

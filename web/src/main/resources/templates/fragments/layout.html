@@ -23,6 +23,7 @@
   <nav aria-label="Main" class="links" th:attr="aria-label=#{nav.label}">
     <a th:href="@{/app}" th:text="#{nav.board}">Board</a>
     <a th:href="@{/app/summary}" th:text="#{nav.summary}">Summary</a>
+    <a th:if="${tenant.demo}" th:href="@{/app/demo}" th:text="#{nav.demo}">Scenarios</a>
     <a th:if="${canLedger}" th:href="@{/app/books}" th:text="#{nav.books}">Books</a>
     <a th:if="${canExport}" th:href="@{/app/export}" th:text="#{nav.export}">Download</a>
   </nav>

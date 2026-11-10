@@ -14,6 +14,13 @@ import java.util.UUID;
 @Repository
 public class TenantRepository {
 
+    /**
+     * What ingestion needs to know about the tenant before it reads a message: its money, whether it is a demo workspace (task 9), and
+     * whether that demo workspace has reached its row cap ({@code demo_row_cap()}, the same number the database's trigger uses).
+     */
+    public record Intake(TenantMoney money, boolean demo, boolean full) {
+    }
+
     private final TenantScope scope;
 
     public TenantRepository(DataSource dataSource) {
@@ -21,13 +28,23 @@ public class TenantRepository {
     }
 
     public Optional<TenantMoney> money(UUID tenantId) {
+        return intake(tenantId).map(Intake::money);
+    }
+
+    public Optional<Intake> intake(UUID tenantId) {
         try {
             return scope.call(tenantId, c -> {
+                // CASE, not AND: a regular workspace never pays for the two counts.
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT currency, scale FROM tenant WHERE id = ? AND disabled_at IS NULL")) {
+                        "SELECT t.currency, t.scale, t.kind = 'DEMO' AS demo, "
+                                + "CASE WHEN t.kind = 'DEMO' THEN (SELECT count(*) FROM orders o WHERE o.tenant_id = t.id) "
+                                + "+ (SELECT count(*) FROM payment p WHERE p.tenant_id = t.id) >= demo_row_cap() ELSE FALSE END AS full "
+                                + "FROM tenant t WHERE t.id = ? AND t.disabled_at IS NULL")) {
                     ps.setObject(1, tenantId);
                     try (ResultSet rs = ps.executeQuery()) {
-                        return rs.next() ? Optional.of(new TenantMoney(rs.getString(1).strip(), rs.getInt(2))) : Optional.<TenantMoney>empty();
+                        return rs.next()
+                                ? Optional.of(new Intake(new TenantMoney(rs.getString(1).strip(), rs.getInt(2)), rs.getBoolean(3), rs.getBoolean(4)))
+                                : Optional.<Intake>empty();
                     }
                 }
             });

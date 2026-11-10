@@ -43,13 +43,16 @@ class NoBackDoorTest {
             for (Path file : files.filter(p -> p.toString().endsWith(".sql")).toList()) {
                 int count = count(CREATES_IDENTITY, strip(Files.readString(file)));
                 total += count;
-                if (count > 0 && !file.getFileName().toString().startsWith("V013__")) {
+                String name = file.getFileName().toString();
+                if (count > 0 && !name.startsWith("V013__") && !name.startsWith("V020__")) {
                     elsewhere.add(file.getFileName() + " has " + count);
                 }
             }
         }
         assertThat(elsewhere).isEmpty();
-        assertThat(total).as("provision_tenant inserts a tenant and a user; provision_user inserts a user").isEqualTo(3);
+        // V013: provision_tenant (a tenant and a user) and provision_user (a user). V020 (task 9) replaces both (the same three
+        // inserts, now refused on a demo deployment) and adds demo_create_tenant (a demo tenant and its seller, refused on a regular one).
+        assertThat(total).as("only the provisioning functions and demo_create_tenant insert tenants and users").isEqualTo(8);
     }
 
     @Test

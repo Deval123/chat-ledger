@@ -6,6 +6,8 @@
 <body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
 <th:block th:replace="~{fragments/layout :: top}"></th:block>
 <main>
+  <p th:if="${tenant.demo}" class="demo-banner"><span class="chip" th:text="#{demo.chip}">Demo, made-up data</span>
+    <a th:href="@{/app/demo}" th:text="#{demo.link}">Try a scenario</a></p>
   <p class="strip" th:text="#{summary.strip(${@times.day(day)}, ${summary.orders}, ${summary.paid}, ${summary.flagged})}">Tue 03 Nov: 0 orders</p>
   <p class="strip" th:if="${amounts != null}" th:text="#{summary.strip.money(${@money.format(amounts.outstandingMinor, tenant.scale, tenant.currency)}, ${@money.format(amounts.collectedMinor, tenant.scale, tenant.currency)})}">0 XAF</p>
 

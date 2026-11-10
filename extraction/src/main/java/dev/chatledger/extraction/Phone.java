@@ -26,6 +26,14 @@ public final class Phone {
         return PhoneNumbers.canonicalDigits(raw).map(Phone::new);
     }
 
+    /** The canonical digits every synthetic number starts with (the repository's convention, {@code +999}; task 9, D11). */
+    public static final String SYNTHETIC_PREFIX = "999";
+
+    /** True if this is a number of the synthetic range. A demo workspace accepts no other (requirement 7.3). */
+    public boolean inSyntheticRange() {
+        return digits.startsWith(SYNTHETIC_PREFIX);
+    }
+
     /** The last four canonical digits, for display. */
     public String last4() {
         return digits.substring(digits.length() - 4);

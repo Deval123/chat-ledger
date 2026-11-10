@@ -33,6 +33,9 @@ services:
       APP_LOGIN_PASSWORD:    ${APP_LOGIN_PASSWORD}
       PROVISION_DB_USER:     ${PROVISION_DB_USER}
       PROVISION_DB_PASSWORD: ${PROVISION_DB_PASSWORD}
+      # Optional: the demo operator login, for a demo deployment only (empty creates nothing).
+      DEMO_DB_USER:          ${DEMO_DB_USER:-}
+      DEMO_DB_PASSWORD:      ${DEMO_DB_PASSWORD:-}
     ports:
       # Bind to loopback only so the port is not reachable from other hosts.
       - "127.0.0.1:5432:5432"

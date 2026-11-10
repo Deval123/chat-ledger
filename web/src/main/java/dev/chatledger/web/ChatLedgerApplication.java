@@ -22,6 +22,11 @@ public class ChatLedgerApplication {
             System.exit(ProvisioningCommand.main(args));
             return;
         }
+        if (args.length > 0 && args[0].startsWith("demo-")) {
+            // The demo operator's commands (task 9): no web server, the demo operator login and the application login only.
+            System.exit(dev.chatledger.demo.ops.DemoCommand.main(args));
+            return;
+        }
         SpringApplication.run(ChatLedgerApplication.class, args);
     }
 }

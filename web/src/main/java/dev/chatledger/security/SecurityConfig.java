@@ -57,7 +57,7 @@ import static org.springframework.security.web.header.writers.ClearSiteDataHeade
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-@EnableConfigurationProperties(SecurityProperties.class)
+@EnableConfigurationProperties({SecurityProperties.class, dev.chatledger.demo.web.DemoProperties.class})
 public class SecurityConfig {
 
     /** No inline code anywhere (a template lint enforces it), so nothing needs 'unsafe-inline'. */
@@ -75,17 +75,20 @@ public class SecurityConfig {
 
     /** In-memory limits, bounded to 100,000 keys per rule, idle keys expiring after an hour. */
     @Bean
-    public RateLimiter rateLimiter(Clock clock, SecurityProperties properties) {
+    public RateLimiter rateLimiter(Clock clock, SecurityProperties properties, dev.chatledger.demo.web.DemoProperties demo) {
         SecurityProperties.Limits l = properties.limits();
-        return new InMemoryRateLimiter(clock, java.util.Map.of(
-                RateLimits.LOGIN_IP, RateRule.parse("login-per-ip", l.loginPerIp()),
-                RateLimits.LOGIN_ACCOUNT, RateRule.parse("login-per-account", l.loginPerAccount()),
-                RateLimits.LOGIN_PAGE_IP, RateRule.parse("login-page-per-ip", l.loginPagePerIp()),
-                RateLimits.INGESTION_TENANT, RateRule.parse("ingestion-per-tenant", l.ingestionPerTenant()),
-                RateLimits.REMATCH_MINUTE, RateRule.parse("rematch-per-minute", l.rematchPerMinute()),
-                RateLimits.REMATCH_HOUR, RateRule.parse("rematch-per-hour", l.rematchPerHour()),
-                RateLimits.EXPORT_TENANT, RateRule.parse("export-per-tenant", l.exportPerTenant()),
-                RateLimits.ACTIONS_USER, RateRule.parse("actions-per-user", l.actionsPerUser())),
+        return new InMemoryRateLimiter(clock, java.util.Map.ofEntries(java.util.Map.entry(RateLimits.DEMO_PAGE_IP, RateRule.parse("demo-page-per-address", demo.pagePerAddress())),
+                java.util.Map.entry(RateLimits.DEMO_CLAIM_IP, RateRule.parse("demo-claim-per-address", demo.claimPerAddress())),
+                java.util.Map.entry(RateLimits.DEMO_CLAIM_ALL, RateRule.parse("demo-claim-total", demo.claimTotal())),
+                java.util.Map.entry(RateLimits.DEMO_SCENARIO_TENANT, RateRule.parse("demo-scenario-per-tenant", demo.scenarioPerTenant())),
+                java.util.Map.entry(RateLimits.LOGIN_IP, RateRule.parse("login-per-ip", l.loginPerIp())),
+                java.util.Map.entry(RateLimits.LOGIN_ACCOUNT, RateRule.parse("login-per-account", l.loginPerAccount())),
+                java.util.Map.entry(RateLimits.LOGIN_PAGE_IP, RateRule.parse("login-page-per-ip", l.loginPagePerIp())),
+                java.util.Map.entry(RateLimits.INGESTION_TENANT, RateRule.parse("ingestion-per-tenant", l.ingestionPerTenant())),
+                java.util.Map.entry(RateLimits.REMATCH_MINUTE, RateRule.parse("rematch-per-minute", l.rematchPerMinute())),
+                java.util.Map.entry(RateLimits.REMATCH_HOUR, RateRule.parse("rematch-per-hour", l.rematchPerHour())),
+                java.util.Map.entry(RateLimits.EXPORT_TENANT, RateRule.parse("export-per-tenant", l.exportPerTenant())),
+                java.util.Map.entry(RateLimits.ACTIONS_USER, RateRule.parse("actions-per-user", l.actionsPerUser()))),
                 100_000, java.time.Duration.ofHours(1));
     }
 
@@ -129,7 +132,8 @@ public class SecurityConfig {
             SecurityEvents events,
             RateLimits rateLimits,
             @Value("${server.servlet.session.cookie.name:JSESSIONID}") String sessionCookieName,
-            @Value("${server.servlet.session.cookie.secure:true}") boolean sessionCookieSecure) throws Exception {
+            @Value("${server.servlet.session.cookie.secure:true}") boolean sessionCookieSecure,
+            @Value("${app.demo.enabled:false}") boolean demoEnabled) throws Exception {
 
         LogoutHandler auditLogout = (request, response, authentication) -> {
             if (authentication != null && authentication.getPrincipal() instanceof TenantUserDetails user) {
@@ -144,7 +148,7 @@ public class SecurityConfig {
         };
 
         RequestGuardFilter guard = new RequestGuardFilter(properties.size(), events);
-        RateLimitFilter rateFilter = new RateLimitFilter(rateLimits, events);
+        RateLimitFilter rateFilter = new RateLimitFilter(rateLimits, events, properties.trustedProxyHops(), demoEnabled);
 
         http
             .headers(headers -> headers
@@ -157,18 +161,23 @@ public class SecurityConfig {
                 // Sent only on HTTPS requests; behind a TLS-terminating proxy it stays off until deployment
                 // names the proxy (task 13). No preload: it is hard to undo.
                 .httpStrictTransportSecurity(hsts -> hsts.includeSubDomains(true).maxAgeInSeconds(31_536_000).preload(false)))
-            .authorizeHttpRequests(authorize -> authorize
-                .requestMatchers("/health", "/actuator/health", "/login", "/error", "/").permitAll()
+            .authorizeHttpRequests(authorize -> {
+                authorize.requestMatchers("/health", "/actuator/health", "/login", "/error", "/").permitAll();
                 // The stylesheet and the htmx script: the same for everyone, no tenant data. Nothing else lives under /assets.
-                .requestMatchers("/assets/**").permitAll()
-                .requestMatchers("/admin/**").hasRole("SELLER")
-                .requestMatchers("/app/**").authenticated()
-                .anyRequest().denyAll())
+                authorize.requestMatchers("/assets/**").permitAll();
+                // The public demo page and its one button (task 9). Its handler exists only on the demo deployment
+                // (app.demo.enabled=true, and the database in DEMO mode or the application does not start); everywhere else the path
+                // has no handler and answers 404, like any unknown page, for everyone.
+                authorize.requestMatchers("/demo").permitAll();
+                authorize.requestMatchers("/admin/**").hasRole("SELLER");
+                authorize.requestMatchers("/app/**").authenticated();
+                authorize.anyRequest().denyAll();
+            })
             .csrf(csrf -> csrf.csrfTokenRepository(csrfTokenRepository))
             .securityContext(context -> context.securityContextRepository(contextRepository))
             .requestCache(cache -> cache.requestCache(new NullRequestCache()))
             .exceptionHandling(handling -> handling
-                .authenticationEntryPoint(new LoginEntryPoint())
+                .authenticationEntryPoint(new LoginEntryPoint(demoEnabled ? "/demo" : "/login"))
                 .accessDeniedHandler(new ForbiddenHandler(events)))
             .logout(logout -> logout
                 .logoutUrl("/logout")

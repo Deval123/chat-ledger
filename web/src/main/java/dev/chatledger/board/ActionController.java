@@ -74,7 +74,7 @@ public class ActionController {
             case CREATED_UNPARSED -> Notice.ORDER_UNPARSED;
             case DUPLICATE -> Notice.ORDER_REPEAT;
             case DUPLICATE_DIFFERENT_TEXT -> Notice.ORDER_REPEAT_DIFFERENT;
-            case REJECTED_INPUT -> Notice.ORDER_INPUT_REJECTED;
+            case REJECTED_INPUT -> Notice.rejected(result.rejectReason(), Notice.ORDER_INPUT_REJECTED);
             case RATE_LIMITED -> throw tooMany(response, result.retryAfterSeconds());
         };
         return answer(request, model, user, notice, result.orderId(), "fragments/board :: pasteDone");
@@ -93,7 +93,7 @@ public class ActionController {
             case CREATED_UNPARSED -> Notice.PAYMENT_UNPARSED;
             case REPLAY -> Notice.PAYMENT_REPEAT;
             case REPLAY_DIFFERENT_TEXT -> Notice.PAYMENT_REPEAT_DIFFERENT;
-            case REJECTED_INPUT -> Notice.PAYMENT_INPUT_REJECTED;
+            case REJECTED_INPUT -> Notice.rejected(result.rejectReason(), Notice.PAYMENT_INPUT_REJECTED);
             case RATE_LIMITED -> throw tooMany(response, result.retryAfterSeconds());
         };
         return answer(request, model, user, notice, result.paymentId(), "fragments/board :: pasteDone");

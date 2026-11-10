@@ -29,7 +29,10 @@ class HandlerCoverageTest {
             "HealthController.health",
             "HomeController.root",
             "LoginController.loginPage",
-            "LoginController.login");
+            "LoginController.login",
+            // Task 9: the demo page and its one button, registered only with app.demo.enabled=true (DemoEntryIT, DemoRoutesIT).
+            "DemoEntryController.page",
+            "DemoEntryController.enter");
 
     @Test
     void every_handler_has_a_permission_or_is_on_the_public_list() throws Exception {
@@ -52,6 +55,7 @@ class HandlerCoverageTest {
         assertThat(seen).as("the scan found the handlers").contains("BoardController.board", "LoginController.login");
         assertThat(unprotected).isEmpty();
         assertThat(seen).as("the public list names handlers that exist").containsAll(PUBLIC_HANDLERS);
+        assertThat(seen).as("the demo's controllers are scanned").contains("DemoController.page", "DemoController.run");
     }
 
     @Test
@@ -80,7 +84,10 @@ class HandlerCoverageTest {
     }
 
     private static List<Class<?>> controllers() throws ClassNotFoundException {
-        var provider = new ClassPathScanningCandidateComponentProvider(false);
+        // Conditional controllers are scanned too: with the demo switched on, so its controllers (task 9) cannot slip past this
+        // check by being absent from the default configuration.
+        var provider = new ClassPathScanningCandidateComponentProvider(false,
+                new org.springframework.mock.env.MockEnvironment().withProperty("app.demo.enabled", "true"));
         provider.addIncludeFilter(new AnnotationTypeFilter(Controller.class));
         List<Class<?>> classes = new ArrayList<>();
         for (var bean : provider.findCandidateComponents("dev.chatledger")) {
