@@ -1957,8 +1957,8 @@ they changed in the procedure is in `deploy/RUNBOOK.md` ("Deployed state", secti
   tell the other project's owner before changing them again.
 
 ### Checks after the deploy
-- `smoke.sh https://ledger.nkap.dev`: `Failures: 0`, 24 checks reported. The script defines 25 checks; the recorded output does not
-  show which one was not counted, so that difference is not explained.
+- `smoke.sh` against `https://ledger.nkap.dev` ran all 25 checks, `Failures: 0` (the pasted output was a tail of the last 25 lines,
+  so the first check line was not displayed).
 - `check-host.sh`: `Failures: 0`.
 
 ### Memory under use
