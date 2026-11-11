@@ -1991,3 +1991,49 @@ take them for a contradiction. Proposal:
 
 Before wording it, check which accounts the books figure sums (for example whether an overpayment's excess, held as customer credit,
 is in it), so the sentence says exactly what the number is.
+
+## Task 13 - rollback rehearsal (2026-11-11)
+
+An upgrade and a rollback on the VPS, without a migration and with the same code on both sides, to measure the interruption (D15) and
+check that `deploy/RUNBOOK.md` sections 5 and 6 work as written. Times are UTC; a probe requested `https://ledger.nkap.dev/health`
+once a second from a laptop throughout.
+
+### What ran
+- From the deployed release `sha256:116d11ebe436f62dc1395c53cb05f0aecf5a1d5dbb9f39f17b0fc32d6567dbe2` (CI run #55, `ad490cd`) to
+  `sha256:85035766a7453abd779dea879d4c8822342f72e55a3411d81e64405595ca0bc4` (CI run #60, `adb5065`, the documentation-only merge of
+  PR #27: the same code), then back with the `.env` saved before the upgrade.
+- The new digest came from the `digest:` line of the push step of the "Image, push" job; the job summary is not part of
+  `gh run view --log`.
+
+### Measured
+| | End to end | `/health` not 200 |
+|---|---|---|
+| Upgrade (including the pull) | 09:55:03 to 09:55:41, 38 s | 09:55:09 to 09:55:36, 25 samples, about 27 s |
+| Rollback | 09:57:03 to 09:57:36, 33 s | 09:57:05 to 09:57:29, 23 samples, about 24 s |
+
+So D15's "30 to 60 s, unverified" becomes about 25 to 30 s of interruption and 35 to 40 s end to end, for a release without a
+migration. A restart still signs every visitor out and restarts the rate-limit counters (both live in memory).
+
+After the rollback: web and refresh on `116d11eb…` again, web healthy, `APP_SECURITY_TRUSTED_PROXY_HOPS=1` and `DEMO_POOL=30` unchanged,
+and the smoke script passed (25 checks, `Failures: 0`).
+
+### What it does not prove
+The smoke script was **not** run against the upgraded release. The first run was before the restart; the second overlapped the
+rollback and failed on a restarting server. Neither counts. The rehearsal proves the mechanism (pull, restart, health, rollback,
+restored settings) and its timing, not a smoke-tested upgrade. The runbook now says the smoke run waits for `web (healthy)` and runs
+after the upgrade has finished, never during a restart.
+
+### Runbook fixes it led to
+- A dated copy of `.env` before **any** edit, the hops setting included: the edit made for the hops measurement had no copy.
+- `DC` defined on its own line: bash does not apply an alias defined on the same pasted line, so `alias DC=...; DC ps` fails.
+- `sudo ls /opt/chat-ledger/.env*` finds nothing for the deploy user, because the unprivileged shell expands the glob in a directory it
+  cannot read; `sudo sh -c 'ls -l /opt/chat-ledger/.env*'` works.
+- A health probe for the next upgrade (a once-a-second `curl` loop to a file, then an `awk` summary of the windows without a 200),
+  tested on a sample log.
+- After a rollback, check the restored digest on both containers and the hops and pool values.
+
+### Still open
+- A smoke-tested upgrade: the next real release.
+- An upgrade with a migration (refresh stopped, `migrate`, then up): not rehearsed; its interruption is not measured.
+- Register item 134 in `design.md` still says the downtime is unverified on the VPS; it should take these numbers in the next change to
+  the design.

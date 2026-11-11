@@ -7,11 +7,26 @@ is scoped to chat-ledger: every Docker command names `-f /opt/chat-ledger/compos
 objects. Read "Never run on this host" (last section) before the first command.
 
 Docker on this host is root-only (the `debian` user is not in the `docker` group): every Docker command is `sudo docker ...`. Every
-block below that uses `DC` expects this alias, set once per shell:
+block below that uses `DC` expects this alias, set once per shell, **on its own line**:
 
 ```sh
 alias DC='sudo docker compose -f /opt/chat-ledger/compose.yaml'
 ```
+
+Bash reads a whole line before it applies an alias defined on it, so `alias DC=...; DC ps` pasted as one line fails with
+`DC: command not found`. Define `DC` first, press Enter, then paste the block that uses it.
+
+Two more shell traps on this host:
+
+- Every edit of `/opt/chat-ledger/.env`, whatever it changes (the digest, the hops, the pool), starts with a dated copy, so there is
+  always something to roll back to:
+
+  ```sh
+  sudo cp -p /opt/chat-ledger/.env "/opt/chat-ledger/.env.$(date +%Y%m%d-%H%M)"
+  ```
+
+- `/opt/chat-ledger` is root-only, so a glob there must be expanded by root's shell, not by the `debian` user's:
+  `sudo ls /opt/chat-ledger/.env*` finds nothing; use `sudo sh -c 'ls -l /opt/chat-ledger/.env*'`.
 
 Nothing below has been run on the VPS by the author. Each step says what to expect; paste the output back when it differs.
 
@@ -43,6 +58,7 @@ What runs now, so a change starts from the right place. Update this table with e
 | Public hostname | `ledger.nkap.dev` → `http://web:8080`; catch-all `http_status:404` | 2026-11-10 |
 | Zone settings of `nkap.dev` (D19) | Rocket Loader off, Bot Fight Mode off, Email Address Obfuscation off, Always Use HTTPS on, zone HSTS off; **zone-wide**, see section 2, step 3 | 2026-11-10 |
 | Demo pool | 30 workspaces | 2026-11-10 |
+| Last rehearsal | 2026-11-11: upgrade to CI run #60 and rollback to run #55 (sections 5 and 6); see `docs/kiro-notes.md` | 2026-11-11 |
 
 ## 1. Host preparation (once, before the first deploy)
 
@@ -222,7 +238,8 @@ whenever a hops-echo container exists at any other time.
    sudo sh /opt/chat-ledger/check-host.sh | grep 'hops echo'   # expected: PASS no hops echo container
    ```
    Until step 6 the hostname answers 502 (its service is gone); that is expected and short.
-6. **Only now, route the hostname to web.** Set `APP_SECURITY_TRUSTED_PROXY_HOPS=<n>` in `.env`, run `DC up -d web` and wait for
+6. **Only now, route the hostname to web.** Copy `.env` first (`sudo cp -p /opt/chat-ledger/.env "/opt/chat-ledger/.env.$(date +%Y%m%d-%H%M)"`),
+   then set `APP_SECURITY_TRUSTED_PROXY_HOPS=<n>` in `.env`, run `DC up -d web` and wait for
    `(healthy)`; then in the dashboard change the public hostname's service to `http://web:8080`. Paste the two curl outputs into the
    notes, then continue with section 3, step 10.
 
@@ -230,9 +247,30 @@ Measured on 2026-11-10 over IPv4: the forged request showed 2 entries, 1 to the 
 `Cf-Connecting-Ip`; the plain request showed exactly 1 entry. So `APP_SECURITY_TRUSTED_PROXY_HOPS=1`. The echo was reachable for
 about nine minutes (22:08 to 22:17 Paris time), then removed; `check-host.sh` reported no hops echo container.
 
-## 5. A new version (D15: 30 to 60 s of downtime, unverified)
+## 5. A new version (D15: about 25 to 30 s of interruption, measured)
 
-Outside judging hours: every visitor is signed out and the rate-limit counters restart (they live in memory).
+Outside judging hours. A restart of web signs every visitor out (sessions live in memory) and restarts the rate-limit counters (also in
+memory). Measured on 2026-11-11 (section 6, "Rehearsed"): the upgrade took 38 s end to end including the pull, and `/health` answered
+something other than 200 for about 27 s; the rollback took 33 s, with about 24 s without a 200. Count on 25 to 30 s of interruption
+and 35 to 40 s end to end, for a release without a migration.
+
+**The digest.** Read it from the `digest:` line of the "Push by commit" step of CI's "Image, push" job on `main`:
+
+```sh
+gh run view <run id> --log --job <image-push job id> | grep -m1 'digest: sha256:'
+```
+
+The job summary, where the push step also writes it, is not part of `gh run view --log`; open the run in the browser to see it.
+
+**Measure the interruption** (optional; from the laptop, started before the upgrade and stopped with Ctrl-C after it): one request a
+second to `/health`, then the windows without a 200:
+
+```sh
+while :; do printf '%s %s\n' "$(date -u +%H:%M:%S)" "$(curl -s -o /dev/null -m 2 -w '%{http_code}' https://ledger.nkap.dev/health)"; sleep 1; done > health.log
+awk '$2 != 200 { if (!s) s = $1; e = $1; n++ } $2 == 200 && s { print s " to " e ": " n " samples without 200"; s = ""; n = 0 } END { if (s) print s " to " e ": " n " samples without 200 (still down)" }' health.log
+```
+
+**The upgrade** (define `DC` first, on its own line):
 
 ```sh
 sudo cp -p /opt/chat-ledger/.env "/opt/chat-ledger/.env.$(date +%Y%m%d-%H%M)"
@@ -243,20 +281,42 @@ DC stop refresh
 DC run --rm migrate
 # then:
 DC up -d web refresh
-DC ps                                    # expected: web (healthy)
+DC ps                                    # wait until: web (healthy)
 ```
 
-Then the smoke script from the laptop. If `compose.yaml` itself changed in the release, copy it as in step 3.2 first.
+**Then, and only then, the smoke script** from the laptop: `sh deploy/smoke.sh https://ledger.nkap.dev`, expected `Failures: 0`. Run it
+after `DC ps` shows `web (healthy)` and the health probe is back to 200, never while web is restarting: a run that overlaps a restart
+fails on the restart and proves nothing about the release. If `compose.yaml` itself changed in the release, copy it as in step 3.2
+first.
 
 ## 6. Roll back
 
+Pick the copy to restore (root's shell expands the glob):
+
 ```sh
+sudo sh -c 'ls -l /opt/chat-ledger/.env*'
+```
+
+Then (define `DC` first, on its own line):
+
+```sh
+sudo cp -p /opt/chat-ledger/.env "/opt/chat-ledger/.env.$(date +%Y%m%d-%H%M)"   # the state being left, in case of second thoughts
 sudo cp -p /opt/chat-ledger/.env.<date> /opt/chat-ledger/.env
 DC up -d web refresh
+DC ps                                    # wait until: web (healthy)
+sudo docker inspect -f '{{.Config.Image}}' chat-ledger-web-1 chat-ledger-refresh-1   # expected: the restored digest, twice
+sudo grep -E '^(APP_SECURITY_TRUSTED_PROXY_HOPS|DEMO_POOL)=' /opt/chat-ledger/.env   # expected: the values of the restored copy
 ```
+
+Then the smoke script, as in section 5 (after `web (healthy)`).
 
 If the release being rolled back had added a migration, the old image may not match the schema. The demo database is disposable: roll
 back with the reset (section 7) using the old digest. Migrations are forward-only.
+
+**Rehearsed on 2026-11-11** (no migration): upgrade from run #55 (`116d11eb…`) to run #60 (`85035766…`, the same code), then this
+section. After the rollback, web and refresh ran `116d11eb…` again, web was healthy, the hops (1) and the pool (30) were unchanged,
+and the smoke script passed (25 checks, `Failures: 0`). The smoke script was **not** run against the upgraded release, so the
+rehearsal proves the mechanism and its timing, not a smoke-tested upgrade; the next upgrade runs it as section 5 says.
 
 ## 7. Size: the 2.4 GB line, and the reset
 
@@ -285,6 +345,10 @@ Only this project's database is touched; no trigger is changed. Visitors in a wo
 - `sudo sh /opt/chat-ledger/check-host.sh`: log settings, size, containers and memory, no published port, no privileged container, the
   secret files' modes, LLMNR, the metadata rule. Expected: no FAIL.
 - The `Uptime` workflow in GitHub Actions checks `/health` and `/demo` every 30 minutes; a failed run emails the owner.
+- **The rollback copies of `.env`**: `sudo sh -c 'ls -l /opt/chat-ledger/.env*'`. There must be a copy from before the last change of
+  every kind (the digest, the hops, the pool); delete old ones only once the release they describe is no longer a rollback target.
+- **After any upgrade or rollback**: `DC ps` shows `web (healthy)`, then the smoke script passes, in that order (section 5). The
+  interruption to expect is 25 to 30 s; a longer one, measured with the health probe of section 5, is worth a look before the next one.
 - **Memory peaks, after the first full refresh cycle** (a lease ends after 30 minutes and the next refresh pass, every 10 minutes,
   retires and recreates those workspaces; so about an hour after visitors started claiming): read `memory.peak` for web and refresh
   (the command in section 3, step 11). A **refresh peak above 220 MiB** is the signal to raise its limit (today 256 MiB, heap 96m):
