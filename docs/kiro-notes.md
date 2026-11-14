@@ -2120,13 +2120,16 @@ Trivy reported the jar "not scanned" with exit 0, a silent pass. Checked by hand
 (CVE-2022-42889) and passes jsoup 1.24.1.
 
 ### Timing
-On my machine (warm caches): the fixture starts in about 20 s, and the walk takes about 5 s. The CI job also downloads and checks a
-203 MB zip (cached after the first run), runs a Trivy scan and `npm ci`, and builds the modules. Its time is in the pull request,
-measured on its first green run.
+On my machine (warm caches): the fixture starts in about 20 s, and the walk takes about 5 s. In CI the `a11y-browser` job took
+2 min 11 s and 2 min 13 s on its first green runs (PR #29). It runs beside `build-and-test` (5 min 42 s to 9 min 6 s), so the
+pipeline's total time does not grow.
+
+The first CI run failed in the jsoup scan step: `-pl web` resolved web's test classpath, which needs sibling test jars that are not
+built at that step. The step now fetches the jar by coordinates, with the version read from the root POM. I tested it against an
+empty local repository first.
 
 ### Unverified
 - Real screen readers (TalkBack, VoiceOver, NVDA), Safari and Firefox, and real low-end phones. Only Chrome, headless, was used.
 - The provenance of the Chrome for Testing zip. No checksum is published; the pin is the hash of the first download.
-- That the setuid helper takes over on the CI runner: not seen until the first CI run.
 - WCAG conformance as a whole. Automated checks find a subset of failures; full conformance needs manual testing with assistive
   technologies and an expert review.
