@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html lang="en" xmlns:th="http://www.thymeleaf.org">
-<head th:replace="~{fragments/layout :: head(#{page.summary})}">
+<html lang="en" xmlns:th="http://www.thymeleaf.org" th:with="pageTitle=#{page.summary.named(${@times.day(day)})}">
+<head th:replace="~{fragments/layout :: head(${pageTitle})}">
 </head>
 <body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<a class="skip" href="#main" th:text="#{skip.main}">Skip to the main content</a>
 <th:block th:replace="~{fragments/layout :: top}"></th:block>
-<main>
+<main id="main" tabindex="-1">
   <h1 th:text="#{summary.title(${@times.day(day)})}">Summary</h1>
   <ul class="plain">
     <li th:text="#{summary.orders(${summary.orders})}">0 orders recorded</li>
@@ -17,6 +18,8 @@
     <li th:text="#{summary.unverified(${amounts.unverifiedCount}, ${@money.format(amounts.unverifiedMinor, tenant.scale, tenant.currency)})}">0 unverified</li>
   </ul>
   <p class="hint" th:text="#{summary.note}">Definitions.</p>
+  <p class="hint" th:if="${amounts != null}" th:text="#{summary.collected.note}">Collected is not the books figure.</p>
+  <p th:if="${canLedger}"><a th:href="@{/app/books}" th:text="#{summary.to.books}">Compare with the books</a></p>
   <p>
     <a th:if="${previous != null}" th:href="@{/app/summary(date=${previous})}" th:text="#{summary.previous}">Previous day</a>
     <a th:if="${following != null}" th:href="@{/app/summary(date=${following})}" th:text="#{summary.next}">Next day</a>

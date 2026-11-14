@@ -4,8 +4,8 @@
 #   sh deploy/check-image.sh chat-ledger:test
 #
 # Refuses an image that: runs as root or as another uid than 65532; has a shell; has a code jar the process could change; has another
-# entrypoint; lacks the revision label; or whose build history names a password, secret or token (a build argument or a secret mount
-# would show there). Exit 1 on any failure.
+# entrypoint; lacks the revision label; whose build history names a password, secret or token (a build argument or a secret mount
+# would show there); or that carries anything of CI's browser check (task 12a). Exit 1 on any failure.
 set -u
 IMAGE="${1:?Usage: check-image.sh <image>}"
 FAILURES=0
@@ -46,6 +46,24 @@ docker rm "$container" >/dev/null
 if printf '%s\n' "$listing" | grep -qE '^-r--r--r--[[:space:]]+0[/[:space:]]+0[[:space:]].*app/app\.jar$'; then pass "app.jar is root-owned, 0444"; else fail "app.jar: $listing"; fi
 if printf '%s\n' "$listing" | grep -qE '^dr[w-]xr-xr-x[[:space:]]+0[/[:space:]]+0[[:space:]].*app/$'; then pass "/app is root-owned, not writable by others"; else fail "/app: $listing"; fi
 
+# Nothing of CI's browser check is in the image (task 12a, the owner's condition 1): no jsoup, axe-core, puppeteer-core, Chrome or Node.
+# Read from the image's real files and from the jar's own listing, not from the Dockerfile. (Twin images with each of them planted
+# fail here; task 12a's pull request lists the runs.)
+container="$(docker create "$IMAGE")"
+work="$(mktemp -d)"
+files="$(docker export "$container" | tar -tf - 2>/dev/null)"
+docker export "$container" | tar -xf - -C "$work" app/app.jar 2>/dev/null
+docker rm "$container" >/dev/null
+browser_files="$(printf '%s\n' "$files" | grep -iE '(^|/)(node_modules|puppeteer[^/]*|axe-core|axe(\.min)?\.js|chrome[^/]*|node)(/|$)' | head -n 3)"
+if [ -z "$files" ]; then fail "the image's files could not be listed"
+elif [ -n "$browser_files" ]; then fail "browser-check files in the image: $(printf '%s' "$browser_files" | tr '\n' ' ')"
+else pass "no Node, Chrome, puppeteer or axe-core file in the image"; fi
+jar_entries="$(unzip -Z1 "$work/app/app.jar" 2>/dev/null)"
+jar_browser="$(printf '%s\n' "$jar_entries" | grep -iE 'jsoup|axe-core|axe\.min\.js|puppeteer|node_modules' | head -n 3)"
+if ! printf '%s\n' "$jar_entries" | grep -q '^BOOT-INF/lib/'; then fail "app.jar could not be listed"
+elif [ -n "$jar_browser" ]; then fail "test-only code in app.jar: $(printf '%s' "$jar_browser" | tr '\n' ' ')"
+else pass "app.jar holds no jsoup, axe-core or puppeteer"; fi
+rm -rf "$work"
 # The two commands the compose file relies on are dispatched before Spring starts: the health probe with nothing listening prints
 # exactly DOWN and exits 1; db-migrate with no configuration exits 2 with its usage. (A Spring start would print logs instead.)
 HARDENED="--rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:size=16m"

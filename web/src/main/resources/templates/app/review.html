@@ -3,8 +3,9 @@
 <head th:replace="~{fragments/layout :: head(#{page.review})}">
 </head>
 <body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<a class="skip" href="#main" th:text="#{skip.main}">Skip to the main content</a>
 <th:block th:replace="~{fragments/layout :: top}"></th:block>
-<main>
+<main id="main" tabindex="-1">
   <h1 th:text="#{review.title}">Check this order</h1>
   <p th:text="#{review.explain}">The total could not be worked out.</p>
   <ul class="plain">
@@ -14,9 +15,9 @@
   <th:block th:replace="~{fragments/facts :: raw(${raw})}"></th:block>
   <form th:action="@{/app/orders/{id}/approve(id=${order.id})}" method="post">
     <label for="total" th:text="#{review.label(${order.currency})}">Total</label>
-    <input id="total" name="total" type="text" inputmode="decimal" autocomplete="off" required maxlength="20" pattern="[0-9]+([.][0-9]+)?"
+    <input id="total" name="total" type="text" aria-describedby="total-hint" inputmode="decimal" autocomplete="off" required maxlength="20" pattern="[0-9]+([.][0-9]+)?"
            th:value="${order.totalMinor != null ? @money.plain(order.totalMinor, tenant.scale) : ''}">
-    <p class="hint" th:text="#{review.warn}">This makes the order payable and records it in the books. It cannot be changed afterwards.</p>
+    <p class="hint" id="total-hint" th:text="#{review.warn}">This makes the order payable and records it in the books. It cannot be changed afterwards.</p>
     <button type="submit" th:text="#{review.button}">Make this order payable</button>
   </form>
   <p><a th:href="@{/app/orders/{id}(id=${order.id})}" th:text="#{nav.back.order}">Back to the order</a></p>

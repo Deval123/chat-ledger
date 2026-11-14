@@ -3,8 +3,9 @@
 <head th:replace="~{fragments/layout :: head(#{page.payment})}">
 </head>
 <body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<a class="skip" href="#main" th:text="#{skip.main}">Skip to the main content</a>
 <th:block th:replace="~{fragments/layout :: top}"></th:block>
-<main th:with="title=${payment.who != null ? @display.text(payment.who, 100) : ''}">
+<main id="main" tabindex="-1" th:with="title=${payment.who != null ? @display.text(payment.who, 100) : ''}">
   <h1 th:text="${#strings.isEmpty(title)} ? #{card.unknown.payment} : ${title}">Sender</h1>
   <p class="status" th:text="#{${'status.PAYMENT.' + payment.status}('', '')}">Received</p>
   <dl>

@@ -189,10 +189,10 @@ class BoardFlowIT extends BoardIT {
         String page = seller.get("/app/summary?date=" + day).body();
         assertThat(page).contains("2 orders recorded").contains("1 of them paid").contains("0 items flagged now")
                 .contains("Still owed on all open orders now: 1,200 XAF");
-        assertThat(seller.get("/app/summary?date=" + paidDay).body()).contains("Collected (payments with a transaction id): 5,000 XAF");
+        assertThat(seller.get("/app/summary?date=" + paidDay).body()).contains("Collected that day: 5,000 XAF");
         String forHelper = helperBrowser.get("/app/summary?date=" + day).body();
         assertThat(forHelper).contains("2 orders recorded").contains("1 of them paid")
-                .doesNotContain("Still owed").doesNotContain("Collected (").doesNotContain("XAF").doesNotContain("5,000").doesNotContain("1,200");
+                .doesNotContain("Still owed").doesNotContain("Collected that day").doesNotContain("Compare with the books").doesNotContain("XAF").doesNotContain("5,000").doesNotContain("1,200");
         String helperBoard = helperBrowser.get("/app").body();
         assertThat(helperBoard).doesNotContain("Still owed").doesNotContain("Collected:");
         assertThat(seller.get("/app/summary?date=2020-01-01").body()).contains("0 orders recorded");

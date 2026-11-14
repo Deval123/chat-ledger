@@ -9,10 +9,11 @@ import java.nio.file.Path;
 import java.time.Duration;
 
 /**
- * Not a test. A fixture for {@code tools/browser-check/demo-walk.mjs} (task 9): with {@code -Dbrowser.demo=true} it starts the application
- * as the demo deployment runs it, on the demo database, with six fresh seeded workspaces in the pool, writes the address to
- * {@code /tmp/browser-demo.json} and waits (at most fifteen minutes) for {@code /tmp/browser-demo.done}. The walk enters the demo with the
- * button, like a judge; no credentials exist. Without the property it is skipped, so the build and CI never run it.
+ * Not a test. A fixture for the walks in {@code tools/browser-check} ({@code demo-walk.mjs}, task 9; {@code a11y-walk.mjs}, task 12a): with
+ * {@code -Dbrowser.demo=true} it starts the application as the demo deployment runs it, on the demo database, with six fresh seeded
+ * workspaces in the pool, writes the address to {@code /tmp/browser-demo.json} and waits (at most fifteen minutes) for
+ * {@code /tmp/browser-demo.done}. The walk enters the demo with the button, like a judge; no credentials exist. Without the property it is
+ * skipped, so the normal build never runs it; only CI's {@code a11y-browser} job sets the property.
  */
 @EnabledIfSystemProperty(named = "browser.demo", matches = "true")
 class DemoBrowserFixtureIT extends AbstractDemoWebIT {

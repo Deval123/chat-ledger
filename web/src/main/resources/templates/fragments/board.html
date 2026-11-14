@@ -2,13 +2,10 @@
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
 <body>
 
-<!--/* The notice area. Always present (htmx swaps it), empty when there is nothing to say. Text comes from a fixed code. */-->
-<p th:fragment="notice" id="notice" role="status" aria-live="polite" class="notice" th:classappend="${notice == null} ? 'empty'">
-  <th:block th:if="${notice != null}">
-    <span th:text="#{${notice.key()}}">Done.</span>
-    <a th:if="${noticeLink != null}" th:href="${noticeLink}" th:text="#{notice.view}">View</a>
-  </th:block>
-</p>
+<!--/* The notice area: one live region on every page, never hidden and never replaced. htmx changes only what is inside it
+     (hx-swap-oob="innerHTML", and the layout's responseHandling), so screen readers announce the new text without moving focus.
+     Kept on one line so that it is :empty (and takes no room) when there is nothing to say. Text comes from a fixed code. */-->
+<p th:fragment="notice" id="notice" role="status" aria-live="polite" class="notice"><th:block th:if="${notice != null}"><span th:text="#{${notice.key()}}">Done.</span> <a th:if="${noticeLink != null}" th:href="${noticeLink}" th:text="#{notice.view}">View</a></th:block></p>
 
 <!--/* The five chips: plain anchor links to the columns, with their counts. */-->
 <nav th:fragment="chips" id="chips" class="chips" aria-label="Columns" th:attr="aria-label=#{board.columns}">
@@ -54,8 +51,6 @@
 <th:block th:fragment="pasteDone">
   <section id="paste" aria-labelledby="paste-h">
     <h2 id="paste-h" th:text="#{paste.title}">Paste a message</h2>
-    <p class="result" role="status" th:text="#{${notice.key()}}">Done.</p>
-    <a th:if="${noticeLink != null}" th:href="${noticeLink}" th:text="#{notice.view}">View</a>
     <details open th:if="${canRecordOrder}">
       <summary th:text="#{paste.order.title}">Paste an order</summary>
       <form th:action="@{/app/orders}" method="post" hx-boost="true" hx-target="#paste" hx-swap="outerHTML" hx-push-url="false">
@@ -77,30 +72,35 @@
       </form>
     </details>
   </section>
-  <p id="notice" role="status" aria-live="polite" class="notice empty" hx-swap-oob="true"></p>
+  <p id="notice" hx-swap-oob="innerHTML"><span th:text="#{${notice.key()}}">Done.</span> <a th:if="${noticeLink != null}" th:href="${noticeLink}" th:text="#{notice.view}">View</a></p>
   <th:block th:replace="~{fragments/board :: chipsOob}"></th:block>
 </th:block>
 
 <!--/* The answer to a card action for htmx: the card is replaced by a one-line result, the notice and the counts are updated. */-->
 <th:block th:fragment="done">
-  <article class="card done" tabindex="-1">
+  <!--/* autofocus: htmx focuses it after the swap, so the keyboard does not fall back to the top of the page. */-->
+  <article class="card done" tabindex="-1" autofocus>
     <p th:text="#{${notice.key()}}">Done.</p>
   </article>
-  <p id="notice" role="status" aria-live="polite" class="notice" hx-swap-oob="true">
-    <span th:text="#{${notice.key()}}">Done.</span>
-  </p>
+  <p id="notice" hx-swap-oob="innerHTML"><span th:text="#{${notice.key()}}">Done.</span></p>
   <th:block th:replace="~{fragments/board :: chipsOob}"></th:block>
 </th:block>
 
 <!--/* One card on the board or in a column page. Text from messages is printed only through th:text, cleaned by the display bean. */-->
-<article th:fragment="card(card)" class="card" th:id="|c-${card.id}|"
+<!--/* Every button and link of a card ends with a visually hidden "for whom" (who, amount, when), so a screen reader's list of buttons
+     tells the cards apart. The visible word comes first, so the spoken name starts with what is seen (WCAG 2.5.3). */-->
+<article th:fragment="card(card)" class="card" th:id="|c-${card.id}|" th:attr="aria-labelledby=|h-c-${card.id}|"
          th:with="isOrder=${card.kind.name() == 'ORDER'},
                   title=${card.who != null ? @display.text(card.who, 40) : ''},
                   total=${card.amountMinor != null ? @money.format(card.amountMinor, tenant.scale, card.currency) : ''},
-                  applied=${@money.format(card.appliedMinor, tenant.scale, card.currency)}">
-  <h3 class="who">
-    <a th:if="${isOrder}" th:href="@{/app/orders/{id}(id=${card.id})}" th:text="${#strings.isEmpty(title)} ? #{card.unknown.order} : ${title}">Customer</a>
-    <a th:unless="${isOrder}" th:href="@{/app/payments/{id}(id=${card.id})}" th:text="${#strings.isEmpty(title)} ? #{card.unknown.payment} : ${title}">Sender</a>
+                  applied=${@money.format(card.appliedMinor, tenant.scale, card.currency)},
+                  name=${#strings.isEmpty(title)} ? (${isOrder} ? #{card.unknown.order} : #{card.unknown.payment}) : ${title},
+                  ctx=${card.amountMinor != null} ? #{card.for.amount(${name}, ${total}, ${@times.format(card.at, tenant.zone)})} : #{card.for(${name}, ${@times.format(card.at, tenant.zone)})},
+                  detail=${card.amountMinor != null} ? |${total}, ${@times.format(card.at, tenant.zone)}| : ${@times.format(card.at, tenant.zone)}">
+  <h3 class="who" th:id="|h-c-${card.id}|">
+    <!--/* The hidden part tells a customer's order from her payment in a list of links (WCAG 2.4.4); it also names the card. */-->
+    <a th:if="${isOrder}" th:href="@{/app/orders/{id}(id=${card.id})}"><span th:text="${name}">Customer</span><span class="sr" th:text="#{card.link.order(${detail})}"> (order, 5,000 XAF, 10:42)</span></a>
+    <a th:unless="${isOrder}" th:href="@{/app/payments/{id}(id=${card.id})}"><span th:text="${name}">Sender</span><span class="sr" th:text="#{card.link.payment(${detail})}"> (payment, 5,000 XAF, 10:42)</span></a>
   </h3>
   <p class="status" th:text="#{${'status.' + card.kind.name() + '.' + card.status}(${applied}, ${total})}">Waiting for payment</p>
   <p class="amount" th:if="${card.amountMinor != null}" th:text="${total}">5,000 XAF</p>
@@ -114,34 +114,34 @@
     <p><strong th:text="#{card.flagged}">Needs a look</strong>: <span th:text="#{${'flag.' + card.flagCode}}">Reason</span>
       <span th:if="${card.openFlags > 1}" th:text="#{card.flags.more(${card.openFlags - 1})}">and 1 more</span></p>
     <form th:if="${canResolve}" th:action="@{/app/flags/{id}/resolve(id=${card.flagId})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
-      <button type="submit" class="secondary" th:text="#{action.resolve}">I checked this</button>
+      <button type="submit" class="secondary"><span th:text="#{action.resolve}">I checked this</span><span class="sr" th:text="${ctx}">: Ana</span></button>
     </form>
   </div>
 
   <!--/* A suggestion waiting for the seller: confirm or reject it right here. */-->
   <div class="actions" th:if="${canDecide and card.suggestionId != null}">
     <form th:action="@{/app/matches/{id}/confirm(id=${card.suggestionId})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
-      <button type="submit" th:text="#{action.confirm}">Confirm</button>
+      <button type="submit"><span th:text="#{action.confirm}">Confirm</span><span class="sr" th:text="${ctx}">: Ana</span></button>
     </form>
     <form th:action="@{/app/matches/{id}/reject(id=${card.suggestionId})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
-      <button type="submit" class="secondary" th:text="#{action.reject}">Reject</button>
+      <button type="submit" class="secondary"><span th:text="#{action.reject}">Reject</span><span class="sr" th:text="${ctx}">: Ana</span></button>
     </form>
   </div>
   <p th:if="${card.suggestions > 0 and not canDecide}" th:text="#{card.suggestion.seller}">A suggestion waits for the seller.</p>
 
   <div class="actions" th:if="${canDecide and not isOrder and (card.status == 'RECEIVED' or card.status == 'UNVERIFIED')}">
-    <a class="button secondary" th:href="@{/app/payments/{id}/match(id=${card.id})}" th:text="#{action.match}">Match by hand</a>
+    <a class="button secondary" th:href="@{/app/payments/{id}/match(id=${card.id})}"><span th:text="#{action.match}">Match by hand</span><span class="sr" th:text="${ctx}">: Ana</span></a>
     <form th:action="@{/app/payments/{id}/set-aside(id=${card.id})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
-      <button type="submit" class="secondary" th:text="#{action.setaside}">Set aside</button>
+      <button type="submit" class="secondary"><span th:text="#{action.setaside}">Set aside</span><span class="sr" th:text="${ctx}">: Ana</span></button>
     </form>
   </div>
   <div class="actions" th:if="${canDecide and not isOrder and card.status == 'UNMATCHED'}">
     <form th:action="@{/app/payments/{id}/take-back(id=${card.id})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
-      <button type="submit" th:text="#{action.takeback}">Take back</button>
+      <button type="submit"><span th:text="#{action.takeback}">Take back</span><span class="sr" th:text="${ctx}">: Ana</span></button>
     </form>
   </div>
   <div class="actions" th:if="${isOrder and card.status == 'NEEDS_REVIEW'}">
-    <a class="button" th:if="${canApprove}" th:href="@{/app/orders/{id}/review(id=${card.id})}" th:text="#{action.check}">Check the total</a>
+    <a class="button" th:if="${canApprove}" th:href="@{/app/orders/{id}/review(id=${card.id})}"><span th:text="#{action.check}">Check the total</span><span class="sr" th:text="${ctx}">: Ana</span></a>
     <p th:unless="${canApprove}" th:text="#{card.review.seller}">Needs the seller to check.</p>
   </div>
 </article>

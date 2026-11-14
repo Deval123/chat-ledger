@@ -3,7 +3,8 @@
 <head th:replace="~{fragments/layout :: head(#{page.demo.entry})}">
 </head>
 <body>
-<main>
+<a class="skip" href="#main" th:text="#{skip.main}">Skip to the main content</a>
+<main id="main" tabindex="-1">
   <h1 th:text="#{demo.entry.title}">Try chat-ledger</h1>
   <p th:text="#{demo.entry.what}">chat-ledger matches the orders a shop gets in its chats with the mobile money payments that pay them.</p>
   <p class="ok" th:text="#{demo.entry.synthetic}">This is a demo with made-up shops, customers and payments. Nothing here is real.</p>

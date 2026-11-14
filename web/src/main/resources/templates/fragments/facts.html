@@ -14,7 +14,7 @@
     <span th:if="${flag.open()}" class="flag" th:text="#{flag.open}">Open</span>
     <span th:unless="${flag.open()}" th:text="${flag.resolvedBy != null and flag.resolvedBy.equals(userId)} ? #{flag.resolved.you(${@times.format(flag.resolvedAt, tenant.zone)})} : #{flag.resolved.other(${@times.format(flag.resolvedAt, tenant.zone)})}">Checked</span>
     <form th:if="${flag.open() and canResolve}" th:action="@{/app/flags/{id}/resolve(id=${flag.id})}" method="post">
-      <button type="submit" class="secondary" th:text="#{action.resolve}">I checked this</button>
+      <button type="submit" class="secondary"><span th:text="#{action.resolve}">I checked this</span><span class="sr" th:text="#{item.for(#{flag.line(#{${'flag.' + flag.code}}, ${@times.format(flag.at, tenant.zone)})})}">: the flag</span></button>
     </form>
   </li>
 </ul>

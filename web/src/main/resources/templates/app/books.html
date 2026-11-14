@@ -3,22 +3,26 @@
 <head th:replace="~{fragments/layout :: head(#{page.books})}">
 </head>
 <body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<a class="skip" href="#main" th:text="#{skip.main}">Skip to the main content</a>
 <th:block th:replace="~{fragments/layout :: top}"></th:block>
-<main>
+<main id="main" tabindex="-1">
   <h1 th:text="#{books.title}">The books</h1>
-  <p th:if="${result.balanced()}" class="ok" role="status" th:text="#{books.ok}">The books balance.</p>
+  <p th:if="${result.balanced()}" class="ok" th:text="#{books.ok}">The books balance.</p>
   <p th:unless="${result.balanced()}" class="alert" role="alert" th:text="#{books.bad}">These figures do not agree.</p>
   <table>
-    <thead><tr><th th:text="#{books.col.check}">Check</th><th th:text="#{books.col.books}">Books</th><th th:text="#{books.col.records}">Records</th><th th:text="#{books.col.result}">Result</th></tr></thead>
+    <caption class="sr" th:text="#{books.caption}">Each check compares the books with the orders and matches</caption>
+    <thead><tr><th scope="col" th:text="#{books.col.check}">Check</th><th scope="col" th:text="#{books.col.books}">Books</th><th scope="col" th:text="#{books.col.records}">Records</th><th scope="col" th:text="#{books.col.result}">Result</th></tr></thead>
     <tbody>
       <tr th:each="line : ${result.lines()}">
-        <td th:text="#{${'books.' + line.code().name()}}">Check</td>
+        <th scope="row" th:text="#{${'books.' + line.code().name()}}">Check</th>
         <td th:text="${line.code().name() == 'MATCH_POSTINGS'} ? ${line.left()} : ${@money.format(line.left(), tenant.scale, tenant.currency)}">0</td>
         <td th:text="${line.code().name() == 'MATCH_POSTINGS'} ? ${line.right()} : ${@money.format(line.right(), tenant.scale, tenant.currency)}">0</td>
         <td th:text="${line.ok()} ? #{books.line.ok} : #{books.line.bad}">balanced</td>
       </tr>
     </tbody>
   </table>
+  <p class="hint" th:text="#{books.clearing.note}">Only payments matched to an order are counted here.</p>
+  <p><a th:href="@{/app/summary}" th:text="#{books.to.summary}">See the summary</a></p>
   <p class="hint" th:text="#{books.cached(${@times.format(result.checkedAt(), tenant.zone)})}">Checked at.</p>
   <form th:action="@{/app/books/check}" method="post">
     <button type="submit" th:text="#{books.again}">Check again now</button>
