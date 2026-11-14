@@ -166,7 +166,7 @@ class WorkflowFileTest {
         assertThat(run.split("aquasec/trivy", -1).length).as("every scanner reference is the pinned one").isEqualTo(run.split(scanner, -1).length);
         assertThat(run.indexOf(scanner)).as("the lockfile is scanned before anything from it is installed").isLessThan(run.indexOf("npm ci"));
         assertThat(run).as("the test-only jsoup jar is scanned, in rootfs mode (fs mode does not read jars)")
-                .contains("-DincludeGroupIds=org.jsoup").contains(scanner + " \\\n  rootfs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1");
+                .contains("-Dartifact=\"org.jsoup:jsoup:${version}\"").contains("<jsoup.version>").contains(scanner + " \\\n  rootfs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1");
         assertThat(run).contains("npm ci --ignore-scripts").doesNotContain("npm install").doesNotContain("npx ");
         assertThat(run).contains("-Dbrowser.demo=true").contains("node a11y-walk.mjs").contains("touch /tmp/browser-demo.done");
         assertThat(run).doesNotContain("docker login").doesNotContain("docker push").doesNotContain("docker build");

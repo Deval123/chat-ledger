@@ -128,8 +128,11 @@ jobs:
       # read jars. Checked by hand against commons-text 1.9, which this step refuses (CVE-2022-42889).
       - name: Scan the test-only jsoup jar (fails on fixable HIGH or CRITICAL)
         run: |
-          mvn --batch-mode --no-transfer-progress -q -pl web dependency:copy-dependencies -DincludeScope=test \
-            -DincludeGroupIds=org.jsoup -DoutputDirectory="$RUNNER_TEMP/test-libs"
+          # By coordinates, from the root POM's pinned version: nothing of the reactor needs to be built first.
+          version="$(sed -n 's:.*<jsoup.version>\([0-9.]*\)</jsoup.version>.*:\1:p' pom.xml)"
+          test -n "$version" || { echo "No jsoup.version in pom.xml."; exit 1; }
+          mvn --batch-mode --no-transfer-progress -q -N dependency:copy -Dartifact="org.jsoup:jsoup:${version}" \
+            -DoutputDirectory="$RUNNER_TEMP/test-libs"
           test -n "$(find "$RUNNER_TEMP/test-libs" -name 'jsoup-*.jar')" || { echo "jsoup was not resolved."; exit 1; }
           docker run --rm --network bridge -v "$RUNNER_TEMP/test-libs:/work:ro" \
             aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb \
