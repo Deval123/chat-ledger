@@ -289,6 +289,68 @@ after `DC ps` shows `web (healthy)` and the health probe is back to 200, never w
 fails on the restart and proves nothing about the release. If `compose.yaml` itself changed in the release, copy it as in step 3.2
 first.
 
+### Release note: task 12a (accessibility, money labels, French scaffolding; prepared 2026-11-15, not deployed yet)
+**What it is.**
+- **PRs #29 and #30**, squashed into `main` as `30f5270` and then `b97f595`. CI run #83 on `b97f595` pushed
+  `ghcr.io/deval123/chat-ledger@sha256:2104ccb989e7670d8450a56aea6858839ef535498eada4173215efd29763dc42` (the `digest:` line of its
+  "Push by commit" step). Every job of that run passed.
+- **Rolls back to** the release in "Deployed state": `116d11eb…`, CI run #55.
+
+**What it changes, and what it does not.**
+- **Templates, the stylesheet and the English messages:**
+  - a skip link, the columns stacked on a phone, named card buttons, focus on the result after a card action;
+  - "Collected that day" on the summary, linked to the books;
+  - the sign-in and error pages take their text from the message file, with the same English words.
+
+  Nothing in what is computed or posted changes.
+- **French is in the image and is not served.** `messages_fr.properties` (254 of 323 keys) waits for the owner's review. The pages
+  stay English: the locale resolver is fixed to `en`.
+- **No migration.** Skip the `stop refresh` / `migrate` lines.
+- **`compose.yaml` and `.env` are unchanged** apart from `CHAT_LEDGER_DIGEST`.
+- **`smoke.sh` is unchanged** (25 checks). The four texts it reads ("Nothing here is real.", "Demo, made-up data", "The payment was
+  sent.", "The books balance.") are the same in this release. In run #83, the drill's smoke run passed its 25 checks with
+  `Failures: 0`.
+- **The image has no test or browser code.** In run #83, `check-image.sh` passed its 12 checks, among them "no Node, Chrome,
+  puppeteer or axe-core file in the image" and "app.jar holds no jsoup, axe-core, puppeteer, docker-java or Testcontainers".
+
+**The locale guard at start-up (new with #30).** Before it serves anything, web checks three settings. All three come from the jar's
+`application.properties`; neither `compose.yaml` nor `.env` sets them.
+
+| Setting (environment form) | Required | Why |
+|---|---|---|
+| `spring.messages.fallback-to-system-locale` (`SPRING_MESSAGES_FALLBACK_TO_SYSTEM_LOCALE`) | `false` | Otherwise a JVM whose locale is French would serve French on English pages |
+| `spring.web.locale-resolver` (`SPRING_WEB_LOCALE_RESOLVER`) | `fixed` | Boot's default, `accept-header`, would follow the browser's language |
+| `spring.web.locale` (`SPRING_WEB_LOCALE`) | `en` | No other language is complete |
+
+- **When one is wrong, web does not start.** The guard throws before the port opens. `restart: unless-stopped` then restarts web
+  over and over, `DC ps` never shows `web (healthy)`, and `/health` keeps failing.
+- **What the log says.** `DC logs web` names the setting: "spring.messages.fallback-to-system-locale must be false…", or
+  "spring.web.locale-resolver=…, spring.web.locale=… is refused: messages_fr.properties lacks 69 keys…".
+- **What to do.** Remove the setting from `.env` and run `DC up -d web`, or roll back with section 6. Never set the resolver to
+  `accept-header` to try French: it stays refused until every key is translated.
+- **Verified in CI only.** Run #83's drill started web with the prod profile and this guard, and web became healthy. On the VPS it is
+  unverified until this deploy.
+
+**Steps.**
+1. Outside judging hours. The interruption is about 25 to 30 s and signs every visitor out.
+2. Optionally, start the health probe above.
+3. Run "The upgrade" above, with the dated `.env` copy and the new `CHAT_LEDGER_DIGEST`, and no migration.
+4. Run `DC ps` and wait for `web (healthy)`. If web keeps restarting, read `DC logs --tail 50 web` for the locale guard (above),
+   then fix or roll back.
+5. After `web (healthy)` and the probe is back to 200, run `sh deploy/smoke.sh https://ledger.nkap.dev`. Expected: `Failures: 0`
+   after 25 checks.
+6. By hand, about two minutes on a phone:
+   - on `/demo`, the first Tab shows "Skip to the main content";
+   - the board stacks its columns, and nothing scrolls sideways;
+   - "I checked this" on a flagged card leaves the focus on the result;
+   - the summary says "Collected that day" and links to the books, and the books link back;
+   - no page shows French, and the sign-in page reads as before.
+7. The owner's ten-minute VoiceOver pass on the entry page, the board and one scenario. This is unverified until it is done.
+8. Update "Deployed state" (release, digest, run, date) and record the times in `docs/kiro-notes.md`. A failing smoke run or a step
+   that does not hold means rolling back with section 6.
+
+**After it.** 12b gets its own stop 2 only after this deploy and its smoke run. Nothing of 12b is deployed after 2026-11-27.
+
 ## 6. Roll back
 
 Pick the copy to restore (root's shell expands the glob):
