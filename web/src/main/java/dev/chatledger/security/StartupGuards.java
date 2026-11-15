@@ -66,6 +66,55 @@ public class StartupGuards {
         }
     }
 
+    /**
+     * The language of the pages (task 12a, D4): English until the French file is complete, so no visitor ever sees a page that is half
+     * French. Refuses (Boot's defaults count as set, because both are the unsafe ones):
+     * <ul>
+     *   <li>{@code spring.messages.fallback-to-system-locale} other than {@code false}: with it, a JVM whose locale is French serves
+     *       {@code messages_fr.properties} on English pages;</li>
+     *   <li>a locale resolver other than {@code fixed} ({@code accept-header} is Boot's default), or a fixed locale other than
+     *       {@code en}, while {@code messages_fr.properties} lacks any key of {@code messages.properties}.</li>
+     * </ul>
+     */
+    @PostConstruct
+    void checkLocale() {
+        if (!"false".equalsIgnoreCase(environment.getProperty("spring.messages.fallback-to-system-locale", "true").trim())) {
+            throw new IllegalStateException("spring.messages.fallback-to-system-locale must be false: the JVM's locale must never choose the language");
+        }
+        String resolver = environment.getProperty("spring.web.locale-resolver", "accept-header").trim();
+        String locale = environment.getProperty("spring.web.locale", "").trim();
+        boolean english = "fixed".equalsIgnoreCase(resolver) && "en".equals(locale);
+        if (!english) {
+            int missing = missingKeys("/messages.properties", "/messages_fr.properties").size();
+            if (missing > 0) {
+                throw new IllegalStateException("spring.web.locale-resolver=" + resolver + ", spring.web.locale=" + locale
+                        + " is refused: messages_fr.properties lacks " + missing + " keys of messages.properties (keep fixed and en until it has all)");
+            }
+        }
+    }
+
+    /** The keys of the {@code base} bundle that {@code other} lacks; every key if {@code other} does not exist. Both read as UTF-8. */
+    static java.util.Set<String> missingKeys(String base, String other) {
+        java.util.Set<String> keys = new java.util.TreeSet<>(load(base).stringPropertyNames());
+        if (keys.isEmpty()) {
+            throw new IllegalStateException(base + " is missing or empty");
+        }
+        keys.removeAll(load(other).stringPropertyNames());
+        return keys;
+    }
+
+    private static java.util.Properties load(String resource) {
+        java.util.Properties p = new java.util.Properties();
+        try (java.io.InputStream in = StartupGuards.class.getResourceAsStream(resource)) {
+            if (in != null) {
+                p.load(new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8));
+            }
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        return p;
+    }
+
     @PostConstruct
     void checkSessionCookie() {
         boolean dev = environment.acceptsProfiles(Profiles.of("dev"));

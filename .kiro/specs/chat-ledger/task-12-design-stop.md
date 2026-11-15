@@ -440,7 +440,8 @@ Item 134 becomes:
    - all pinned (version plus checksum or lockfile integrity);
    - the browser job has `contents: read` and no secret;
    - none of them reaches the image;
-   - the npm lockfile is scanned by the pinned Trivy, and jsoup by the OWASP check.
+   - the npm lockfile is scanned by the pinned Trivy, and so is jsoup (`rootfs` mode). **Corrected during the build:** this said
+     "jsoup by the OWASP check", which skips test scope (register 167).
 2. **Customer and sender names now also appear inside button text** (visually hidden), so a name is printed in more places.
    *Compensation:*
    - only through `th:text` and `@display.text` (cut to 40 characters, control characters removed), never in an attribute;

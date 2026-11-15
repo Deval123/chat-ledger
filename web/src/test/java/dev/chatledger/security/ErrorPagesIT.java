@@ -30,7 +30,8 @@ class ErrorPagesIT extends AbstractWebIT {
 
     private static void assertClean(Browser.Response r, int status, String what) {
         assertThat(r.status()).as(what).isEqualTo(status);
-        assertThat(r.body()).as(what).contains("Something went wrong").contains(">" + status + "<");
+        // The status inside the one sentence (task 12a: the sentence is a message key, so the number is not an element of its own).
+        assertThat(r.body()).as(what).contains("Something went wrong").contains("The request could not be completed (" + status + ").");
         for (String forbidden : NEVER_IN_AN_ERROR_PAGE) {
             assertThat(r.body()).as(what + " must not contain " + forbidden).doesNotContain(forbidden);
         }
