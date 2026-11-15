@@ -2138,3 +2138,61 @@ empty local repository first.
 - The provenance of the Chrome for Testing zip. No checksum is published; the pin is the hash of the first download.
 - WCAG conformance as a whole. Automated checks find a subset of failures; full conformance needs manual testing with assistive
   technologies and an expert review.
+
+## Task 12a - French scaffolding (stop 2, second pull request)
+
+D4: the French bundle and its checks, the demo path translated for the owner's review, and production still English.
+
+### What changed
+- **`messages_fr.properties`** has 254 of the 323 English keys: the entry page, navigation, the board, cards, statuses, actions,
+  matches, flags, notices, the scenarios, the books, the summary, and the hidden accessibility text. Not translated: the detail pages,
+  checking a total, making an order payable, undo, matching by hand, the download page, sign-in, the error page and the role names.
+- **The sign-in and error pages** take every string from keys now (`page.login`, `login.*`, `page.error`, `error.*`). The English
+  text is unchanged.
+- **Production stays English.** The resolver stays `fixed` and the locale `en`.
+- **Two existing checks needed care, and both stay as strict as before:**
+  - The password label's key is `login.pass`, not `login.password`, because `NoBackDoorTest` refuses a key named like a secret with
+    a literal value.
+  - `ErrorPagesIT` now looks for the status inside the one sentence ("The request could not be completed (404)."), because the
+    sentence is a single key and the number is no longer an element of its own.
+
+### Found while adding the file: the JVM's locale could choose the language
+Boot leaves `spring.messages.fallback-to-system-locale` on by default. There is no `messages_en.properties`, so for an English page
+only the base file matches. Java then tries the JVM's locale, and on a French JVM it finds `messages_fr.properties`. I showed it with a
+two-file bundle under `Locale.FRANCE`: an English request got "Bonjour". This machine's JVM is `en_FR`, so it did not show here, but a
+VPS or a laptop set to French would have served French on English pages.
+
+The setting is now `false`. `StartupGuards.checkLocale` refuses any other value, and treats a missing one as unsafe, because Boot's
+default is the unsafe one. Register 168 records it.
+
+### The guard and the checks
+- **`StartupGuards.checkLocale`** refuses:
+  - the system-locale fallback;
+  - a resolver other than `fixed` (a missing one counts as Boot's default, `accept-header`), or a fixed locale other than `en`, while
+    the French file lacks any English key.
+- **`MessageKeysTest`** checks:
+  - every literal key in a template (`#{key}`, `#messages.msg('key')`) exists in English;
+  - the sign-in and error pages print no fixed English;
+  - French has no key that English lacks, the same placeholders for each key, and no ASCII apostrophe;
+  - French has a no-break space before `:` `;` `?` `!`, and every message is a valid `MessageFormat`;
+  - no English message with arguments has an ASCII apostrophe;
+  - both sides of the locale fallback, on a French JVM.
+
+  It prints the coverage (254 of 323).
+
+### Mutation pass
+19 mutants: the guard (5), the application setting (1), the French-file rules (7), the English rule (1), templates (3) and the French
+file (2).
+- **18 killed.** With the fallback turned back on, the application does not start.
+- **One rule survived and was deleted** (register 169): "each argument reaches the text" is implied by the apostrophe rule.
+- **Two rules had no control of their own** (format errors, English apostrophes); each now has one.
+- **The first run gave false kills.** `rsync -a` restores a source with its old date, so Maven kept the previous mutant's compiled
+  class. The driver now deletes the compiled classes before each mutant. The 12a pass of the first pull request was not affected:
+  its mutants were templates and CSS, and M13 survived right after M1 to M12, which a leftover mutant would have made fail.
+
+### Unverified
+- **No page has been rendered in French.** The guard refuses every way to serve one while the file is incomplete. Text length at
+  360 px, line breaks and the hidden texts read aloud in French are unchecked.
+- **Amounts and dates stay in English formats** (`5,000 XAF`, `11 Nov, 12:04`): the formatters do not follow the locale. They must
+  before French is turned on.
+- **The French wording** waits for the owner's review, money terms first ("avoir client", "contrepassée", "imputés", "encaissé").

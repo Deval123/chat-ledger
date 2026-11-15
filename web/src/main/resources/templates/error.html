@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
-<head th:replace="~{fragments/layout :: head('Something went wrong - chat-ledger')}">
+<head th:replace="~{fragments/layout :: head(#{page.error})}">
 </head>
 <body>
 <a class="skip" href="#main" th:text="#{skip.main}">Skip to the main content</a>
 <main id="main" tabindex="-1">
-  <h1>Something went wrong</h1>
+  <h1 th:text="#{error.title}">Something went wrong</h1>
   <!--/* Nothing about the cause: no message, path, exception or version. The status is all the user needs. */-->
-  <p id="notice" role="alert"><span>The request could not be completed (<span th:text="${status}">500</span>).</span></p>
-  <p><a th:href="@{/app}">Back to the app</a></p>
+  <p id="notice" role="alert"><span th:text="#{error.request(${status})}">The request could not be completed (500).</span></p>
+  <p><a th:href="@{/app}" th:text="#{error.back}">Back to the app</a></p>
 </main>
 </body>
 </html>

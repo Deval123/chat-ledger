@@ -117,7 +117,7 @@ class TemplateLintTest {
     /** htmx swaps a refused answer into #notice (see the layout's responseHandling); the error page must have one, or the refusal is lost. */
     @Test
     void the_error_page_has_the_notice_element_that_htmx_swaps_in() throws IOException {
-        assertThat(Files.readString(TEMPLATES.resolve("error.html"))).containsPattern("<p id=\"notice\"[^>]*><span>The request could not be completed");
+        assertThat(Files.readString(TEMPLATES.resolve("error.html"))).containsPattern("<p id=\"notice\"[^>]*><span th:text=\"#\\{error\\.request\\(\\$\\{status}\\)}\">");
     }
 
     @Test

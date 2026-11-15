@@ -3,6 +3,7 @@ package dev.chatledger.security;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -41,6 +42,44 @@ class StartupGuardsTest {
                 .hasMessageContaining("__Host-");
         assertThatThrownBy(() -> check(good().withProperty("server.servlet.session.cookie.domain", "example.test")))
                 .hasMessageContaining("__Host-");
+    }
+
+    /** Task 12a, D4: English only, until the French file has every key. */
+    private static MockEnvironment english() {
+        return new MockEnvironment()
+                .withProperty("spring.messages.fallback-to-system-locale", "false")
+                .withProperty("spring.web.locale-resolver", "fixed")
+                .withProperty("spring.web.locale", "en");
+    }
+
+    private static void checkLocale(MockEnvironment env) {
+        new StartupGuards(env).checkLocale();
+    }
+
+    @Test
+    void the_language_stays_english_while_french_is_incomplete() {
+        assertThatCode(() -> checkLocale(english())).doesNotThrowAnyException();
+        assertThatThrownBy(() -> checkLocale(english().withProperty("spring.messages.fallback-to-system-locale", "true")))
+                .hasMessageContaining("fallback-to-system-locale");
+        MockEnvironment noFallbackSetting = new MockEnvironment().withProperty("spring.web.locale-resolver", "fixed").withProperty("spring.web.locale", "en");
+        assertThatThrownBy(() -> checkLocale(noFallbackSetting)).as("Boot's default is true").hasMessageContaining("fallback-to-system-locale");
+        assertThatThrownBy(() -> checkLocale(english().withProperty("spring.web.locale-resolver", "accept-header")))
+                .hasMessageContaining("messages_fr.properties lacks");
+        assertThatThrownBy(() -> checkLocale(english().withProperty("spring.web.locale", "fr")))
+                .hasMessageContaining("messages_fr.properties lacks");
+        MockEnvironment noResolver = new MockEnvironment().withProperty("spring.messages.fallback-to-system-locale", "false")
+                .withProperty("spring.web.locale", "en");
+        assertThatThrownBy(() -> checkLocale(noResolver)).as("Boot's default is accept-header").hasMessageContaining("messages_fr.properties lacks");
+    }
+
+    @Test
+    void the_completeness_count_is_the_keys_french_lacks() {
+        assertThat(StartupGuards.missingKeys("/messages.properties", "/messages.properties")).as("a complete file opens the gate").isEmpty();
+        assertThat(StartupGuards.missingKeys("/messages.properties", "/messages_fr.properties")).as("French is not complete yet")
+                .isNotEmpty().contains("login.title").doesNotContain("board.title");
+        assertThat(StartupGuards.missingKeys("/messages.properties", "/no-such.properties")).as("no file: every key is missing")
+                .contains("board.title", "login.title");
+        assertThatThrownBy(() -> StartupGuards.missingKeys("/no-such.properties", "/messages.properties")).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
