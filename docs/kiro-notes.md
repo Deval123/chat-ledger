@@ -2209,12 +2209,13 @@ deploy. Times are UTC: the report gave Paris time, which is UTC+1 on that date.
 - **The `.env` copy** made before the edit is `/opt/chat-ledger/.env.20261115-1618`. It holds the rollback to run #55.
 
 ### Measured
-- **Interruption start:** the one-a-second probe saw 502 from 16:19:03.
-- **Interruption end: not recorded here.** The report left the probe's closing lines out, so the length of this interruption is
-  unknown. It is to be added from the probe's `health.log`. The rehearsal of 2026-11-11 measured about 25 to 30 s, for a release
-  without a migration.
-- **Web `(healthy)`** 44 s after its container started. This counts the start and the first health checks, not the time without a
-  200.
+- **Interruption start:** the owner's one-a-second probe saw 502 from 17:19:03 Paris time (16:19:03 UTC).
+- **Interruption end: not measured.** The probe's output was not kept after 17:19:22 Paris time (16:19:22 UTC), so neither the
+  first 200 after the restart nor the length of the interruption is known.
+- **Web `(healthy)`** 44 s after its container started. This counts the start and the first health checks; it is not the time
+  without a 200.
+- **For comparison:** the rollback rehearsal of 2026-11-11 measured about 25 to 30 s of interruption for the same kind of upgrade,
+  without a migration (section "Task 13 - rollback rehearsal").
 - **The locale guard** let web start on the VPS. The three settings come from the jar, and nothing on the host overrides them.
 - **`smoke.sh`:** 25 checks of 25, `Failures: 0`.
 
