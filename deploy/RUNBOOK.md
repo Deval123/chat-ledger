@@ -53,7 +53,7 @@ What runs now, so a change starts from the right place. Update this table with e
 
 | Item | Value | Since |
 |---|---|---|
-| Release | `ghcr.io/deval123/chat-ledger@sha256:116d11ebe436f62dc1395c53cb05f0aecf5a1d5dbb9f39f17b0fc32d6567dbe2` (CI run #55, commit `ad490cd`) | 2026-11-10 |
+| Release | `ghcr.io/deval123/chat-ledger@sha256:2104ccb989e7670d8450a56aea6858839ef535498eada4173215efd29763dc42` (CI run #83, commit `b97f595`: task 12a, PRs #29 and #30) | 2026-11-15 |
 | `APP_SECURITY_TRUSTED_PROXY_HOPS` | `1`, measured through the tunnel over IPv4 (section 4); the IPv6 repeat is still open | 2026-11-10 |
 | Public hostname | `ledger.nkap.dev` → `http://web:8080`; catch-all `http_status:404` | 2026-11-10 |
 | Zone settings of `nkap.dev` (D19) | Rocket Loader off, Bot Fight Mode off, Email Address Obfuscation off, Always Use HTTPS on, zone HSTS off; **zone-wide**, see section 2, step 3 | 2026-11-10 |
@@ -289,7 +289,7 @@ after `DC ps` shows `web (healthy)` and the health probe is back to 200, never w
 fails on the restart and proves nothing about the release. If `compose.yaml` itself changed in the release, copy it as in step 3.2
 first.
 
-### Release note: task 12a (accessibility, money labels, French scaffolding; prepared 2026-11-15, not deployed yet)
+### Release note: task 12a (accessibility, money labels, French scaffolding; deployed 2026-11-15)
 **What it is.**
 - **PRs #29 and #30**, squashed into `main` as `30f5270` and then `b97f595`. CI run #83 on `b97f595` pushed
   `ghcr.io/deval123/chat-ledger@sha256:2104ccb989e7670d8450a56aea6858839ef535498eada4173215efd29763dc42` (the `digest:` line of its
