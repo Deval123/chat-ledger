@@ -6,10 +6,11 @@
   <!--/*
     htmx contract: htmx's defaults allow eval, script tags in responses and an injected inline style, all of
     which the CSP forbids. Turn them off, let it talk to its own origin only, keep no page snapshots in the
-    browser's storage, and show a refused request (403, 404, 429, ...) in the notice area instead of dropping it.
+    browser's storage, and show a refused request (403, 404, 429, ...) in the notice area instead of dropping it: only the text
+    inside the answer's #notice is put inside ours, so the live region itself is never replaced (WCAG 4.1.3).
     The htmx library is vendored (third-party/htmx) and served from this origin.
   */-->
-  <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"selfRequestsOnly":true,"historyEnabled":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true,"target":"#notice","select":"#notice","swapOverride":"outerHTML"}]}'>
+  <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"selfRequestsOnly":true,"historyEnabled":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true,"target":"#notice","select":"#notice > *","swapOverride":"innerHTML"}]}'>
   <title th:text="${title}">chat-ledger</title>
   <link rel="icon" type="image/svg+xml" th:href="@{/assets/favicon.svg}">
   <link rel="stylesheet" th:href="@{/assets/app.css}">

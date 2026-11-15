@@ -1,17 +1,19 @@
 <!DOCTYPE html>
-<html lang="en" xmlns:th="http://www.thymeleaf.org">
-<head th:replace="~{fragments/layout :: head(#{page.column})}">
+<html lang="en" xmlns:th="http://www.thymeleaf.org" th:with="pageTitle=#{page.column.named(${#messages.msg('column.' + column.name())})}">
+<head th:replace="~{fragments/layout :: head(${pageTitle})}">
 </head>
 <body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<a class="skip" href="#main" th:text="#{skip.main}">Skip to the main content</a>
 <th:block th:replace="~{fragments/layout :: top}"></th:block>
-<main>
+<main id="main" tabindex="-1">
   <h1 th:text="#{${'column.' + column.name()}}">Column</h1>
   <p class="empty" th:if="${#lists.isEmpty(cards)}" th:text="#{${'column.empty.' + column.name()}}">Nothing here.</p>
+  <h2 class="sr" th:unless="${#lists.isEmpty(cards)}" th:text="#{column.items}">The items in this column</h2>
   <th:block th:each="card : ${cards}">
     <th:block th:replace="~{fragments/board :: card(${card})}"></th:block>
   </th:block>
   <p th:if="${more}">
-    <a th:href="@{/app/columns/{c}(c=${column.path()}, after=${next}, page=${pageNumber + 1})}" th:text="#{board.more}">Show more</a>
+    <a th:href="@{/app/columns/{c}(c=${column.path()}, after=${next}, page=${pageNumber + 1})}"><span th:text="#{board.more}">Show more</span><span class="sr" th:text="#{more.for(${#messages.msg('column.' + column.name())})}">: Awaiting payment</span></a>
   </p>
   <p th:if="${not more and pageNumber >= 5 and next != ''}" th:text="#{board.limit}">That is all this page shows.</p>
   <p><a th:href="@{/app}" th:text="#{nav.back}">Back to the board</a></p>

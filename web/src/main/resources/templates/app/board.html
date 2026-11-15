@@ -4,8 +4,10 @@
 </head>
 <!--/* Every page under app/ puts the CSRF token on <body> as an hx-headers attribute (an attribute, not a script). */-->
 <body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<a class="skip" href="#main" th:text="#{skip.main}">Skip to the main content</a>
 <th:block th:replace="~{fragments/layout :: top}"></th:block>
-<main>
+<main id="main" tabindex="-1">
+  <h1 th:text="#{board.title}">Board</h1>
   <p th:if="${tenant.demo}" class="demo-banner"><span class="chip" th:text="#{demo.chip}">Demo, made-up data</span>
     <a th:href="@{/app/demo}" th:text="#{demo.link}">Try a scenario</a></p>
   <p class="strip" th:text="#{summary.strip(${@times.day(day)}, ${summary.orders}, ${summary.paid}, ${summary.flagged})}">Tue 03 Nov: 0 orders</p>
@@ -23,7 +25,7 @@
         <th:block th:replace="~{fragments/board :: card(${card})}"></th:block>
       </th:block>
       <p th:if="${entry.value.next != null}">
-        <a th:href="@{/app/columns/{c}(c=${entry.key.path()}, after=${entry.value.next.format()}, page=2)}" th:text="#{board.more}">Show more</a>
+        <a th:href="@{/app/columns/{c}(c=${entry.key.path()}, after=${entry.value.next.format()}, page=2)}" ><span th:text="#{board.more}">Show more</span><span class="sr" th:text="#{more.for(${#messages.msg('column.' + entry.key.name())})}">: Awaiting payment</span></a>
       </p>
     </section>
   </div>

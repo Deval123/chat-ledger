@@ -141,6 +141,63 @@ class WorkflowFileTest {
         assertThat(run).as("pushed by commit, never latest").contains("chat-ledger:${GITHUB_SHA}").doesNotContain(":latest");
     }
 
+    /** Task 12a, D2 and the owner's condition 1: the browser job runs third-party code, so it can read source and nothing else. */
+    @Test
+    void the_browser_job_verifies_what_it_runs_keeps_the_sandbox_and_can_reach_nothing_else() throws IOException {
+        Map<String, Object> a11y = job("a11y-browser");
+        assertThat(a11y).as("runs beside the build, not after it").doesNotContainKey("needs");
+        assertThat(map(a11y.get("permissions"))).containsExactlyEntriesOf(Map.of("contents", "read"));
+        assertThat(uses(a11y)).as("checkout, Java, Node and the cache; no upload, so nothing leaves the job")
+                .allMatch(u -> u.startsWith("actions/checkout@") || u.startsWith("actions/setup-java@")
+                        || u.startsWith("actions/setup-node@") || u.startsWith("actions/cache@"))
+                .anyMatch(u -> u.equals("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"));
+        String run = runs(a11y);
+        String env = String.valueOf(a11y.get("env"));
+        assertThat(env).contains("CFT_VERSION=157.0.8103.50")
+                .contains("CFT_SHA256=d17167bc092eb495a3b768c7467f27e35f625aa03834233a1663af67dcb668c9");
+        assertThat(run).as("the browser is checked against its pin, over https only")
+                .contains("echo \"${CFT_SHA256}  ${zip}\" | sha256sum -c -").contains("--proto '=https'");
+        assertThat(run.indexOf("sha256sum -c")).as("checked before it is unpacked").isLessThan(run.indexOf("unzip"));
+        assertThat(run).as("the sandbox stays on").contains("CHROME_DEVEL_SANDBOX=").contains("-m 4755").doesNotContain("no-sandbox");
+        assertThat(Files.readString(Path.of("..", "tools", "browser-check", "a11y-walk.mjs")))
+                .as("the walk never turns the sandbox off, and proves it is on").doesNotContain("--no-sandbox").contains("chrome://sandbox");
+        String scanner = "aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb";
+        assertThat(run).contains(scanner + " fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1");
+        assertThat(run.split("aquasec/trivy", -1).length).as("every scanner reference is the pinned one").isEqualTo(run.split(scanner, -1).length);
+        assertThat(run.indexOf(scanner)).as("the lockfile is scanned before anything from it is installed").isLessThan(run.indexOf("npm ci"));
+        assertThat(run).as("the test-only jsoup jar is scanned, in rootfs mode (fs mode does not read jars)")
+                .contains("-Dartifact=\"org.jsoup:jsoup:${version}\"").contains("<jsoup.version>").contains(scanner + " \\\n  rootfs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1");
+        assertThat(run).contains("npm ci --ignore-scripts").doesNotContain("npm install").doesNotContain("npx ");
+        assertThat(run).contains("-Dbrowser.demo=true").contains("node a11y-walk.mjs").contains("touch /tmp/browser-demo.done");
+        assertThat(run).doesNotContain("docker login").doesNotContain("docker push").doesNotContain("docker build");
+        assertThat(String.valueOf(a11y)).doesNotContain("secrets.");
+    }
+
+    /**
+     * Register 167: Testcontainers' docker-java runs only where the tests run. Those jobs are GitHub-hosted (a fresh runner per job), use no
+     * repository secret and can only read; every other Maven call skips the tests or only fetches a jar.
+     */
+    @Test
+    void the_jobs_that_run_tests_have_no_secret_and_only_read() throws IOException {
+        List<String> testing = new ArrayList<>();
+        for (Map.Entry<String, Object> e : map(workflow("ci.yml").get("jobs")).entrySet()) {
+            Map<String, Object> job = map(e.getValue());
+            for (String line : runs(job).split("\n")) {
+                if (line.contains("mvn ") && line.contains(" verify") && !line.contains("-DskipTests")) {
+                    testing.add(e.getKey());
+                    break;
+                }
+            }
+        }
+        assertThat(testing).containsExactlyInAnyOrder("build-and-test", "a11y-browser");
+        for (String name : testing) {
+            Map<String, Object> job = job(name);
+            assertThat(String.valueOf(job)).as(name + ": no secret").doesNotContain("secrets.");
+            assertThat(String.valueOf(job.get("runs-on"))).as(name + ": a GitHub-hosted runner").isEqualTo("ubuntu-24.04");
+            assertThat(map(job.get("permissions"))).as(name + ": read only").allSatisfy((k, v) -> assertThat(v).isEqualTo("read"));
+        }
+    }
+
     @Test
     void secrets_are_used_only_where_they_are_needed() throws IOException {
         String ci = Files.readString(WORKFLOWS.resolve("ci.yml"));

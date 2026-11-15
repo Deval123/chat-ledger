@@ -8,6 +8,11 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.regex.Pattern;
 
+import javax.xml.parsers.DocumentBuilderFactory;
+
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -58,6 +63,55 @@ class DockerfileTest {
         assertThat(all).contains(" && chmod 0444 /out/app.jar");
         assertThat(stage.get(stage.size() - 1)).startsWith("ENTRYPOINT ");
         assertThat(stage).filteredOn(l -> l.startsWith("USER ")).containsExactly("USER 65532:65532");
+    }
+
+    /**
+     * Task 12a, the owner's condition 1, at the source: the browser tool is never in the build context, the Dockerfile never copies it or
+     * runs Node, and jsoup is test scope in every POM that names it. CI's {@code deploy/check-image.sh} checks the built image itself.
+     */
+    @Test
+    void nothing_of_the_ci_browser_check_can_enter_the_image() throws Exception {
+        List<String> ignore = Files.readAllLines(ROOT.resolve(".dockerignore")).stream().filter(l -> !l.isBlank() && !l.startsWith("#")).toList();
+        assertThat(ignore).filteredOn(l -> l.startsWith("!"))
+                .noneMatch(l -> l.startsWith("!tools") || l.contains("node_modules") || l.startsWith("!**") || l.startsWith("!*"));
+        for (String line : instructions()) {
+            assertThat(line).as(line).doesNotContain("tools/").doesNotContain("npm ").doesNotContain("node ").doesNotContain("puppeteer")
+                    .doesNotContain("axe-core").doesNotContainIgnoringCase("chrome").doesNotContain("jsoup");
+        }
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        int named = 0;
+        int containerLibs = 0;
+        List<Path> poms;
+        try (var walk = Files.walk(ROOT, 2)) {
+            poms = walk.filter(p -> p.getFileName().toString().equals("pom.xml")).toList();
+        }
+        assertThat(poms).as("the root and the module POMs").hasSizeGreaterThanOrEqualTo(8);
+        for (Path pom : poms) {
+            NodeList dependencies = factory.newDocumentBuilder().parse(pom.toFile()).getElementsByTagName("dependency");
+            for (int i = 0; i < dependencies.getLength(); i++) {
+                Element dependency = (Element) dependencies.item(i);
+                if ("org.jsoup".equals(text(dependency, "groupId"))) {
+                    named++;
+                    assertThat(text(dependency, "scope")).as(pom + ": jsoup is test scope").isEqualTo("test");
+                }
+                // Register 167: the docker-java findings are accepted because Testcontainers never leaves test scope.
+                String group = text(dependency, "groupId");
+                if (("org." + "test" + "containers").equals(group) || "com.github.docker-java".equals(group)) {
+                    containerLibs++;
+                    String scope = text(dependency, "scope");
+                    assertThat(scope).as(pom + ": " + text(dependency, "artifactId") + " is test scope (or an imported BOM)")
+                            .isIn("test", "import");
+                }
+            }
+        }
+        assertThat(named).as("the root's managed entry and web's").isEqualTo(2);
+        assertThat(containerLibs).as("the check saw the container-library entries").isGreaterThanOrEqualTo(3);
+    }
+
+    private static String text(Element parent, String child) {
+        NodeList found = parent.getElementsByTagName(child);
+        return found.getLength() == 0 ? null : found.item(0).getTextContent().strip();
     }
 
     @Test

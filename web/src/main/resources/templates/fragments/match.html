@@ -3,7 +3,9 @@
 <body>
 <!--/* One match on a detail page: the state in words, the amounts, the reasons as sentences, why it was not automatic, and the buttons. */-->
 <article th:fragment="match(s, kind)" class="card match" th:id="|m-${s.match.id}|"
-         th:with="m=${s.match}, money=${@money}">
+         th:with="m=${s.match}, money=${@money},
+                  other=${#strings.isEmpty(s.match.otherWho)} ? #{${'card.unknown.' + kind}} : ${@display.text(s.match.otherWho, 40)},
+                  ctx=${s.match.otherAmountMinor != null} ? #{card.for.amount(${other}, ${@money.format(s.match.otherAmountMinor, tenant.scale, tenant.currency)}, #{${'match.state.' + s.match.state}(${s.match.score})})} : #{card.for(${other}, #{${'match.state.' + s.match.state}(${s.match.score})})}">
   <p class="status" th:text="#{${'match.state.' + m.state}(${m.score})}">Suggested</p>
   <p class="meta">
     <a th:href="@{/app/{k}s/{id}(k=${kind}, id=${m.otherId})}" th:text="#{${'match.other.' + kind}(${@display.text(m.otherWho, 40)}, ${@display.text(m.otherRef, 40)})}">Other</a>
@@ -23,14 +25,14 @@
   </div>
   <div class="actions" th:if="${m.state == 'SUGGESTED' and canDecide}">
     <form th:action="@{/app/matches/{id}/confirm(id=${m.id})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
-      <button type="submit" th:text="#{action.confirm}">Confirm</button>
+      <button type="submit"><span th:text="#{action.confirm}">Confirm</span><span class="sr" th:text="${ctx}">: Ana</span></button>
     </form>
     <form th:action="@{/app/matches/{id}/reject(id=${m.id})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
-      <button type="submit" class="secondary" th:text="#{action.reject}">Reject</button>
+      <button type="submit" class="secondary"><span th:text="#{action.reject}">Reject</span><span class="sr" th:text="${ctx}">: Ana</span></button>
     </form>
   </div>
   <div class="actions" th:if="${(m.state == 'AUTO' or m.state == 'CONFIRMED') and canReverse}">
-    <a class="button secondary" th:href="@{/app/matches/{id}/undo(id=${m.id})}" th:text="#{action.undo}">Undo</a>
+    <a class="button secondary" th:href="@{/app/matches/{id}/undo(id=${m.id})}" ><span th:text="#{action.undo}">Undo</span><span class="sr" th:text="${ctx}">: Ana</span></a>
   </div>
 </article>
 </body>

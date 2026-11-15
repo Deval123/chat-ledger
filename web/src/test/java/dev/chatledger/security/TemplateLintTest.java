@@ -55,7 +55,14 @@ class TemplateLintTest {
                 .add("an http(s) address (everything is served from this origin)", "https?://")
                 .add("an hx- attribute built from an expression (hx-* must be literal)", "th:attr\\s*=\\s*[\"'][^\"']*hx-(?!headers)")
                 .add("th:hx-... attribute", "\\bth:hx-")
-                .add("an hx- attribute value that is an expression", "\\shx-(?!headers)[a-z-]+\\s*=\\s*[\"']\\s*[$@{]");
+                .add("an hx- attribute value that is an expression", "\\shx-(?!headers)[a-z-]+\\s*=\\s*[\"']\\s*[$@{]")
+                // Task 12a: data (a name, a reference) never goes into an attribute. Accessible names carry data as visually hidden text
+                // printed by th:text; an aria- attribute may only hold a message (#{...}) or an id built from a uuid.
+                .add("an aria- label or description built from data", "aria-(label|description|valuetext|roledescription)\\s*=\\s*[|\"']?[^\"'#]*\\$\\{")
+                // Task 12a: a page title is kept in the browser's history and may be synced off the phone; it never names a customer
+                // or carries an amount. A column name or a day is allowed.
+                .add("a page title built from personal data or money",
+                        "(pageTitle\\s*=|::\\s*head\\()[^\"\\n]*(\\.who\\b|@money|@display|phone|last4|customer)");
     }
 
     static List<String> violations(String name, String template) {
@@ -102,13 +109,15 @@ class TemplateLintTest {
         assertThat(layout).contains("name=\"htmx-config\"").contains("\"allowEval\":false")
                 .contains("\"allowScriptTags\":false").contains("\"includeIndicatorStyles\":false")
                 .contains("\"selfRequestsOnly\":true").contains("\"historyEnabled\":false")
-                .contains("\"responseHandling\"").contains("\"target\":\"#notice\"");
+                .contains("\"responseHandling\"").contains("\"target\":\"#notice\"")
+                // the refused answer's text goes inside the live region; the region itself is never replaced (task 12a, WCAG 4.1.3)
+                .contains("\"select\":\"#notice > *\",\"swapOverride\":\"innerHTML\"").doesNotContain("\"swapOverride\":\"outerHTML\"");
     }
 
     /** htmx swaps a refused answer into #notice (see the layout's responseHandling); the error page must have one, or the refusal is lost. */
     @Test
     void the_error_page_has_the_notice_element_that_htmx_swaps_in() throws IOException {
-        assertThat(Files.readString(TEMPLATES.resolve("error.html"))).containsPattern("<p id=\"notice\"[^>]*>The request could not be completed");
+        assertThat(Files.readString(TEMPLATES.resolve("error.html"))).containsPattern("<p id=\"notice\"[^>]*><span>The request could not be completed");
     }
 
     @Test
@@ -141,7 +150,13 @@ class TemplateLintTest {
                 "<a href=\"http://example.invalid/\">x</a>",
                 "<form th:attr=\"hx-post=${x}\"></form>",
                 "<form th:hx-post=\"${x}\"></form>",
-                "<form hx-post=\"${x}\"></form>"};
+                "<form hx-post=\"${x}\"></form>",
+                "<article th:attr=\"aria-label=${card.who}\"></article>",
+                "<button th:attr=\"aria-label=|Confirm ${who}|\">x</button>",
+                "<html th:with=\"pageTitle=#{page.order.named(${@display.text(order.who, 40)})}\">",
+                "<html th:with=\"pageTitle=#{page.approve.named(${@money.format(totalMinor, tenant.scale, order.currency)})}\">",
+                "<head th:replace=\"~{fragments/layout :: head(${order.who})}\"></head>",
+                "<head th:replace=\"~{fragments/layout :: head(${payment.customerLast4})}\"></head>"};
         for (String template : bad) {
             assertThat(violations("t.html", template)).as(template).isNotEmpty();
         }
@@ -153,6 +168,9 @@ class TemplateLintTest {
         assertThat(violations("t.html", "<form th:action=\"@{/login}\" method=\"post\"><input name=\"a\"></form>")).isEmpty();
         assertThat(violations("t.html", "<!-- th:utext and onclick= and style=\"x\" are mentioned only here --><p>x</p>")).isEmpty();
         assertThat(violations("t.html", "<p>Sign-in style guide: [x]</p>")).isEmpty();
+        assertThat(violations("t.html", "<nav th:attr=\"aria-label=#{nav.label}\"></nav><section th:attr=\"aria-labelledby=|h-${id}|\"></section>")).isEmpty();
+        assertThat(violations("t.html", "<html th:with=\"pageTitle=#{page.column.named(${#messages.msg('column.' + column.name())})}\">"
+                + "<head th:replace=\"~{fragments/layout :: head(#{page.order})}\"></head>")).isEmpty();
     }
 
     private static List<Path> templates() {

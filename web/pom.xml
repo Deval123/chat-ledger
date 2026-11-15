@@ -131,6 +131,12 @@
       <artifactId>jqwik</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Task 12a: the accessibility checks parse the rendered pages. Test scope only, never in the jar. -->
+    <dependency>
+      <groupId>org.jsoup</groupId>
+      <artifactId>jsoup</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.springframework.security</groupId>
       <artifactId>spring-security-test</artifactId>

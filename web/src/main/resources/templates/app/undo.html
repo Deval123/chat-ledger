@@ -3,8 +3,9 @@
 <head th:replace="~{fragments/layout :: head(#{page.undo})}">
 </head>
 <body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<a class="skip" href="#main" th:text="#{skip.main}">Skip to the main content</a>
 <th:block th:replace="~{fragments/layout :: top}"></th:block>
-<main>
+<main id="main" tabindex="-1">
   <h1 th:text="#{undo.title}">Undo this match?</h1>
   <p th:text="#{undo.explain(${@money.format(match.amountMinor, tenant.scale, tenant.currency)})}">Undoing reverses the posting.</p>
   <ul class="plain">

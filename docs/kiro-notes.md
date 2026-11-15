@@ -2037,3 +2037,104 @@ after the upgrade has finished, never during a restart.
 - An upgrade with a migration (refresh stopped, `migrate`, then up): not rehearsed; its interruption is not measured.
 - Register item 134 in `design.md` still says the downtime is unverified on the VPS; it should take these numbers in the next change to
   the design.
+
+## Task 12a - accessibility, labels, CI checks (stop 2, first pull request)
+
+The owner approved D1 to D12 of `task-12-design-stop.md` for 12a only, with three conditions: no CI dependency (jsoup, axe-core,
+Chrome for Testing, puppeteer-core) enters the production image, with the proof in the pull request; the French translation goes
+to the owner for review before merge, with the list of keys (second pull request); and register item 134 is fixed in this one.
+
+### What is checked, and where
+- `A11yRules` (jsoup, test scope) reads every rendered page of the seller, the helper, the demo, sign-in and the 404 page:
+  - lang and title;
+  - one `main#main` and a skip link to it as the first stop;
+  - one h1, and no jump in heading levels;
+  - labelled fields;
+  - named controls, with no two buttons sharing a name, and links that share a name going to the same place;
+  - exactly one status region (`#notice`, polite, never hidden);
+  - no positive tabindex, and no reference to a missing id;
+  - named navs, alt on images, scope on table headers, and no missing message key.
+
+  `A11yRulesTest` refuses one invented fault per rule.
+- `StylesheetTest` checks:
+  - every colour is declared, and every declared pair has enough contrast (WCAG formula);
+  - focus rings are never removed;
+  - no motion;
+  - the columns stack below 60em;
+  - scroll padding under the sticky chips;
+  - the empty notice stays in the page;
+  - the skip link shows on focus.
+
+  It carries its own invented faults.
+- `TemplateLintTest` adds two rules: no `aria-` label built from data, and no page title built from personal data or money.
+- The browser walk, `tools/browser-check/a11y-walk.mjs`, runs in the CI job `a11y-browser`. It uses Chrome for Testing 157.0.8103.50
+  and axe-core 4.14.0. Checks:
+  - keyboard only from the entry page into the demo, the skip link first, and a visible focus at every stop;
+  - each chip jump, and a Shift+Tab walk, keep the focus below the sticky chips;
+  - after a card action the focus is on the result, and the notice region keeps its node;
+  - a scenario can be run by keyboard;
+  - no sideways scroll at 360 px or at 640 px (200 % zoom) on the board, books, summary and a column;
+  - axe-core finds no serious or critical issue on six pages;
+  - on Linux, `chrome://sandbox` reports the sandbox on.
+
+### What the checks found, and what changed
+- **The reflow check was blind at first.** A mobile viewport widens itself to fit content that is too wide, so `innerWidth` grew with
+  the overflow and the check passed. It now compares with the width that was set. It then found the books table 6 px too wide at
+  360 px: one long word in a check name ("(overpayments") set the column's minimum width. Row headers now hyphenate, and break
+  anywhere as a last resort. Amounts still break only at the space.
+- **A customer's order link and her payment link had the same name** ("Ana Kamga") and went to different pages. The new link rule
+  found it on every board with both. The heading link now carries hidden text such as "(order, 5,000 XAF, 10:42)", which also names
+  the card.
+- **Page titles named the customer and the amount** in my first draft, as the approved A8 said. A title stays in the browser's
+  history and may be synced off the phone, so titles now name the purpose only: "Order", "Check an order", "Make it payable". The
+  column and the summary's day are still named, and approve no longer reuses the review title. Register 164 records it.
+- **htmx's `autofocus` handling works** for the result card, so no fallback was needed. The browser mutant without `autofocus` fails
+  the walk.
+- **No `--no-sandbox`.** Ubuntu 24.04 forbids the user namespaces Chrome's sandbox uses. The job installs Chrome's own setuid helper
+  from the checksum-pinned zip, and the walk fails unless `chrome://sandbox` reports the sandbox on (register 162).
+- **Register item 134** now carries the rollback rehearsal's measured interruption (the open item at the end of the previous
+  section).
+- **The two "money in" labels (D3)** are reworded and linked to each other. Nothing in what is computed changed.
+
+### Mutation pass
+- **16 mutants against the templates, the stylesheet and the lint, all killed.** One ("Show more" links lose their column name)
+  survived at first because no test page had more than 20 cards in a column. `AccessibilityIT` now pastes 21 orders and checks the
+  link's name.
+- **7 mutants against the browser walk.**
+  - Removing the scroll padding survived at first: Tab scrolls elements in from below, never from above. The Shift+Tab walk kills it.
+  - Removing `scroll-margin-top` on the columns survived for good: the padding already covers the jumps. The rule is deleted
+    (register 166).
+- **8 twin images against `check-image.sh`, all refused.**
+  - The twins: jsoup in `BOOT-INF/lib`, a shaded `org/jsoup` class, `node_modules/axe-core`, a loose `axe.min.js`, a `node` binary,
+    a Chrome directory, a puppeteer directory, and a jar that is not a zip. The last one fails closed.
+  - The real image passes.
+  - My first run of the two jar twins modified nothing: the copied jar was read-only, so `zip` failed, and the "pass" was an
+    unchanged jar. They were rebuilt from a writable copy and refused.
+
+### The OWASP check never saw jsoup
+The plugin skips test scope by default, so my first POM comment ("scanned by the OWASP check") was false: jsoup was not in the report.
+With test scope on, the check fails on an older finding that 12a did not bring: Testcontainers' `docker-java-transport-zerodep` 3.7.1,
+the newest release, carries shaded `httpclient5` and `httpcore5` with CVSS 9.1 and 7.5 findings. I did not accept or suppress them
+myself. The owner then accepted them for test scope only, kept test scope out of the OWASP check, and set a review by 2027-01-31 or
+at the first fixed Testcontainers release (register 167). That acceptance is held by tests:
+- `DockerfileTest`: Testcontainers and docker-java stay test scope.
+- `check-image.sh`: refuses either in the jar. A twin image with the transport jar was refused.
+- `WorkflowFileTest`: the jobs that run tests have no secret and only read.
+- `AcceptedTestRiskTest`: fails after the date, or on another docker-java, httpclient5 or httpcore5 version. jsoup is now scanned in the `a11y-browser` job by the pinned Trivy in `rootfs` mode. In `fs` mode
+Trivy reported the jar "not scanned" with exit 0, a silent pass. Checked by hand: the same command refuses commons-text 1.9
+(CVE-2022-42889) and passes jsoup 1.24.1.
+
+### Timing
+On my machine (warm caches): the fixture starts in about 20 s, and the walk takes about 5 s. In CI the `a11y-browser` job took
+2 min 11 s and 2 min 13 s on its first green runs (PR #29). It runs beside `build-and-test` (5 min 42 s to 9 min 6 s), so the
+pipeline's total time does not grow.
+
+The first CI run failed in the jsoup scan step: `-pl web` resolved web's test classpath, which needs sibling test jars that are not
+built at that step. The step now fetches the jar by coordinates, with the version read from the root POM. I tested it against an
+empty local repository first.
+
+### Unverified
+- Real screen readers (TalkBack, VoiceOver, NVDA), Safari and Firefox, and real low-end phones. Only Chrome, headless, was used.
+- The provenance of the Chrome for Testing zip. No checksum is published; the pin is the hash of the first download.
+- WCAG conformance as a whole. Automated checks find a subset of failures; full conformance needs manual testing with assistive
+  technologies and an expert review.

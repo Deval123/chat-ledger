@@ -78,6 +78,13 @@
       was added (task 3.4); advisories were checked and are listed in docs/kiro-notes.md.
     -->
     <bouncycastle.version>1.86</bouncycastle.version>
+    <!--
+      jsoup: an HTML parser for the accessibility checks of the rendered pages (task 12a, AccessibilityIT). Test scope only: it never
+      reaches the application jar or the image (deploy/check-image.sh refuses an image whose jar holds it). MIT licence. The OWASP check
+      skips test scope, so CI's a11y-browser job scans this jar with the pinned Trivy (register 167). 1.24.1 was the newest release when
+      it was added.
+    -->
+    <jsoup.version>1.24.1</jsoup.version>
 
     <!-- plugin versions — pinned explicitly, matching Boot BOM values -->
     <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
@@ -162,6 +169,12 @@
         <groupId>net.jqwik</groupId>
         <artifactId>jqwik</artifactId>
         <version>${jqwik.version}</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.jsoup</groupId>
+        <artifactId>jsoup</artifactId>
+        <version>${jsoup.version}</version>
         <scope>test</scope>
       </dependency>
 
