@@ -173,6 +173,31 @@ class WorkflowFileTest {
         assertThat(String.valueOf(a11y)).doesNotContain("secrets.");
     }
 
+    /**
+     * Register 167: Testcontainers' docker-java runs only where the tests run. Those jobs are GitHub-hosted (a fresh runner per job), use no
+     * repository secret and can only read; every other Maven call skips the tests or only fetches a jar.
+     */
+    @Test
+    void the_jobs_that_run_tests_have_no_secret_and_only_read() throws IOException {
+        List<String> testing = new ArrayList<>();
+        for (Map.Entry<String, Object> e : map(workflow("ci.yml").get("jobs")).entrySet()) {
+            Map<String, Object> job = map(e.getValue());
+            for (String line : runs(job).split("\n")) {
+                if (line.contains("mvn ") && line.contains(" verify") && !line.contains("-DskipTests")) {
+                    testing.add(e.getKey());
+                    break;
+                }
+            }
+        }
+        assertThat(testing).containsExactlyInAnyOrder("build-and-test", "a11y-browser");
+        for (String name : testing) {
+            Map<String, Object> job = job(name);
+            assertThat(String.valueOf(job)).as(name + ": no secret").doesNotContain("secrets.");
+            assertThat(String.valueOf(job.get("runs-on"))).as(name + ": a GitHub-hosted runner").isEqualTo("ubuntu-24.04");
+            assertThat(map(job.get("permissions"))).as(name + ": read only").allSatisfy((k, v) -> assertThat(v).isEqualTo("read"));
+        }
+    }
+
     @Test
     void secrets_are_used_only_where_they_are_needed() throws IOException {
         String ci = Files.readString(WORKFLOWS.resolve("ci.yml"));

@@ -59,10 +59,11 @@ if [ -z "$files" ]; then fail "the image's files could not be listed"
 elif [ -n "$browser_files" ]; then fail "browser-check files in the image: $(printf '%s' "$browser_files" | tr '\n' ' ')"
 else pass "no Node, Chrome, puppeteer or axe-core file in the image"; fi
 jar_entries="$(unzip -Z1 "$work/app/app.jar" 2>/dev/null)"
-jar_browser="$(printf '%s\n' "$jar_entries" | grep -iE 'jsoup|axe-core|axe\.min\.js|puppeteer|node_modules' | head -n 3)"
+# docker-java and Testcontainers too: their findings are accepted for test scope only (register 167).
+jar_browser="$(printf '%s\n' "$jar_entries" | grep -iE 'jsoup|axe-core|axe\.min\.js|puppeteer|node_modules|docker-java|testcontainers|com/github/dockerjava|org/testcontainers' | head -n 3)"
 if ! printf '%s\n' "$jar_entries" | grep -q '^BOOT-INF/lib/'; then fail "app.jar could not be listed"
 elif [ -n "$jar_browser" ]; then fail "test-only code in app.jar: $(printf '%s' "$jar_browser" | tr '\n' ' ')"
-else pass "app.jar holds no jsoup, axe-core or puppeteer"; fi
+else pass "app.jar holds no jsoup, axe-core, puppeteer, docker-java or Testcontainers"; fi
 rm -rf "$work"
 # The two commands the compose file relies on are dispatched before Spring starts: the health probe with nothing listening prints
 # exactly DOWN and exits 1; db-migrate with no configuration exits 2 with its usage. (A Spring start would print logs instead.)

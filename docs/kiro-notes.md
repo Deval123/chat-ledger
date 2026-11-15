@@ -2114,8 +2114,13 @@ to the owner for review before merge, with the list of keys (second pull request
 ### The OWASP check never saw jsoup
 The plugin skips test scope by default, so my first POM comment ("scanned by the OWASP check") was false: jsoup was not in the report.
 With test scope on, the check fails on an older finding that 12a did not bring: Testcontainers' `docker-java-transport-zerodep` 3.7.1,
-the newest release, carries shaded `httpclient5` and `httpcore5` with CVSS 9.1 and 7.5 findings. I did not accept or suppress them;
-register 167 is open for the owner. jsoup is now scanned in the `a11y-browser` job by the pinned Trivy in `rootfs` mode. In `fs` mode
+the newest release, carries shaded `httpclient5` and `httpcore5` with CVSS 9.1 and 7.5 findings. I did not accept or suppress them
+myself. The owner then accepted them for test scope only, kept test scope out of the OWASP check, and set a review by 2027-01-31 or
+at the first fixed Testcontainers release (register 167). That acceptance is held by tests:
+- `DockerfileTest`: Testcontainers and docker-java stay test scope.
+- `check-image.sh`: refuses either in the jar. A twin image with the transport jar was refused.
+- `WorkflowFileTest`: the jobs that run tests have no secret and only read.
+- `AcceptedTestRiskTest`: fails after the date, or on another docker-java, httpclient5 or httpcore5 version. jsoup is now scanned in the `a11y-browser` job by the pinned Trivy in `rootfs` mode. In `fs` mode
 Trivy reported the jar "not scanned" with exit 0, a silent pass. Checked by hand: the same command refuses commons-text 1.9
 (CVE-2022-42889) and passes jsoup 1.24.1.
 

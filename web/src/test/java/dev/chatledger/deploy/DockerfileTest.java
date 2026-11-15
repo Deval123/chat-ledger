@@ -81,6 +81,7 @@ class DockerfileTest {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
         int named = 0;
+        int containerLibs = 0;
         List<Path> poms;
         try (var walk = Files.walk(ROOT, 2)) {
             poms = walk.filter(p -> p.getFileName().toString().equals("pom.xml")).toList();
@@ -94,9 +95,18 @@ class DockerfileTest {
                     named++;
                     assertThat(text(dependency, "scope")).as(pom + ": jsoup is test scope").isEqualTo("test");
                 }
+                // Register 167: the docker-java findings are accepted because Testcontainers never leaves test scope.
+                String group = text(dependency, "groupId");
+                if (("org." + "test" + "containers").equals(group) || "com.github.docker-java".equals(group)) {
+                    containerLibs++;
+                    String scope = text(dependency, "scope");
+                    assertThat(scope).as(pom + ": " + text(dependency, "artifactId") + " is test scope (or an imported BOM)")
+                            .isIn("test", "import");
+                }
             }
         }
         assertThat(named).as("the root's managed entry and web's").isEqualTo(2);
+        assertThat(containerLibs).as("the check saw the container-library entries").isGreaterThanOrEqualTo(3);
     }
 
     private static String text(Element parent, String child) {
