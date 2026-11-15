@@ -2196,3 +2196,52 @@ file (2).
 - **Amounts and dates stay in English formats** (`5,000 XAF`, `11 Nov, 12:04`): the formatters do not follow the locale. They must
   before French is turned on.
 - **The French wording** waits for the owner's review, money terms first ("avoir client", "contrepassée", "imputés", "encaissé").
+
+## Task 12a - deployment (2026-11-15)
+
+One upgrade on the VPS, as in the release note of `deploy/RUNBOOK.md` section 5. The facts below come from the owner's report of the
+deploy. Times are UTC: the report gave Paris time, which is UTC+1 on that date.
+
+### What ran
+- **Upgrade:** from `sha256:116d11ebe436f62dc1395c53cb05f0aecf5a1d5dbb9f39f17b0fc32d6567dbe2` (CI run #55) to
+  `sha256:2104ccb989e7670d8450a56aea6858839ef535498eada4173215efd29763dc42` (CI run #83, commit `b97f595`: PRs #29 and #30).
+- **No migration.**
+- **The `.env` copy** made before the edit is `/opt/chat-ledger/.env.20261115-1618`. It holds the rollback to run #55.
+
+### Measured
+- **Interruption start:** the one-a-second probe saw 502 from 16:19:03.
+- **Interruption end: not recorded here.** The report left the probe's closing lines out, so the length of this interruption is
+  unknown. It is to be added from the probe's `health.log`. The rehearsal of 2026-11-11 measured about 25 to 30 s, for a release
+  without a migration.
+- **Web `(healthy)`** 44 s after its container started. This counts the start and the first health checks, not the time without a
+  200.
+- **The locale guard** let web start on the VPS. The three settings come from the jar, and nothing on the host overrides them.
+- **`smoke.sh`:** 25 checks of 25, `Failures: 0`.
+
+### Checked by hand
+- **By the owner:**
+  - the columns stack on a phone;
+  - a VoiceOver pass: on the board, each card's buttons name the customer, and the result of an action is announced.
+- **In Chrome, on the deployed release:**
+  - the skip link is the first element the keyboard reaches;
+  - one h1 per page, and one notice region;
+  - the 29 button names of the board are all different;
+  - the summary says "Collected that day" and links to the books, and the books link back;
+  - the books balance;
+  - no page shows French.
+
+### Unverified
+- **The layout at 360 px on the deployed release:** the Chrome window used for the check did not change width. CI's `a11y-browser`
+  job measures it on every push (360 px and 640 px).
+- **The length of this deploy's interruption** (above).
+- **The interruption of an upgrade with a migration:** still not rehearsed.
+- **The VPS clock is UTC:** inferred, not checked. The `.env` copy is named 16:18, one minute before the probe's first 502 at 16:19
+  UTC, so it fits.
+
+### Style point, for 12b or later
+The summary page explains "Collected" twice, in two close sentences that could become one:
+- `summary.note`: "…Collected counts payments paid that day, without repeats and without unverified ones."
+- `summary.collected.note`: "Collected counts every payment confirmed by a transaction id that day, matched to an order or not…"
+
+A merge would change both keys and their French counterparts in `messages_fr.properties`. No test reads either sentence today.
+Nothing was changed now.
