@@ -289,6 +289,46 @@ after `DC ps` shows `web (healthy)` and the health probe is back to 200, never w
 fails on the restart and proves nothing about the release. If `compose.yaml` itself changed in the release, copy it as in step 3.2
 first.
 
+### Release note: task 12a (accessibility, money labels; prepared 2026-11-15, not deployed yet)
+**What it is.**
+- **PR #29**, squashed into `main` as `30f5270`. CI run #78 pushed
+  `ghcr.io/deval123/chat-ledger@sha256:0e3b0bb2a4610f9e07cbdbd700fdca9675aeb55db44f652b7dd1850ecf68daf8`.
+- **PR #30** (French scaffolding) is not merged. If it is merged before the deploy, take the digest of its own `main` run instead; the
+  steps below do not change.
+- **Rolls back to** the release in "Deployed state": `116d11eb…`, CI run #55.
+
+**What it changes, and what it does not.**
+- **Templates, the stylesheet and the English messages:**
+  - a skip link, the columns stacked on a phone, named card buttons, focus on the result after a card action;
+  - "Collected that day" on the summary, linked to the books.
+
+  Nothing in what is computed or posted changes.
+- **No migration.** Skip the `stop refresh` / `migrate` lines.
+- **`compose.yaml` and `.env` are unchanged** apart from `CHAT_LEDGER_DIGEST`.
+- **`smoke.sh` is unchanged** (25 checks). The four texts it reads ("Nothing here is real.", "Demo, made-up data", "The payment was
+  sent.", "The books balance.") are the same in this release. CI's "Image, build and drill" job ran it against this image.
+- **The image has no test or browser code.** `check-image.sh` passed in run #78: no Node, Chrome, puppeteer, axe-core, jsoup,
+  docker-java or Testcontainers.
+- **With PR #30 only:** web refuses to start if `spring.messages.fallback-to-system-locale` is not `false`, or if the locale is set to
+  anything but fixed `en`. Neither `compose.yaml` nor `.env` sets them, so this only matters if someone adds one.
+
+**Steps.**
+1. Outside judging hours. The interruption is about 25 to 30 s and signs every visitor out.
+2. Optionally, start the health probe above.
+3. Run "The upgrade" above, with the dated `.env` copy and the new `CHAT_LEDGER_DIGEST`, and no migration.
+4. After `DC ps` shows `web (healthy)` and the probe is back to 200, run `sh deploy/smoke.sh https://ledger.nkap.dev`. Expected:
+   `Failures: 0` after 25 checks.
+5. By hand, about two minutes on a phone:
+   - on `/demo`, the first Tab shows "Skip to the main content";
+   - the board stacks its columns, and nothing scrolls sideways;
+   - "I checked this" on a flagged card leaves the focus on the result;
+   - the summary says "Collected that day" and links to the books, and the books link back.
+6. The owner's ten-minute VoiceOver pass on the entry page, the board and one scenario. This is unverified until it is done.
+7. Update "Deployed state" (release, digest, run, date) and record the times in `docs/kiro-notes.md`. A failing smoke run or a step
+   that does not hold means rolling back with section 6.
+
+**After it.** 12b gets its own stop 2 only after this deploy and its smoke run. Nothing of 12b is deployed after 2026-11-27.
+
 ## 6. Roll back
 
 Pick the copy to restore (root's shell expands the glob):
