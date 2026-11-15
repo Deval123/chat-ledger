@@ -289,7 +289,7 @@ after `DC ps` shows `web (healthy)` and the health probe is back to 200, never w
 fails on the restart and proves nothing about the release. If `compose.yaml` itself changed in the release, copy it as in step 3.2
 first.
 
-### Release note: task 12a (accessibility, money labels, French scaffolding; prepared 2026-11-15, not deployed yet)
+### Release note: task 12a (accessibility, money labels, French scaffolding; deployed 2026-11-15)
 **What it is.**
 - **PRs #29 and #30**, squashed into `main` as `30f5270` and then `b97f595`. CI run #83 on `b97f595` pushed
   `ghcr.io/deval123/chat-ledger@sha256:2104ccb989e7670d8450a56aea6858839ef535498eada4173215efd29763dc42` (the `digest:` line of its
