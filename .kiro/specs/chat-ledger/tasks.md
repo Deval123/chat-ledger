@@ -199,6 +199,9 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
 
 - [ ] 10. Optional AI extractor
   - Interface, timeout, schema validation, amount cross-check; off by default.
+  - **State (2026-11-21): not started, and out of the contest's scope by the owner's decision.** No extractor exists: orders and
+    payments are read by the deterministic parsers only, and no message text leaves the server (requirement 8.4 holds by having none;
+    8.2 and 8.3 apply only where an extractor is configured). Described as future work in the README.
   - _Requirements: 8_
 
 - [ ] 11. Signed machine API
@@ -206,9 +209,16 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
   - **Trust for the machine feed starts here.** Until this task, a payment recorded with no actor is a `HELPER` payment (suggestion only; design register item 67). This task
     must record an **explicit machine identity** in the `PAYMENT_INGESTED` audit entry (not a NULL actor), add its own branch to `MatchRepository.recorderOf` and to the two
     recorder subselects, and add the tests that make `Recorder.MACHINE` reachable only through that path (a NULL or unknown actor must stay a helper).
+  - **State (2026-11-21): not started, and not opened before judging by the owner's decision.** There is no machine endpoint: orders
+    and payments arrive only through the signed-in pages (requirement 9.3 applies only where a machine endpoint receives messages). A
+    missing actor stays a helper (register 67). Described as future work in the README.
   - _Requirements: 9.3_
 
-- [ ] 12. Polish and accessibility
+- [x] 12. Polish and accessibility
+  - **Done, except "correct a total", which is deferred until after judging with its own stop 2 (register 179).**
+    - 12a: accessibility and labels (PR #29), French scaffolding (PR #30); deployed 2026-11-15.
+    - 12b, first pull request: cancel an order and dismiss a record, migration V021 (PR #33); deployed 2026-11-21.
+    - The display fix for a cancelled order's page (register 180, PR #35) is to be deployed before 2026-11-27, without a migration.
   - Visual design pass, keyboard use, contrast, French string scaffolding.
   - **Cancel, dismiss and correct a total** (task 8, D7): cancel an open order (a `CANCELLED` transition with the reversal of its
     `ORDER_ACCEPTED` through `reverseWithin`, refused while a match is active), dismiss an unread record, and correct a total stated by
@@ -240,6 +250,9 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
 
 - [ ] 14. Submission material
   - Under-3-minute video, write-up of how Kiro was used, README, blog post, social post.
+  - **State (2026-11-21): not started.** The owner writes the outline of the write-up and the video script; their facts are then
+    checked against the repository. Material to draw on: `docs/kiro-notes.md` and the section below. The README has the current
+    future-work list (tasks 10 and 11). Deadline: 2026-12-04, 14:00 PT.
 
 ## Kiro workflow to document as you go
 
