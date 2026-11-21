@@ -362,7 +362,8 @@ and checks moves that the old code never makes, so it is unaffected.
 
 **Rehearsed in CI.** Every push runs `deploy/test-upgrade.sh` in the image job: the stack from nothing on the deployed release, used,
 then this upgrade as written below. The run prints how long `migrate` took and the time without a 200. Ten demo workspaces on an amd64
-runner, not the VPS's data.
+runner, not the VPS's data. First run (2026-11-21): `migrate` 3 s, 11 s without a 200 (web's restart only; the old web kept answering
+during `migrate`), 19 s end to end before any pull. On the VPS add the pull, and expect the 25 to 30 s measured on 2026-11-11.
 
 **Steps** (the upgrade above, with its migration lines):
 1. Outside judging hours. Dated `.env` copy, new `CHAT_LEDGER_DIGEST`, the health probe started.

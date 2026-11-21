@@ -2341,9 +2341,20 @@ No deploy: it waits for the owner's go, with RUNBOOK section 5 and the V021 migr
     accident.
 - **Condition 2's "correction against match" test** belongs to PR2 and is not written. Only its cancel half exists.
 
+### The first rehearsal of an upgrade with a migration (PR #33's first CI run, 2026-11-21)
+From the deployed release (`2104ccb9…`) to this branch, on an amd64 runner, with ten demo workspaces seeded and one scenario run:
+- **Migrate:** `migrate` took 3 s, the container start included. Flyway applied `021 - cancel and dismiss` in 18 ms.
+- **Interruption:** 11 one-a-second samples without a 200, from 20:22:22 to 20:22:32 UTC. That is web's restart only: the probe had
+  200s throughout `migrate`, so the old web ran on the V021 schema without a fault.
+- **End to end:** the upgrade took 19 s, with no pull (the images were local; on the VPS the pull comes first).
+- **Smoke:** 25 checks of 25 passed before the upgrade and after it.
+- **Books on the old release's data:** 11 workspaces and 101 payable orders, each with one live acceptance posting, and a zero trial
+  balance everywhere.
+
+The pull request run's image job failed once on a 429 from Maven Central during `docker build`, before any test; a rerun of that job
+is the record.
+
 ### Unverified
-- **The upgrade rehearsal itself:** it runs on this pull request's first CI run, and the migration time and the probe's numbers come
-  from there.
 - **The VPS's data under the new rules:** a payable order without its acceptance posting written by an older release would show
   "does not agree" on that workspace. The runbook's books query checks this after `migrate`.
 - **How a real seller reads the new sentences:** no French translation yet; the eight notices and the two check pages are English only.
