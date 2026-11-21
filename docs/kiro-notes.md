@@ -2358,3 +2358,46 @@ is the record.
 - **The VPS's data under the new rules:** a payable order without its acceptance posting written by an older release would show
   "does not agree" on that workspace. The runbook's books query checks this after `migrate`.
 - **How a real seller reads the new sentences:** no French translation yet; the eight notices and the two check pages are English only.
+
+## Task 12b - deployment (2026-11-21)
+
+The first upgrade with a migration on the VPS, as the 12b release note of `deploy/RUNBOOK.md` section 5 says. The facts below come
+from the owner's report of the deploy.
+
+### What ran
+- **Upgrade:** from `sha256:2104ccb989e7670d8450a56aea6858839ef535498eada4173215efd29763dc42` (CI run #83) to
+  `sha256:db34ed26d79d5744f663bf4162877d3b096204d1df9ced7780602cd12264e3c8` (CI run #104, commit `7cf50ee`, PR #33).
+- **Migration:** V021, "21 - cancel and dismiss".
+- **The `.env` copy** made before the edit is `/opt/chat-ledger/.env.20261121-2213`. The rollback is to `2104ccb9…` (run #83), with no
+  down migration: the old release runs on the V021 schema.
+
+### Measured
+Times are given in UTC first, with Paris time in brackets.
+- **The VPS clock is UTC: confirmed.** The migration is stamped 22:13:32 UTC, which is 23:13:32 in Paris. This settles the
+  "unverified" point of the 12a deploy.
+- **Migrate:** Flyway applied V021 in 65 ms, from 020 to 021, one migration, exit 0. CI's rehearsals had measured 18 ms.
+- **Interruption:** the owner's one-a-second probe saw 26 samples of 502 from 22:13:45 to 22:14:12 UTC (23:13:45 to 23:14:12 Paris),
+  about 27 s without a 200.
+  - The probe had 200s before and during `migrate`, so the old release answered on the new schema while it ran.
+  - The 27 s is web's restart. It matches the 25 to 30 s of the 2026-11-11 rehearsal. CI's rehearsals had 11 s and 17 s on a runner.
+- **Web `(healthy)`:** shown by `DC ps` about five minutes after the restart. That is when `DC ps` was read, not how long web took.
+- **The runbook's books query** (live acceptance postings against payable orders) returned no row on any workspace.
+- **`smoke.sh`:** 25 checks of 25, `Failures: 0`.
+
+### Checked by hand
+In Chrome, on the deployed release, in a fresh demo:
+- **Cancel:** an unpaid order of 800 XAF, from its page.
+  - The check page wrote nothing.
+  - The notice said "Order cancelled. Its receivable was reversed in the books.", and the card left the board.
+  - The nine lines of the books were "balanced", among them "Orders posted to the books equal the payable orders" (8 of 8) and
+    "Cancelled orders still in the books" (0 of 0).
+- **Dismiss:** an unreadable message left the board, and the books still balanced.
+
+### Found
+The cancelled order's page still said "Still to pay 800 XAF". That is misleading: the order owes nothing, because its receivable was
+reversed. It is a display fix only (register 180): the line is left out for a cancelled order, and no query, write or amount changes.
+It is in the documentation pull request of this deploy. The live demo keeps the line until the next deploy.
+
+### Unverified
+- The French of the new sentences.
+- An upgrade with a migration on real data of a workspace other than the demo's.

@@ -23,7 +23,8 @@ class CancelDismissFlowIT extends BoardIT {
         UUID order = orderId(w.tenantId(), "K-1");
         assertThat(b.get("/app").body()).contains("Awaiting 1");
         String page = b.get("/app/orders/" + order).body();
-        assertThat(page).contains("/app/orders/" + order + "/cancel").contains("Cancel this order");
+        assertThat(page).contains("/app/orders/" + order + "/cancel").contains("Cancel this order")
+                .contains("Still to pay").as("an open order shows what is owed").contains("5,000 XAF");
 
         Browser.Response check = b.get("/app/orders/" + order + "/cancel");
         assertThat(check.status()).isEqualTo(200);
@@ -36,7 +37,8 @@ class CancelDismissFlowIT extends BoardIT {
                 .doesNotContain(">Ana Kamga<");
         assertThat(one("SELECT status FROM orders WHERE id = ?", order)).isEqualTo("CANCELLED");
         String after = b.get("/app/orders/" + order).body();
-        assertThat(after).contains("Cancelled").doesNotContain("/app/orders/" + order + "/cancel");
+        assertThat(after).contains("Cancelled").doesNotContain("/app/orders/" + order + "/cancel")
+                .as("a cancelled order owes nothing, so no balance is shown (register 180)").doesNotContain("Still to pay");
         assertThat(b.get("/app/summary").body()).contains("0 orders recorded");
         String books = b.get("/app/books").body();
         assertThat(books).contains("The books balance.").doesNotContain("DOES NOT AGREE");

@@ -53,7 +53,7 @@ What runs now, so a change starts from the right place. Update this table with e
 
 | Item | Value | Since |
 |---|---|---|
-| Release | `ghcr.io/deval123/chat-ledger@sha256:2104ccb989e7670d8450a56aea6858839ef535498eada4173215efd29763dc42` (CI run #83, commit `b97f595`: task 12a, PRs #29 and #30) | 2026-11-15 |
+| Release | `ghcr.io/deval123/chat-ledger@sha256:db34ed26d79d5744f663bf4162877d3b096204d1df9ced7780602cd12264e3c8` (CI run #104, commit `7cf50ee`: task 12b, PR #33, schema V021) | 2026-11-21 |
 | `APP_SECURITY_TRUSTED_PROXY_HOPS` | `1`, measured through the tunnel over IPv4 (section 4); the IPv6 repeat is still open | 2026-11-10 |
 | Public hostname | `ledger.nkap.dev` → `http://web:8080`; catch-all `http_status:404` | 2026-11-10 |
 | Zone settings of `nkap.dev` (D19) | Rocket Loader off, Bot Fight Mode off, Email Address Obfuscation off, Always Use HTTPS on, zone HSTS off; **zone-wide**, see section 2, step 3 | 2026-11-10 |
@@ -351,7 +351,7 @@ first.
 
 **After it.** 12b gets its own stop 2 only after this deploy and its smoke run. Nothing of 12b is deployed after 2026-11-27.
 
-### Release note: task 12b, first pull request (cancel and dismiss; prepared 2026-11-21, not deployed)
+### Release note: task 12b, first pull request (cancel and dismiss; deployed 2026-11-21)
 **What it is.** Cancel an order nobody paid for, and dismiss a record that never reached the books. **It has a migration, V021**: the
 first deploy with one.
 - **Candidate image:** PR #33, squashed into `main` as `7cf50ee`. CI run #104 on that commit pushed
@@ -362,11 +362,11 @@ first deploy with one.
     jsoup, axe-core, puppeteer, docker-java or Testcontainers";
   - the drill's smoke run passed its 25 checks;
   - the upgrade rehearsal passed.
-- **Rolls back to** the release in "Deployed state": `2104ccb9…`, CI run #83.
+- **Rolls back to** `2104ccb9…`, CI run #83, the release before this one (no down migration; see "Rolling back" below).
 - **The second pull request of 12b (correct a total, V022) is not part of this release.** It is deferred until after judging
   (register 179).
-- **The digest of the step "Rehearse the upgrade from the deployed release" in `.github/workflows/ci.yml` stays `2104ccb9…`** until
-  this release is deployed: it must name what runs on the VPS. It changes in step 7, with "Deployed state".
+- **The digest of the step "Rehearse the upgrade from the deployed release" in `.github/workflows/ci.yml`** stayed `2104ccb9…` until
+  this deploy. It now names `db34ed26…`, the release that runs on the VPS, together with "Deployed state" (step 7).
 
 **What V021 does.** It replaces three trigger functions on `orders`, adds a commit-time trigger on `orders` and one on `ledger_txn`,
 and creates the table `record_dismissal`. It rewrites no row. Creating the triggers waits for the transactions in flight on `orders`
