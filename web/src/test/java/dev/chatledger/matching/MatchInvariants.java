@@ -29,13 +29,26 @@ final class MatchInvariants {
 
     /** Throws an {@link AssertionError} naming every violated rule. */
     static void assertHold(UUID tenant) {
-        List<String> violations = check(tenant);
+        assertHold(tenant, false);
+    }
+
+    /** As {@link #assertHold(UUID)}, and every payable order has its live acceptance posting: for worlds built by real ingestion only. */
+    static void assertHoldStrict(UUID tenant) {
+        assertHold(tenant, true);
+    }
+
+    private static void assertHold(UUID tenant, boolean strict) {
+        List<String> violations = check(tenant, strict);
         if (!violations.isEmpty()) {
             throw new AssertionError("The books of tenant " + tenant + " break " + violations.size() + " rule(s):\n - " + String.join("\n - ", violations));
         }
     }
 
     static List<String> check(UUID tenant) {
+        return check(tenant, false);
+    }
+
+    static List<String> check(UUID tenant, boolean strict) {
         List<String> v = new ArrayList<>();
         try (Connection c = MatchWorld.DB.migrateDataSource().getConnection()) {
             // 1. never more than a payment, never more than an order total
@@ -69,8 +82,28 @@ final class MatchInvariants {
                 v.add("a reversed match has no reversal posting: " + row);
             }
             // 3. receivables, sales, customer credit, clearing
+            // Task 12b: accepted means a live (unreversed) acceptance posting; a cancel reverses it.
             long accepted = one(c, "SELECT COALESCE(SUM(o.total_minor), 0) FROM orders o WHERE o.tenant_id = ? AND EXISTS ("
-                    + "SELECT 1 FROM ledger_txn t WHERE t.tenant_id = o.tenant_id AND t.kind = 'ORDER_ACCEPTED' AND t.ref_id = o.id)", tenant);
+                    + "SELECT 1 FROM ledger_txn t WHERE t.tenant_id = o.tenant_id AND t.kind = 'ORDER_ACCEPTED' AND t.ref_id = o.id "
+                    + "AND NOT EXISTS (SELECT 1 FROM ledger_txn r WHERE r.tenant_id = t.tenant_id AND r.reverses_txn_id = t.id))", tenant);
+            // 3b. acceptance postings (task 12b): never two live ones for an order, none for an order that is not payable, and (strict
+            // worlds, built by real ingestion only) exactly one for every payable order. Fixture worlds insert payable orders without
+            // their posting (the matcher posts it at the first match), so the "at least one" half is strict-only.
+            for (String row : rows(c, "SELECT o.id::text || ' ' || o.status || ' has ' || count(t.id) || ' live acceptance postings' FROM orders o "
+                    + "JOIN ledger_txn t ON t.tenant_id = o.tenant_id AND t.kind = 'ORDER_ACCEPTED' AND t.ref_id = o.id "
+                    + "AND NOT EXISTS (SELECT 1 FROM ledger_txn r WHERE r.tenant_id = t.tenant_id AND r.reverses_txn_id = t.id) "
+                    + "WHERE o.tenant_id = ? GROUP BY o.id, o.status "
+                    + "HAVING count(t.id) > 1 OR o.status NOT IN ('PENDING_PAYMENT', 'PARTIALLY_PAID', 'PAID')", tenant)) {
+                v.add("an acceptance posting is wrong: " + row);
+            }
+            if (strict) {
+                for (String row : rows(c, "SELECT o.id::text || ' ' || o.status FROM orders o WHERE o.tenant_id = ? "
+                        + "AND o.status IN ('PENDING_PAYMENT', 'PARTIALLY_PAID', 'PAID') AND NOT EXISTS ("
+                        + "SELECT 1 FROM ledger_txn t WHERE t.tenant_id = o.tenant_id AND t.kind = 'ORDER_ACCEPTED' AND t.ref_id = o.id "
+                        + "AND NOT EXISTS (SELECT 1 FROM ledger_txn r WHERE r.tenant_id = t.tenant_id AND r.reverses_txn_id = t.id))", tenant)) {
+                    v.add("a payable order has no live acceptance posting: " + row);
+                }
+            }
             long applied = one(c, "SELECT COALESCE(SUM(amount_minor), 0) FROM match WHERE tenant_id = ? AND state IN ('AUTO', 'CONFIRMED')", tenant);
             long excess = one(c, "SELECT COALESCE(SUM(excess_minor), 0) FROM match WHERE tenant_id = ? AND state IN ('AUTO', 'CONFIRMED')", tenant);
             long receivable = balance(c, tenant, "1100", true);

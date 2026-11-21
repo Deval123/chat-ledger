@@ -15,8 +15,8 @@
     <tbody>
       <tr th:each="line : ${result.lines()}">
         <th scope="row" th:text="#{${'books.' + line.code().name()}}">Check</th>
-        <td th:text="${line.code().name() == 'MATCH_POSTINGS'} ? ${line.left()} : ${@money.format(line.left(), tenant.scale, tenant.currency)}">0</td>
-        <td th:text="${line.code().name() == 'MATCH_POSTINGS'} ? ${line.right()} : ${@money.format(line.right(), tenant.scale, tenant.currency)}">0</td>
+        <td th:text="${line.code().counts()} ? ${line.left()} : ${@money.format(line.left(), tenant.scale, tenant.currency)}">0</td>
+        <td th:text="${line.code().counts()} ? ${line.right()} : ${@money.format(line.right(), tenant.scale, tenant.currency)}">0</td>
         <td th:text="${line.ok()} ? #{books.line.ok} : #{books.line.bad}">balanced</td>
       </tr>
     </tbody>

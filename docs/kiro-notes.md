@@ -2246,3 +2246,115 @@ The summary page explains "Collected" twice, in two close sentences that could b
 
 A merge would change both keys and their French counterparts in `messages_fr.properties`. No test reads either sentence today.
 Nothing was changed now.
+
+## Task 12b - stop 2, first pull request: cancel and dismiss (2026-11-21)
+
+The owner's go for 12b, with its stop 2 now. Conditions:
+1. two pull requests, the first (cancel and dismiss) deployable alone;
+2. every V021 guard has a mutant that fails, and a two-thread test covers cancel against a match and correction against a match in both
+   orders of arrival;
+3. the books check changes as designed, and a mutant that removes an acceptance posting must fail `ACCEPTANCE_POSTINGS`;
+4. nothing on the money path is relaxed without a register item and its compensation;
+5. anything that does not fit before the 2026-11-27 freeze is said at stop 2, with a proposed cut.
+
+No deploy: it waits for the owner's go, with RUNBOOK section 5 and the V021 migration (never rehearsed before).
+
+### What was built
+- **V021** (`web/src/main/resources/db/migration/V021__cancel_and_dismiss.sql`):
+  1. `orders_status_transition` gains `PENDING_PAYMENT -> CANCELLED`, refused at the statement with an active match. It also refuses to
+     make a dismissed order payable.
+  2. `orders_assert_status_consistent` lets a cancelled order commit.
+  3. At commit, a cancelled order has no live `ORDER_ACCEPTED`.
+  4. At commit, an `ORDER_ACCEPTED` is reversed only for an order that is `CANCELLED`.
+  5. `record_dismissal`: append-only, one subject, once per record, only for a record that never reached the books, with RLS and
+     composite keys.
+- **`RecordActionsService`**:
+  - cancel: seller check from the database, order lock, reversal of the live acceptance, `CANCELLED`, open suggestions rejected in the
+    seller's name, audit `ORDER_CANCELLED`;
+  - dismiss an order or a payment, audit `ORDER_DISMISSED` / `PAYMENT_DISMISSED`;
+  - a test hook after each step.
+
+  `OrderApprovalService` refuses a dismissed order.
+- **Pages**:
+  - check pages `GET /app/orders/{id}/cancel`, `/app/orders/{id}/dismiss` and `/app/payments/{id}/dismiss`, with their posts;
+  - links on the order and payment pages, for the seller only;
+  - new permissions `CANCEL_ORDER` and `DISMISS_RECORD`, seller only;
+  - eight notices.
+
+  The board, its counts and the summary leave cancelled and dismissed records out.
+- **The books check**:
+  - "accepted" counts live acceptance postings only;
+  - `ACCEPTANCE_POSTINGS`: live acceptance postings equal the payable orders;
+  - `CANCELLED_CLEAR`: no cancelled order still posted.
+
+  The test oracle `MatchInvariants` changed the same way, with a strict variant for worlds built by real ingestion.
+- **`deploy/test-upgrade.sh`**, run by CI's image job, rehearses the upgrade with its migration from the deployed release (register
+  178). RUNBOOK section 5 has the prepared release note, with a books query to run on the VPS after `migrate` and what a rollback does
+  after a cancel.
+
+### Tests
+- `CancelDismissGuardsIT`: each V021 rule, written straight to the tables as the application role.
+- `RecordActionsIT`: every outcome, the twice-run, and a rollback after each step.
+- `CancelMatchConcurrencyIT`: cancel against a manual match with the first transaction held after its order lock, in both orders of
+  arrival (released only when PostgreSQL shows the second one waiting on the lock), and 20 free races against the engine.
+- `BooksCheckIT`: the new lines, and the owner's condition 3.
+- `CancelledAndDismissedOnTheBoardIT`: flagged cancelled and dismissed records are nowhere.
+- `CancelDismissFlowIT`: over HTTP.
+- `MatchingBooksPropertyIT`: a `Cancel` action, strict invariants.
+- Route, limit and isolation registries extended.
+
+### Mutation pass
+**40 mutants, 37 killed.**
+- **V021: 14 killed.** Every rule, the table's index, checks, immutability and RLS.
+- **Java: 8 killed.**
+- **Books check: 4 killed.** Removing the acceptance posting is caught by `ACCEPTANCE_POSTINGS` alone.
+- **Board, counts and summary: 10 killed**, one condition at a time.
+- **The cancel link: 1 killed.**
+- **3 survivors, deleted as redundant** (register 173):
+  - the active-match check in the cancelled branch of `orders_assert_status_consistent`;
+  - the applied-amount check in the cancel service;
+  - the dismissed-payment filter of the summary's flagged count.
+- **Found by the pass:**
+  - A first run of the board mutants showed that a cancelled order with an open flag, and a dismissed payment, were not tested. The
+    board's CASE sends a flagged record to FLAGGED before it looks at the status. `CancelledAndDismissedOnTheBoardIT` was added.
+  - A first V9 mutant renamed the trigger instead of dropping it, so its "survival" meant nothing. It was redone, and is killed.
+
+### Collateral, and why the tests changed instead of the rules
+- The generic ledger tests reversed an `ORDER_ACCEPTED` of a made-up order. V021 rule 4 refuses that, rightly, so they post
+  `TEST_POSTING` now (register 176).
+- `MatchConstraintsIT`'s transition matrix gains the one new move.
+- `FlywayStartupIT` lists the new trigger on `ledger_txn`.
+- The isolation seed gains a dismissed unparsed payment.
+
+### Freeze (2026-11-27): what fits, and the proposed cut
+- **PR1, cancel and dismiss, fits.** It is built and tested here. The CI upgrade rehearsal runs on its first push. It needs the owner's
+  review, a merge, and one deploy with V021 by the 27th.
+- **PR2, correct a total, is not started, and I propose cutting it from the freeze.**
+  - It is the largest relaxation of 12b: the frozen total becomes changeable. It needs V022 (the total exception, a revision table,
+    `ORDER_RESTATED` with its uniqueness, and a commit check that a payable order has exactly one live acceptance equal to its total).
+  - It also needs a service of ten steps, three pages with the amount parser, the correction-against-match concurrency test in both
+    orders, a mutation pass, and a second migration to rehearse and deploy.
+  - Built from tomorrow, its review and deploy would fall on 24 to 26 November, with no slack. It would be the second untested money
+    migration on the live demo in three days.
+  - For an order nobody has paid, the need is already covered by PR1: cancel it and paste the message again.
+  - The proposal: PR2 after judging, with its own stop 2. Nothing of it is merged before then, so no `main` image carries V022 by
+    accident.
+- **Condition 2's "correction against match" test** belongs to PR2 and is not written. Only its cancel half exists.
+
+### The first rehearsal of an upgrade with a migration (PR #33's first CI run, 2026-11-21)
+From the deployed release (`2104ccb9…`) to this branch, on an amd64 runner, with ten demo workspaces seeded and one scenario run:
+- **Migrate:** `migrate` took 3 s, the container start included. Flyway applied `021 - cancel and dismiss` in 18 ms.
+- **Interruption:** 11 one-a-second samples without a 200, from 20:22:22 to 20:22:32 UTC. That is web's restart only: the probe had
+  200s throughout `migrate`, so the old web ran on the V021 schema without a fault.
+- **End to end:** the upgrade took 19 s, with no pull (the images were local; on the VPS the pull comes first).
+- **Smoke:** 25 checks of 25 passed before the upgrade and after it.
+- **Books on the old release's data:** 11 workspaces and 101 payable orders, each with one live acceptance posting, and a zero trial
+  balance everywhere.
+
+The pull request run's image job failed once on a 429 from Maven Central during `docker build`, before any test; a rerun of that job
+is the record.
+
+### Unverified
+- **The VPS's data under the new rules:** a payable order without its acceptance posting written by an older release would show
+  "does not agree" on that workspace. The runbook's books query checks this after `migrate`.
+- **How a real seller reads the new sentences:** no French translation yet; the eight notices and the two check pages are English only.

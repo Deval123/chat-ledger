@@ -38,6 +38,10 @@
       <button type="submit" th:text="#{action.takeback}">Take back</button>
     </form>
   </div>
+  <p class="hint" th:if="${dismissedAt != null}" th:text="#{record.dismissed(${@times.format(dismissedAt, tenant.zone)})}">Dismissed.</p>
+  <p class="actions" th:if="${canDismiss}">
+    <a class="button secondary" th:href="@{/app/payments/{id}/dismiss(id=${payment.id})}" th:text="#{action.dismiss}">Dismiss</a>
+  </p>
   <h2 th:if="${not #lists.isEmpty(shown)}" th:text="#{detail.orders}">Orders</h2>
   <th:block th:each="s : ${shown}">
     <th:block th:replace="~{fragments/match :: match(${s}, 'order')}"></th:block>

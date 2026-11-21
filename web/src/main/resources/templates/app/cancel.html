@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.cancel})}">
+</head>
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<a class="skip" href="#main" th:text="#{skip.main}">Skip to the main content</a>
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main id="main" tabindex="-1">
+  <h1 th:text="#{cancel.title}">Cancel this order?</h1>
+  <p th:text="#{cancel.explain(${@money.format(order.totalMinor, tenant.scale, order.currency)})}">The order leaves the books.</p>
+  <p><a th:href="@{/app/orders/{id}(id=${order.id})}" th:text="#{cancel.order(${order.who != null ? @display.text(order.who, 40) : ''}, ${order.ref != null ? @display.text(order.ref, 40) : ''})}">Order</a></p>
+  <p class="alert" th:text="#{cancel.final}">This cannot be undone.</p>
+  <form th:action="@{/app/orders/{id}/cancel(id=${order.id})}" method="post">
+    <button type="submit" th:text="#{cancel.button}">Yes, cancel this order</button>
+  </form>
+  <p><a th:href="@{/app/orders/{id}(id=${order.id})}" th:text="#{nav.back.order}">Back to the order</a></p>
+</main>
+</body>
+</html>

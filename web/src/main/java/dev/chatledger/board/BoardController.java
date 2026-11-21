@@ -149,6 +149,11 @@ public class BoardController {
         model.addAttribute("shown", shown);
         model.addAttribute("raw", order.rawText() == null ? null : display.block(phone.maskText(order.rawText()), 1000));
         model.addAttribute("balance", balance);
+        // Task 12b: what the seller can still do with the record, and whether it was dismissed (the pages say so; the board hides it).
+        java.util.Optional<java.time.Instant> dismissed = board.dismissedAt(user.tenantId(), id, null);
+        model.addAttribute("dismissedAt", dismissed.orElse(null));
+        model.addAttribute("canCancel", seller && cancellable(order));
+        model.addAttribute("canDismiss", seller && dismissed.isEmpty() && ("UNPARSED".equals(order.status()) || "NEEDS_REVIEW".equals(order.status())));
         notice(model, n, null);
         return "app/order";
     }
@@ -167,6 +172,9 @@ public class BoardController {
         model.addAttribute("shown", shown);
         model.addAttribute("raw", payment.rawText() == null ? null : display.block(phone.maskText(payment.rawText()), 1000));
         model.addAttribute("free", "RECEIVED".equals(payment.status()) || "UNVERIFIED".equals(payment.status()));
+        java.util.Optional<java.time.Instant> dismissed = board.dismissedAt(user.tenantId(), null, id);
+        model.addAttribute("dismissedAt", dismissed.orElse(null));
+        model.addAttribute("canDismiss", seller && dismissed.isEmpty() && "UNPARSED".equals(payment.status()));
         notice(model, n, null);
         return "app/payment";
     }
@@ -211,6 +219,63 @@ public class BoardController {
         model.addAttribute("order", board.order(user.tenantId(), match.orderId(), false).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND)));
         model.addAttribute("payment", board.payment(user.tenantId(), match.paymentId(), false).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND)));
         return "app/undo";
+    }
+
+    /** A payable order nothing was applied to (the service checks it again under the lock). */
+    private static boolean cancellable(OrderDetail order) {
+        return "PENDING_PAYMENT".equals(order.status()) && order.appliedMinor() == 0;
+    }
+
+    /** Task 12b: "Cancel this order?" The order, its total and that it cannot be undone. Writes nothing. */
+    @GetMapping("/app/orders/{id}/cancel")
+    @PreAuthorize("hasAuthority('CANCEL_ORDER')")
+    public String cancelPage(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id, Model model) {
+        shell.fill(model, user);
+        OrderDetail order = board.order(user.tenantId(), id, false).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (!cancellable(order)) {
+            Notice why = "CANCELLED".equals(order.status()) ? Notice.CANCEL_ALREADY
+                    : "PENDING_PAYMENT".equals(order.status()) || "PARTIALLY_PAID".equals(order.status()) || "PAID".equals(order.status())
+                    ? Notice.CANCEL_HAS_PAYMENT : Notice.CANCEL_NOT_PAYABLE;
+            return "redirect:/app/orders/" + id + "?n=" + why.name();
+        }
+        model.addAttribute("order", order);
+        return "app/cancel";
+    }
+
+    /** Task 12b: "Dismiss this order?" for an order that never reached the books. Writes nothing. */
+    @GetMapping("/app/orders/{id}/dismiss")
+    @PreAuthorize("hasAuthority('DISMISS_RECORD')")
+    public String dismissOrderPage(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id, Model model) {
+        shell.fill(model, user);
+        OrderDetail order = board.order(user.tenantId(), id, false).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (board.dismissedAt(user.tenantId(), id, null).isPresent()) {
+            return "redirect:/app/orders/" + id + "?n=" + Notice.DISMISS_ALREADY.name();
+        }
+        if (!"UNPARSED".equals(order.status()) && !"NEEDS_REVIEW".equals(order.status())) {
+            return "redirect:/app/orders/" + id + "?n=" + Notice.DISMISS_NOT_ALLOWED.name();
+        }
+        model.addAttribute("kind", "order");
+        model.addAttribute("subjectId", id);
+        model.addAttribute("back", "/app/orders/" + id);
+        return "app/dismiss";
+    }
+
+    /** Task 12b: "Dismiss this payment?" for a message that could not be read as a payment. Writes nothing. */
+    @GetMapping("/app/payments/{id}/dismiss")
+    @PreAuthorize("hasAuthority('DISMISS_RECORD')")
+    public String dismissPaymentPage(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id, Model model) {
+        shell.fill(model, user);
+        PaymentDetail payment = board.payment(user.tenantId(), id, false).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (board.dismissedAt(user.tenantId(), null, id).isPresent()) {
+            return "redirect:/app/payments/" + id + "?n=" + Notice.DISMISS_ALREADY.name();
+        }
+        if (!"UNPARSED".equals(payment.status())) {
+            return "redirect:/app/payments/" + id + "?n=" + Notice.DISMISS_NOT_ALLOWED.name();
+        }
+        model.addAttribute("kind", "payment");
+        model.addAttribute("subjectId", id);
+        model.addAttribute("back", "/app/payments/" + id);
+        return "app/dismiss";
     }
 
     // ── Summary and books ──────────────────────────────────────────────────────

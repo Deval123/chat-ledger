@@ -26,7 +26,7 @@ class ReportScriptsTest {
 
     private static final Path ROOT = Path.of("..").toAbsolutePath().normalize();
     private static final Pattern PIN = Pattern.compile("([a-z0-9][a-z0-9./_-]*:[A-Za-z0-9][A-Za-z0-9._-]*)@(sha256:[0-9a-f]{64})");
-    private static final List<String> FILES = List.of("Dockerfile", "deploy/compose.yaml", "deploy/hops-echo.yaml", "deploy/test-stack.sh",
+    private static final List<String> FILES = List.of("Dockerfile", "deploy/compose.yaml", "deploy/hops-echo.yaml", "deploy/test-stack.sh", "deploy/test-upgrade.sh",
             ".github/workflows/ci.yml", "web/src/test/java/dev/chatledger/ledger/PostgresRelease.java",
             "web/src/test/java/dev/chatledger/deploy/MakeSecretsScriptIT.java");
 

@@ -45,6 +45,9 @@ class BoardRoutesIT extends BoardIT {
             get("/app/orders/{id}/review", "APPROVE_ORDER_TOTAL", 404),
             get("/app/payments/{id}/match", "CONFIRM_OR_OVERRIDE_MATCH", 404),
             get("/app/matches/{id}/undo", "REVERSE_TRANSACTION", 404),
+            get("/app/orders/{id}/cancel", "CANCEL_ORDER", 404),
+            get("/app/orders/{id}/dismiss", "DISMISS_RECORD", 404),
+            get("/app/payments/{id}/dismiss", "DISMISS_RECORD", 404),
             get("/app/summary", "VIEW_BOARD", 200),
             get("/app/books", "VIEW_LEDGER", 200),
             get("/app/export", "EXPORT_DATA", 200),
@@ -62,7 +65,10 @@ class BoardRoutesIT extends BoardIT {
             post("/app/rematch", "CONFIRM_OR_OVERRIDE_MATCH", Map.of(), 302),
             post("/app/orders/{id}/approve", "APPROVE_ORDER_TOTAL", Map.of("total", "100", "confirm", "yes"), 404),
             post("/app/books/check", "VIEW_LEDGER", Map.of(), 302),
-            post("/app/flags/{id}/resolve", "RESOLVE_FLAG", Map.of(), 404));
+            post("/app/flags/{id}/resolve", "RESOLVE_FLAG", Map.of(), 404),
+            post("/app/orders/{id}/cancel", "CANCEL_ORDER", Map.of(), 404),
+            post("/app/orders/{id}/dismiss", "DISMISS_RECORD", Map.of(), 404),
+            post("/app/payments/{id}/dismiss", "DISMISS_RECORD", Map.of(), 404));
 
     private static Route get(String pattern, String authority, int unknown) {
         return new Route("GET", pattern, authority, Map.of(), unknown);
@@ -230,7 +236,8 @@ class BoardRoutesIT extends BoardIT {
         Workspace other = newWorkspace();
         Browser sellerB = signedIn(other.slug(), other.email(), other.password());
         List<String> paths = List.of("/app/orders/" + order, "/app/payments/" + payment, "/app/orders/" + review + "/review",
-                "/app/payments/" + payment + "/match", "/app/matches/" + suggestion + "/undo");
+                "/app/payments/" + payment + "/match", "/app/matches/" + suggestion + "/undo", "/app/orders/" + order + "/cancel",
+                "/app/orders/" + review + "/dismiss", "/app/payments/" + payment + "/dismiss");
         for (String path : paths) {
             Browser.Response r = sellerB.get(path);
             assertThat(r.status()).as(path).isEqualTo(404);
@@ -238,7 +245,8 @@ class BoardRoutesIT extends BoardIT {
         }
         List<String> posts = List.of("/app/matches/" + suggestion + "/confirm", "/app/matches/" + suggestion + "/reject",
                 "/app/matches/" + suggestion + "/unmatch", "/app/payments/" + payment + "/set-aside", "/app/payments/" + payment + "/take-back",
-                "/app/orders/" + review + "/approve");
+                "/app/orders/" + review + "/approve", "/app/orders/" + order + "/cancel", "/app/orders/" + review + "/dismiss",
+                "/app/payments/" + payment + "/dismiss");
         for (String path : posts) {
             assertThat(post(sellerB, path, Map.of("total", "999")).status()).as(path).isEqualTo(404);
             assertThat(post(sellerB, path, Map.of("total", "999", "confirm", "yes")).status()).as(path + " confirmed").isEqualTo(404);

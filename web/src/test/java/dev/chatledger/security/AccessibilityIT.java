@@ -51,7 +51,8 @@ class AccessibilityIT extends BoardIT {
         List<String> pages = new ArrayList<>(List.of("/app", "/app/summary", "/app/books", "/app/export",
                 "/app/columns/awaiting", "/app/columns/review", "/app/columns/matched", "/app/columns/flagged", "/app/columns/unparsed",
                 "/app/columns/aside", "/app/orders/" + orderId(tenant, "A-1"), "/app/orders/" + review, "/app/orders/" + review + "/review",
-                "/app/payments/" + suggestedPayment, "/app/payments/" + lone, "/app/payments/" + lone + "/match", "/app/matches/" + auto + "/undo"));
+                "/app/payments/" + suggestedPayment, "/app/payments/" + lone, "/app/payments/" + lone + "/match", "/app/matches/" + auto + "/undo",
+                "/app/orders/" + orderId(tenant, "B-2") + "/cancel", "/app/orders/" + review + "/dismiss"));   // task 12b check pages
         Map<String, String> titles = new LinkedHashMap<>();
         List<String> found = new ArrayList<>();
         for (String path : pages) {

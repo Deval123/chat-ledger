@@ -105,6 +105,9 @@ public class OrderApprovalService {
         if (!"NEEDS_REVIEW".equals(locked.get().status())) {
             return Outcome.NOT_REVIEWABLE;
         }
+        if (orders.dismissedWithin(c, tenantId, orderId, null)) {
+            return Outcome.NOT_REVIEWABLE;   // task 12b: a dismissed order is never made payable (the database refuses it too: V021)
+        }
         if (totalMinor < 1 || totalMinor > OrderLimits.MAX_MINOR) {
             return Outcome.TOTAL_OUT_OF_RANGE;
         }

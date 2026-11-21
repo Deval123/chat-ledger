@@ -20,5 +20,9 @@ public enum Permission {
     DELETE_TENANT_DATA,
     MANAGE_USERS,
     /** State the total of an order the parser could not price. Money entering the books: seller only. */
-    APPROVE_ORDER_TOTAL
+    APPROVE_ORDER_TOTAL,
+    /** Cancel an order nothing was paid on: its receivable is reversed (task 12b). Seller only. */
+    CANCEL_ORDER,
+    /** Dismiss an order or a payment that never reached the books (task 12b). Seller only. */
+    DISMISS_RECORD
 }
