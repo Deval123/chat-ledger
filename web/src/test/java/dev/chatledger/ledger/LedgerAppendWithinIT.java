@@ -45,7 +45,7 @@ class LedgerAppendWithinIT {
     }
 
     private LedgerTransaction sale(long amount) {
-        return new LedgerTransaction(UUID.randomUUID(), tenant, "ORDER_ACCEPTED", "ORDER", UUID.randomUUID(), null, NOW,
+        return new LedgerTransaction(UUID.randomUUID(), tenant, "TEST_POSTING", "ORDER", UUID.randomUUID(), null, NOW,
                 List.of(LedgerEntry.debit(receivable.id(), amount), LedgerEntry.credit(revenue.id(), amount)));
     }
 
@@ -126,7 +126,7 @@ class LedgerAppendWithinIT {
     void an_account_of_another_tenant_is_refused_and_nothing_is_written() {
         UUID other = DB.createTenant();
         Account foreign = account(other, "AR", AccountType.ASSET);
-        LedgerTransaction txn = new LedgerTransaction(UUID.randomUUID(), tenant, "ORDER_ACCEPTED", "ORDER", UUID.randomUUID(), null, NOW,
+        LedgerTransaction txn = new LedgerTransaction(UUID.randomUUID(), tenant, "TEST_POSTING", "ORDER", UUID.randomUUID(), null, NOW,
                 List.of(LedgerEntry.debit(foreign.id(), 100), LedgerEntry.credit(revenue.id(), 100)));
         assertThatThrownBy(() -> scope.call(tenant, c -> {
             repository.appendWithin(c, txn);

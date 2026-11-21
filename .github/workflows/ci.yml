@@ -259,6 +259,16 @@ jobs:
       - name: Run the stack and the smoke script
         run: sudo sh deploy/test-stack.sh "${RUNNER_TEMP}/chat-ledger-stack"
 
+      # The upgrade a deploy makes, with its migration, from the release that runs on the VPS (RUNBOOK, "Deployed state"; task 12b):
+      # old stack used, refresh stopped, migrate, web and refresh up, the smoke script, the books rules on the old data, and the time
+      # without a 200. A public image of this repository, pulled without a login; nothing is pushed. Update the digest at each deploy.
+      - name: Rehearse the upgrade from the deployed release
+        env:
+          DEPLOYED: ghcr.io/deval123/chat-ledger@sha256:2104ccb989e7670d8450a56aea6858839ef535498eada4173215efd29763dc42
+        run: |
+          docker pull --quiet "$DEPLOYED"
+          sudo sh deploy/test-upgrade.sh "$DEPLOYED" chat-ledger:test "${RUNNER_TEMP}/chat-ledger-upgrade"
+
       - name: Save the archive
         id: save
         run: |

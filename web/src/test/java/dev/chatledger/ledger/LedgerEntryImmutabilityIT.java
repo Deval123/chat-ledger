@@ -142,7 +142,7 @@ class LedgerEntryImmutabilityIT {
             entryAId = UUID.randomUUID();
             s.execute("INSERT INTO ledger_txn(id,tenant_id,kind,ref_type,ref_id) VALUES ("
                     + lit(txnAId) + "," + lit(tenantAId)
-                    + ",'ORDER_ACCEPTED','ORDER'," + lit(UUID.randomUUID()) + ")");
+                    + ",'TEST_POSTING','ORDER'," + lit(UUID.randomUUID()) + ")");
             s.execute("INSERT INTO ledger_entry(id,txn_id,account_id,debit_minor,credit_minor)"
                     + " VALUES (" + lit(entryAId) + "," + lit(txnAId) + ","
                     + lit(accountAId) + ",5000,0)");
@@ -162,7 +162,7 @@ class LedgerEntryImmutabilityIT {
             UUID txnBId = UUID.randomUUID();
             s.execute("INSERT INTO ledger_txn(id,tenant_id,kind,ref_type,ref_id) VALUES ("
                     + lit(txnBId) + "," + lit(tenantBId)
-                    + ",'ORDER_ACCEPTED','ORDER'," + lit(UUID.randomUUID()) + ")");
+                    + ",'TEST_POSTING','ORDER'," + lit(UUID.randomUUID()) + ")");
             s.execute("INSERT INTO ledger_entry(id,txn_id,account_id,debit_minor,credit_minor)"
                     + " VALUES (" + lit(UUID.randomUUID()) + "," + lit(txnBId) + ","
                     + lit(acctBId) + ",9000,0)");

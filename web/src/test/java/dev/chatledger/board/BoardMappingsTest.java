@@ -58,7 +58,8 @@ class BoardMappingsTest {
 
     @Test
     void the_handlers_that_change_things_are_posts_and_the_pages_are_gets() {
-        Set<String> posts = Set.of("pasteOrder", "pastePayment", "confirm", "reject", "manual", "unmatch", "setAside", "takeBack", "rematch", "approve", "checkBooks", "resolveFlag");
+        Set<String> posts = Set.of("pasteOrder", "pastePayment", "confirm", "reject", "manual", "unmatch", "setAside", "takeBack", "rematch", "approve", "checkBooks", "resolveFlag",
+                "cancel", "dismissOrder", "dismissPayment");
         for (Method m : handlers()) {
             RequestMapping mapping = AnnotatedElementUtils.findMergedAnnotation(m, RequestMapping.class);
             boolean isPost = mapping.method()[0] == RequestMethod.POST;

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head(#{page.dismiss})}">
+</head>
+<body th:attr="hx-headers=|{&quot;${_csrf.headerName}&quot;:&quot;${_csrf.token}&quot;,&quot;Accept&quot;:&quot;text/html&quot;}|">
+<a class="skip" href="#main" th:text="#{skip.main}">Skip to the main content</a>
+<th:block th:replace="~{fragments/layout :: top}"></th:block>
+<main id="main" tabindex="-1">
+  <h1 th:text="${kind == 'order'} ? #{dismiss.title.order} : #{dismiss.title.payment}">Dismiss this record?</h1>
+  <p th:text="#{dismiss.explain}">It leaves the board. Nothing was posted for it, so nothing is reversed.</p>
+  <p class="alert" th:text="#{dismiss.final}">This cannot be undone.</p>
+  <form th:if="${kind == 'order'}" th:action="@{/app/orders/{id}/dismiss(id=${subjectId})}" method="post">
+    <button type="submit" th:text="#{dismiss.button}">Yes, dismiss it</button>
+  </form>
+  <form th:unless="${kind == 'order'}" th:action="@{/app/payments/{id}/dismiss(id=${subjectId})}" method="post">
+    <button type="submit" th:text="#{dismiss.button}">Yes, dismiss it</button>
+  </form>
+  <p th:if="${kind == 'order'}"><a th:href="@{/app/orders/{id}(id=${subjectId})}" th:text="#{nav.back.order}">Back to the order</a></p>
+  <p th:unless="${kind == 'order'}"><a th:href="@{/app/payments/{id}(id=${subjectId})}" th:text="#{nav.back.payment}">Back to the payment</a></p>
+</main>
+</body>
+</html>

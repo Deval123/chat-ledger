@@ -9,6 +9,24 @@ Status: **approved by the owner for 12a only, D1 to D12 as recommended**, with t
 12b does not start: it gets its own stop 2 after 12a is deployed and smoke-tested, and nothing of 12b is deployed after 2026-11-27.
 Branch: `task-12-polish` from `main` at `a52df0a`.
 
+**12a:** deployed 2026-11-15 (release `2104ccb9…`, CI run #83).
+
+**12b: go from the owner (2026-11-21), from `main` at `cdca2bb`**, with five conditions:
+1. two pull requests, the first (cancel and dismiss) deployable alone;
+2. every V021 guard has a mutant that fails, and a two-thread test covers cancel and correction against a match in both orders;
+3. the books check changes as designed, and a mutant that removes an acceptance posting fails `ACCEPTANCE_POSTINGS`;
+4. nothing on the money path is relaxed without a register item and its compensation;
+5. what does not fit before 2026-11-27 is said at stop 2, with a proposed cut.
+
+No deploy before the owner's go.
+
+**Stop 2:**
+- The first pull request is built (branch `task-12b-cancel-dismiss`; `docs/kiro-notes.md`, "Task 12b - stop 2").
+- Two changes to section 5, register 177: V021 holds cancel and dismiss only (the total exception and `ORDER_RESTATED` move to V022);
+  dismissal has one route per kind.
+- **The second pull request (correct a total) is not started; the proposal is to cut it from the freeze** and build it after
+  judging. For an unpaid order, cancel and paste again covers the need.
+
 The demo is live at `https://ledger.nkap.dev` (release `116d11eb`, run #55). The submission deadline is 2026-12-04 14:00 PT, 23 days
 from this stop. Judges will mostly see the demo flow: the entry page, the board, the scenarios and the books. What a judge sees comes
 first.

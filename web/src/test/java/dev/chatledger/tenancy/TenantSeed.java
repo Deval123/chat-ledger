@@ -30,7 +30,9 @@ public record TenantSeed(
         UUID matchId,
         UUID flagId,
         UUID auditId,
-        UUID catalogItemId) {
+        UUID catalogItemId,
+        UUID unparsedPaymentId,
+        UUID dismissalId) {
 
     /** Row ids by table name. */
     public Map<String, List<UUID>> idsByTable() {
@@ -40,14 +42,15 @@ public record TenantSeed(
                 Map.entry("customer", List.of(customerId)),
                 Map.entry("orders", List.of(orderId)),
                 Map.entry("order_line", List.of(orderLineId)),
-                Map.entry("payment", List.of(paymentId)),
+                Map.entry("payment", List.of(paymentId, unparsedPaymentId)),
                 Map.entry("account", List.of(receivableAccountId, revenueAccountId)),
                 Map.entry("ledger_txn", List.of(txnId)),
                 Map.entry("ledger_entry", entryIds),
                 Map.entry("match", List.of(matchId)),
                 Map.entry("flag", List.of(flagId)),
                 Map.entry("audit_log", List.of(auditId)),
-                Map.entry("catalog_item", List.of(catalogItemId)));
+                Map.entry("catalog_item", List.of(catalogItemId)),
+                Map.entry("record_dismissal", List.of(dismissalId)));
     }
 
     public static TenantSeed create(DataSource owner) {
@@ -66,6 +69,8 @@ public record TenantSeed(
         UUID flag = UUID.randomUUID();
         UUID audit = UUID.randomUUID();
         UUID catalogItem = UUID.randomUUID();
+        UUID unparsedPayment = UUID.randomUUID();
+        UUID dismissal = UUID.randomUUID();
         String tag = tenant.toString().replace("-", "").substring(0, 12);
 
         try (Connection c = owner.getConnection()) {
@@ -105,12 +110,17 @@ public record TenantSeed(
                     audit, tenant, user);
             update(c, "INSERT INTO catalog_item(id, tenant_id, name_key, display_name, unit_minor) VALUES (?, ?, 'seed item', 'Seed item', 1000)",
                     catalogItem, tenant);
+            // Task 12b: a message that could not be read as a payment, dismissed by the seller.
+            update(c, "INSERT INTO payment(id, tenant_id, external_id, currency, status, raw_text) VALUES (?, ?, ?, 'XAF', 'UNPARSED', 'synthetic')",
+                    unparsedPayment, tenant, "unp-" + tag);
+            update(c, "INSERT INTO record_dismissal(id, tenant_id, payment_id, dismissed_by) VALUES (?, ?, ?, ?)",
+                    dismissal, tenant, unparsedPayment, user);
             c.commit();
         } catch (SQLException e) {
             throw new IllegalStateException("Could not seed tenant", e);
         }
         return new TenantSeed(tenant, user, customer, order, orderLine, payment, receivable, revenue, txn,
-                List.of(debit, credit), match, flag, audit, catalogItem);
+                List.of(debit, credit), match, flag, audit, catalogItem, unparsedPayment, dismissal);
     }
 
     static void update(Connection c, String sql, Object... params) throws SQLException {

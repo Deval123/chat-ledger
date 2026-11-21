@@ -11,7 +11,7 @@
 # A tag that names an exact release (cloudflared 2026.10.7, trivy 0.76.2, curl 8.23.0) rarely moves: a newer release has a new tag,
 # which this cannot see. The image scan covers the application image's contents; the other releases are checked by hand.
 set -u
-FILES="Dockerfile deploy/compose.yaml deploy/hops-echo.yaml deploy/test-stack.sh .github/workflows/ci.yml
+FILES="Dockerfile deploy/compose.yaml deploy/hops-echo.yaml deploy/test-stack.sh deploy/test-upgrade.sh .github/workflows/ci.yml
 web/src/test/java/dev/chatledger/ledger/PostgresRelease.java web/src/test/java/dev/chatledger/deploy/MakeSecretsScriptIT.java"
 # shellcheck disable=SC2086 # one argument per file
 refs="$(grep -ohE '[a-z0-9][a-z0-9./_-]*:[A-Za-z0-9][A-Za-z0-9._-]*@sha256:[0-9a-f]{64}' $FILES | sort -u)"

@@ -66,14 +66,15 @@ class BooksCheckIT {
     }
 
     @Test
-    void clean_books_with_a_real_match_pass_all_six_and_agree_with_the_oracle() {
+    void clean_books_with_a_real_match_pass_every_line_and_agree_with_the_oracle() {
         MatchWorld w = world();
         BooksCheck.Result r = check(w);
         assertThat(r.lines()).extracting(BooksCheck.Line::code).containsExactly(Code.values());
         assertThat(r.balanced()).isTrue();
         assertThat(MatchInvariants.check(w.tenant)).isEmpty();
         assertThat(r.lines()).extracting(l -> l.code() + "=" + l.left() + "/" + l.right()).containsExactly(
-                "TRIAL_BALANCE=0/0", "RECEIVABLE=0/0", "SALES=5000/5000", "CUSTOMER_CREDIT=1000/1000", "CLEARING=6000/6000", "MATCH_POSTINGS=1/1");
+                "TRIAL_BALANCE=0/0", "RECEIVABLE=0/0", "SALES=5000/5000", "CUSTOMER_CREDIT=1000/1000", "CLEARING=6000/6000", "MATCH_POSTINGS=1/1",
+                "ACCEPTANCE_POSTINGS=1/1", "CANCELLED_CLEAR=0/0");
     }
 
     @Test
@@ -124,7 +125,7 @@ class BooksCheckIT {
         assertThat(new MatchingFixture().matcher.unmatch(w.tenant, match, w.user).done()).isTrue();
         BooksCheck.Result r = check(w);
         assertThat(r.balanced()).isTrue();
-        assertThat(r.lines().get(5).left()).isZero();
+        assertThat(r.lines().stream().filter(l -> l.code() == Code.MATCH_POSTINGS).findFirst().orElseThrow().left()).isZero();
         assertThat(MatchInvariants.check(w.tenant)).isEmpty();
     }
 
@@ -146,6 +147,96 @@ class BooksCheckIT {
         assertThat(asOwner.check(broken.tenant, true).balanced()).as("control: the broken tenant is broken").isFalse();
         BooksCheck.Result r = asOwner.check(clean.tenant, true);
         assertThat(r.lines()).extracting(l -> l.code() + "=" + l.left() + "/" + l.right()).containsExactly(
-                "TRIAL_BALANCE=0/0", "RECEIVABLE=0/0", "SALES=5000/5000", "CUSTOMER_CREDIT=1000/1000", "CLEARING=6000/6000", "MATCH_POSTINGS=1/1");
+                "TRIAL_BALANCE=0/0", "RECEIVABLE=0/0", "SALES=5000/5000", "CUSTOMER_CREDIT=1000/1000", "CLEARING=6000/6000", "MATCH_POSTINGS=1/1",
+                "ACCEPTANCE_POSTINGS=1/1", "CANCELLED_CLEAR=0/0");
+    }
+
+    // ── Task 12b: the acceptance postings ───────────────────────────────────
+
+    private static UUID orderOf(MatchWorld w) {
+        return UUID.fromString(MatchingFixture.rows("SELECT order_id::text FROM match WHERE tenant_id = ? AND state = 'CONFIRMED'", w.tenant).get(0));
+    }
+
+    /**
+     * The owner's condition 3: an order's acceptance posting is removed behind the application's back. RECEIVABLE and SALES cannot see it
+     * (the order leaves "accepted" and the ledger together); ACCEPTANCE_POSTINGS is the line that does.
+     */
+    @Test
+    void an_acceptance_posting_removed_from_a_payable_order_breaks_acceptance_postings_and_nothing_else() {
+        MatchWorld w = world();
+        UUID order = orderOf(w);
+        MatchWorld.forced(c -> {
+            MatchWorld.run(c, "DELETE FROM ledger_entry WHERE txn_id IN (SELECT id FROM ledger_txn WHERE tenant_id = ? AND kind = 'ORDER_ACCEPTED' AND ref_id = ?)", w.tenant, order);
+            MatchWorld.run(c, "DELETE FROM ledger_txn WHERE tenant_id = ? AND kind = 'ORDER_ACCEPTED' AND ref_id = ?", w.tenant, order);
+        });
+        assertThat(failing(check(w))).containsExactly(Code.ACCEPTANCE_POSTINGS);
+    }
+
+    /** The same, by a reversal of the acceptance of an order that stays payable (the database refuses it at commit: V021, so forced). */
+    @Test
+    void an_acceptance_reversed_on_a_payable_order_breaks_acceptance_postings_and_nothing_else() {
+        MatchWorld w = world();
+        UUID order = orderOf(w);
+        MatchWorld.forced(c -> reverseAcceptance(c, w.tenant, order));
+        assertThat(failing(check(w))).containsExactly(Code.ACCEPTANCE_POSTINGS);
+    }
+
+    @Test
+    void a_cancelled_order_that_keeps_its_posting_breaks_cancelled_clear_and_the_count() {
+        MatchWorld w = new MatchWorld();
+        UUID order = postedOrder(w, 4000);
+        MatchWorld.forced(c -> MatchWorld.run(c, "UPDATE orders SET status = 'CANCELLED' WHERE id = ?", order));
+        assertThat(failing(check(w))).containsExactly(Code.ACCEPTANCE_POSTINGS, Code.CANCELLED_CLEAR);
+    }
+
+    /** One fault hides the other in the count; CANCELLED_CLEAR still sees it, so neither line stands in for the other. */
+    @Test
+    void a_cancelled_order_with_its_posting_and_a_payable_one_without_breaks_cancelled_clear_alone() {
+        MatchWorld w = new MatchWorld();
+        UUID kept = postedOrder(w, 4000);
+        w.order(4000, "PENDING_PAYMENT", null, null);   // payable, never posted
+        MatchWorld.forced(c -> MatchWorld.run(c, "UPDATE orders SET status = 'CANCELLED' WHERE id = ?", kept));
+        assertThat(failing(check(w))).containsExactly(Code.CANCELLED_CLEAR);
+    }
+
+    @Test
+    void a_real_cancel_leaves_every_line_balanced() {
+        MatchWorld w = new MatchWorld();
+        MatchingFixture f = new MatchingFixture();
+        UUID order = postedOrder(w, 4000);
+        assertThat(new dev.chatledger.orders.RecordActionsService(MatchingFixture.POOL, f.repository, f.orderRepository, f.clock)
+                .cancel(w.tenant, order, w.user)).isEqualTo(dev.chatledger.orders.RecordActionsService.Outcome.DONE);
+        BooksCheck.Result r = check(w);
+        assertThat(r.balanced()).as(String.valueOf(r.lines())).isTrue();
+        assertThat(r.lines()).extracting(l -> l.code() + "=" + l.left() + "/" + l.right())
+                .contains("RECEIVABLE=0/0", "SALES=0/0", "ACCEPTANCE_POSTINGS=0/0", "CANCELLED_CLEAR=0/0");
+        assertThat(MatchInvariants.check(w.tenant)).isEmpty();
+    }
+
+    /** A payable order with its acceptance posting, as ingestion writes it. */
+    static UUID postedOrder(MatchWorld w, long total) {
+        UUID order = w.order(total, "PENDING_PAYMENT", null, null);
+        try (Connection c = w.owner.getConnection()) {
+            c.setAutoCommit(false);
+            ChartOfAccounts.Accounts a = ChartOfAccounts.ensure(c, w.tenant);
+            UUID txn = UUID.randomUUID();
+            MatchWorld.run(c, "INSERT INTO ledger_txn(id, tenant_id, kind, ref_type, ref_id) VALUES (?, ?, 'ORDER_ACCEPTED', 'ORDER', ?)", txn, w.tenant, order);
+            MatchWorld.run(c, "INSERT INTO ledger_entry(id, txn_id, account_id, debit_minor, credit_minor) VALUES (?, ?, ?, ?, 0)", UUID.randomUUID(), txn, a.receivable(), total);
+            MatchWorld.run(c, "INSERT INTO ledger_entry(id, txn_id, account_id, debit_minor, credit_minor) VALUES (?, ?, ?, 0, ?)", UUID.randomUUID(), txn, a.revenue(), total);
+            c.commit();
+        } catch (java.sql.SQLException e) {
+            throw new IllegalStateException(e);
+        }
+        return order;
+    }
+
+    /** Mirrors an order's ORDER_ACCEPTED posting as a REVERSAL, on the given connection. */
+    static void reverseAcceptance(Connection c, UUID tenant, UUID order) throws java.sql.SQLException {
+        UUID reversal = UUID.randomUUID();
+        MatchWorld.run(c, "INSERT INTO ledger_txn(id, tenant_id, kind, ref_type, ref_id, reverses_txn_id) "
+                + "SELECT ?, tenant_id, 'REVERSAL', 'LEDGER_TXN', id, id FROM ledger_txn WHERE tenant_id = ? AND kind = 'ORDER_ACCEPTED' AND ref_id = ?", reversal, tenant, order);
+        MatchWorld.run(c, "INSERT INTO ledger_entry(id, txn_id, account_id, debit_minor, credit_minor) "
+                + "SELECT gen_random_uuid(), ?, e.account_id, e.credit_minor, e.debit_minor FROM ledger_entry e JOIN ledger_txn t ON t.id = e.txn_id "
+                + "WHERE t.tenant_id = ? AND t.kind = 'ORDER_ACCEPTED' AND t.ref_id = ?", reversal, tenant, order);
     }
 }

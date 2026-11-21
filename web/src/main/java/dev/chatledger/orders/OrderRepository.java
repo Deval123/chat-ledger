@@ -6,6 +6,7 @@ import dev.chatledger.ledger.jdbc.JdbcLedgerRepository;
 import dev.chatledger.matching.ChartOfAccounts;
 import dev.chatledger.matching.Postings;
 import dev.chatledger.security.AuditLogRepository;
+import dev.chatledger.tenancy.DbTime;
 import dev.chatledger.tenancy.TenantScope;
 import org.springframework.stereotype.Repository;
 
@@ -15,6 +16,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -279,6 +281,36 @@ public class OrderRepository {
     private static Long nullableLong(ResultSet rs, int column) throws SQLException {
         long value = rs.getLong(column);
         return rs.wasNull() ? null : value;
+    }
+
+    /** True if the order or the payment (exactly one of them non-null) was dismissed (task 12b). */
+    public boolean dismissedWithin(Connection c, UUID tenantId, UUID orderId, UUID paymentId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT 1 FROM record_dismissal WHERE tenant_id = ? AND (order_id = ? OR payment_id = ?)")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            ps.setObject(3, paymentId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /**
+     * Records that the seller dismissed an order or a payment (exactly one non-null). The database refuses a record that reached the books
+     * and a second dismissal of the same record (V021).
+     */
+    public int dismissWithin(Connection c, UUID tenantId, UUID orderId, UUID paymentId, UUID actor, Instant at) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO record_dismissal(id, tenant_id, order_id, payment_id, dismissed_by, dismissed_at) VALUES (?, ?, ?, ?, ?, ?)")) {
+            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, orderId);
+            ps.setObject(4, paymentId);
+            ps.setObject(5, actor);
+            ps.setObject(6, DbTime.utc(at));
+            return ps.executeUpdate();
+        }
     }
 
     /**

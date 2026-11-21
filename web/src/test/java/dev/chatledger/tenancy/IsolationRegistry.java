@@ -139,6 +139,13 @@ final class IsolationRegistry {
             Map.entry("catalog_item", TableSpec.direct(
                     (c, t, r) -> update(c, "INSERT INTO catalog_item(id, tenant_id, name_key, display_name, unit_minor) VALUES (?, ?, ?, 'Probe', 1)",
                             UUID.randomUUID(), t, "probe-" + tag()))),
+            // Task 12b: a dismissal names a record that never reached the books, so the probe dismisses a payment it writes as UNPARSED.
+            Map.entry("record_dismissal", TableSpec.direct((c, t, r) -> {
+                UUID unparsed = UUID.randomUUID();
+                update(c, "INSERT INTO payment(id, tenant_id, external_id, currency, status, raw_text) VALUES (?, ?, ?, 'XAF', 'UNPARSED', 'probe')",
+                        unparsed, t, "probe-" + tag());
+                update(c, "INSERT INTO record_dismissal(id, tenant_id, payment_id, dismissed_by) VALUES (?, ?, ?, ?)", UUID.randomUUID(), t, unparsed, r.userId());
+            })),
             Map.entry("audit_log", TableSpec.direct(
                     (c, t, r) -> update(c, "INSERT INTO audit_log(id, tenant_id, action, subject) VALUES (?, ?, 'PROBE', 'probe')",
                             UUID.randomUUID(), t))));

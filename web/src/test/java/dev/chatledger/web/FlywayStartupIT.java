@@ -129,6 +129,8 @@ class FlywayStartupIT {
                 // V009: tenant consistency and deferred balance check
                 "trg_ledger_entry_same_tenant",
                 "trg_ledger_entry_balanced",
-                "trg_ledger_txn_balanced");
+                "trg_ledger_txn_balanced",
+                // V021 (task 12b): an acceptance is reversed only for a cancelled order
+                "trg_ledger_assert_acceptance_reversal");
     }
 }

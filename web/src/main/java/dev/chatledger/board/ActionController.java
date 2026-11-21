@@ -4,6 +4,7 @@ import dev.chatledger.matching.MatchingService;
 import dev.chatledger.orders.IngestionResult;
 import dev.chatledger.orders.OrderApprovalService;
 import dev.chatledger.orders.OrderIngestionService;
+import dev.chatledger.orders.RecordActionsService;
 import dev.chatledger.orders.TenantMoney;
 import dev.chatledger.payments.PaymentIngestionResult;
 import dev.chatledger.payments.PaymentIngestionService;
@@ -45,10 +46,12 @@ public class ActionController {
     private final Shell shell;
     private final BooksCheck books;
     private final dev.chatledger.flags.FlagService flags;
+    private final RecordActionsService records;
 
     public ActionController(OrderIngestionService orders, PaymentIngestionService payments, MatchingService matching, OrderApprovalService approval,
                             BoardRepository board, RateLimits limits, Shell shell, BooksCheck books,
-                            dev.chatledger.flags.FlagService flags) {
+                            dev.chatledger.flags.FlagService flags, RecordActionsService records) {
+        this.records = records;
         this.flags = flags;
         this.books = books;
         this.orders = orders;
@@ -203,6 +206,50 @@ public class ActionController {
             };
         }
         return answer(request, model, user, notice, null, "fragments/board :: done");
+    }
+
+    // ── Cancel and dismiss (task 12b) ──────────────────────────────────────────
+    // Each has a check page (BoardController) that writes nothing; these posts do the one transaction. A refusal is a sentence on the
+    // board, an unknown or another tenant's id is a 404, as everywhere.
+
+    @PostMapping("/app/orders/{id}/cancel")
+    @PreAuthorize("hasAuthority('CANCEL_ORDER')")
+    public String cancel(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id, HttpServletRequest request,
+                         HttpServletResponse response, Model model) {
+        throttle(response, limits.action(user.userId()));
+        Notice notice = recorded(records.cancel(user.tenantId(), id, user.userId()), Notice.ORDER_CANCELLED);
+        return answer(request, model, user, notice, notice == Notice.ORDER_CANCELLED ? id : null, "fragments/board :: done");
+    }
+
+    @PostMapping("/app/orders/{id}/dismiss")
+    @PreAuthorize("hasAuthority('DISMISS_RECORD')")
+    public String dismissOrder(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id, HttpServletRequest request,
+                               HttpServletResponse response, Model model) {
+        throttle(response, limits.action(user.userId()));
+        Notice notice = recorded(records.dismissOrder(user.tenantId(), id, user.userId()), Notice.ORDER_DISMISSED);
+        return answer(request, model, user, notice, notice == Notice.ORDER_DISMISSED ? id : null, "fragments/board :: done");
+    }
+
+    @PostMapping("/app/payments/{id}/dismiss")
+    @PreAuthorize("hasAuthority('DISMISS_RECORD')")
+    public String dismissPayment(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id, HttpServletRequest request,
+                                 HttpServletResponse response, Model model) {
+        throttle(response, limits.action(user.userId()));
+        Notice notice = recorded(records.dismissPayment(user.tenantId(), id, user.userId()), Notice.PAYMENT_DISMISSED);
+        return answer(request, model, user, notice, notice == Notice.PAYMENT_DISMISSED ? id : null, "fragments/board :: done");
+    }
+
+    private static Notice recorded(RecordActionsService.Outcome outcome, Notice success) {
+        return switch (outcome) {
+            case DONE -> success;
+            case NOT_A_SELLER -> Notice.REFUSED_NOT_A_SELLER;
+            case NOT_FOUND -> throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+            case HAS_PAYMENT -> Notice.CANCEL_HAS_PAYMENT;
+            case NOT_PAYABLE -> Notice.CANCEL_NOT_PAYABLE;
+            case ALREADY_CANCELLED -> Notice.CANCEL_ALREADY;
+            case NOT_DISMISSABLE -> Notice.DISMISS_NOT_ALLOWED;
+            case ALREADY_DISMISSED -> Notice.DISMISS_ALREADY;
+        };
     }
 
     // ── Flags ──────────────────────────────────────────────────────────────────

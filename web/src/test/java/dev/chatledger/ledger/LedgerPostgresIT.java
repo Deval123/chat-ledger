@@ -54,7 +54,7 @@ class LedgerPostgresIT {
     }
 
     private LedgerTransaction sale(long amount) {
-        return new LedgerTransaction(UUID.randomUUID(), tenantA, "ORDER_ACCEPTED", "ORDER", UUID.randomUUID(),
+        return new LedgerTransaction(UUID.randomUUID(), tenantA, "TEST_POSTING", "ORDER", UUID.randomUUID(),
                 null, NOW, List.of(LedgerEntry.debit(receivableA.id(), amount), LedgerEntry.credit(revenueA.id(), amount)));
     }
 
@@ -67,7 +67,7 @@ class LedgerPostgresIT {
         service.post(txn);
 
         var stored = repository.findTransaction(tenantA, txn.id()).orElseThrow();
-        assertThat(stored.kind()).isEqualTo("ORDER_ACCEPTED");
+        assertThat(stored.kind()).isEqualTo("TEST_POSTING");
         assertThat(stored.createdAt()).isEqualTo(NOW);
         assertThat(stored.reversesTxnId()).isNull();
         assertThat(stored.entries()).containsExactlyInAnyOrderElementsOf(txn.entries());

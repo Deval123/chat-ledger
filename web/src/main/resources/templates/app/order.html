@@ -34,6 +34,12 @@
     <a class="button" th:if="${canApprove}" th:href="@{/app/orders/{id}/review(id=${order.id})}" th:text="#{action.check}">Check the total</a>
     <span th:unless="${canApprove}" th:text="#{card.review.seller}">Needs the seller to check.</span>
   </p>
+  <!--/* Task 12b: cancel or dismiss, each through its own check page; neither writes anything here. */-->
+  <p class="hint" th:if="${dismissedAt != null}" th:text="#{record.dismissed(${@times.format(dismissedAt, tenant.zone)})}">Dismissed.</p>
+  <p class="actions" th:if="${canCancel or canDismiss}">
+    <a class="button secondary" th:if="${canCancel}" th:href="@{/app/orders/{id}/cancel(id=${order.id})}" th:text="#{action.cancel}">Cancel this order</a>
+    <a class="button secondary" th:if="${canDismiss}" th:href="@{/app/orders/{id}/dismiss(id=${order.id})}" th:text="#{action.dismiss}">Dismiss</a>
+  </p>
   <h2 th:if="${not #lists.isEmpty(shown)}" th:text="#{detail.matches}">Payments</h2>
   <th:block th:each="s : ${shown}">
     <th:block th:replace="~{fragments/match :: match(${s}, 'payment')}"></th:block>

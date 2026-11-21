@@ -36,7 +36,18 @@ public class BooksCheck {
     private static final int MAX_TENANTS = 10_000;
 
     /** Which comparison a line is. */
-    public enum Code { TRIAL_BALANCE, RECEIVABLE, SALES, CUSTOMER_CREDIT, CLEARING, MATCH_POSTINGS }
+    public enum Code {
+        TRIAL_BALANCE, RECEIVABLE, SALES, CUSTOMER_CREDIT, CLEARING, MATCH_POSTINGS,
+        /** Task 12b: one live acceptance posting per payable order (an open order the books forgot fails here, not in SALES). */
+        ACCEPTANCE_POSTINGS,
+        /** Task 12b: a cancelled order carries nothing in the books (its acceptance is reversed). */
+        CANCELLED_CLEAR;
+
+        /** True for a line that compares numbers of rows, not amounts (the page prints it without a currency). */
+        public boolean counts() {
+            return this == MATCH_POSTINGS || this == ACCEPTANCE_POSTINGS || this == CANCELLED_CLEAR;
+        }
+    }
 
     /** Both sides of one comparison. */
     public record Line(Code code, long left, long right) {
@@ -87,8 +98,17 @@ public class BooksCheck {
             return scope.call(tenantId, c -> {
                 long trial = one(c.prepareStatement("SELECT COALESCE(SUM(e.debit_minor) - SUM(e.credit_minor), 0) FROM ledger_entry e JOIN ledger_txn t ON t.id = e.txn_id "
                         + "WHERE t.tenant_id = ?"), tenantId);
+                // "Accepted": the orders whose acceptance posting is live. A cancel reverses it (task 12b), so a cancelled order leaves both
+                // sides of RECEIVABLE and SALES together.
                 long accepted = one(c.prepareStatement("SELECT COALESCE(SUM(o.total_minor), 0) FROM orders o WHERE o.tenant_id = ? AND EXISTS ("
-                        + "SELECT 1 FROM ledger_txn t WHERE t.tenant_id = o.tenant_id AND t.kind = 'ORDER_ACCEPTED' AND t.ref_id = o.id)"), tenantId);
+                        + "SELECT 1 FROM ledger_txn t WHERE t.tenant_id = o.tenant_id AND t.kind = 'ORDER_ACCEPTED' AND t.ref_id = o.id "
+                        + "AND NOT EXISTS (SELECT 1 FROM ledger_txn r WHERE r.tenant_id = t.tenant_id AND r.reverses_txn_id = t.id))"), tenantId);
+                long liveAcceptances = one(c.prepareStatement("SELECT count(*) FROM ledger_txn t WHERE t.tenant_id = ? AND t.kind = 'ORDER_ACCEPTED' "
+                        + "AND NOT EXISTS (SELECT 1 FROM ledger_txn r WHERE r.tenant_id = t.tenant_id AND r.reverses_txn_id = t.id)"), tenantId);
+                long payable = one(c.prepareStatement("SELECT count(*) FROM orders WHERE tenant_id = ? AND status IN ('PENDING_PAYMENT', 'PARTIALLY_PAID', 'PAID')"), tenantId);
+                long cancelledLive = one(c.prepareStatement("SELECT count(*) FROM orders o WHERE o.tenant_id = ? AND o.status = 'CANCELLED' AND EXISTS ("
+                        + "SELECT 1 FROM ledger_txn t WHERE t.tenant_id = o.tenant_id AND t.kind = 'ORDER_ACCEPTED' AND t.ref_id = o.id "
+                        + "AND NOT EXISTS (SELECT 1 FROM ledger_txn r WHERE r.tenant_id = t.tenant_id AND r.reverses_txn_id = t.id))"), tenantId);
                 long applied = one(c.prepareStatement("SELECT COALESCE(SUM(amount_minor), 0) FROM match WHERE tenant_id = ? AND state IN ('AUTO', 'CONFIRMED')"), tenantId);
                 long excess = one(c.prepareStatement("SELECT COALESCE(SUM(excess_minor), 0) FROM match WHERE tenant_id = ? AND state IN ('AUTO', 'CONFIRMED')"), tenantId);
                 long receivable = one(c.prepareStatement("SELECT COALESCE(SUM(e.debit_minor) - SUM(e.credit_minor), 0) FROM ledger_entry e JOIN ledger_txn t ON t.id = e.txn_id "
@@ -109,6 +129,8 @@ public class BooksCheck {
                 lines.add(new Line(Code.CUSTOMER_CREDIT, credit, excess));
                 lines.add(new Line(Code.CLEARING, clearing, applied + excess));
                 lines.add(new Line(Code.MATCH_POSTINGS, livePostings, active));
+                lines.add(new Line(Code.ACCEPTANCE_POSTINGS, liveAcceptances, payable));
+                lines.add(new Line(Code.CANCELLED_CLEAR, cancelledLive, 0));
                 return new Result(clock.instant(), List.copyOf(lines));
             });
         } catch (SQLException e) {

@@ -43,6 +43,8 @@ class MatchingBooksPropertyIT {
     /** The model: one tenant, its users, and the pairs the seller has turned down so far. */
     static final class World {
         final MatchingFixture live = new MatchingFixture();
+        final dev.chatledger.orders.RecordActionsService records = new dev.chatledger.orders.RecordActionsService(MatchingFixture.POOL,
+                live.repository, live.orderRepository, live.clock);
         final MatchWorld w = new MatchWorld();
         final UUID tenant = w.tenant;
         final UUID seller = MatchingFixture.user(tenant, "SELLER");
@@ -215,6 +217,19 @@ class MatchingBooksPropertyIT {
         }
     }
 
+    /**
+     * Task 12b: the seller cancels any order (most are refused: paid, part paid, already cancelled). A cancelled order is never matched
+     * again, so its suggestions' pairs are, in effect, declined.
+     */
+    record Cancel(int pick) implements Action<World> {
+        @Override
+        public World run(World world) {
+            UUID order = world.anyOrder(pick);
+            world.twice(() -> world.records.cancel(world.tenant, order, world.seller));
+            return world;
+        }
+    }
+
     /** The seller undoes a match and the engine looks again at once (as it does when anything new arrives): the pair must stay apart. */
     record UnmatchThenRematch(int pick) implements Action<World> {
         @Override
@@ -301,14 +316,16 @@ class MatchingBooksPropertyIT {
                 Tuple.of(3, small.map(i -> (Action<World>) new UnmatchThenRematch(i))),
                 Tuple.of(2, small.map(i -> (Action<World>) new SetAside(i))),
                 Tuple.of(1, small.map(i -> (Action<World>) new TakeBack(i))),
-                Tuple.of(1, Arbitraries.just((Action<World>) new Rematch())));
+                Tuple.of(1, Arbitraries.just((Action<World>) new Rematch())),
+                Tuple.of(4, small.map(i -> (Action<World>) new Cancel(i))));
         return Arbitraries.sequences(steps).ofSize(20);
     }
 
     @Property(tries = 30)
     void whatever_the_sequence_the_books_stay_right_and_a_repeated_decision_changes_nothing(@ForAll("sequences") ActionSequence<World> sequence) {
         World world = new World();
-        sequence.withInvariant("the books", w -> MatchInvariants.assertHold(w.tenant))
+        // Strict: every order is recorded by ingestion, which posts it, so every payable order has its acceptance posting (task 12b).
+        sequence.withInvariant("the books", w -> MatchInvariants.assertHoldStrict(w.tenant))
                 .withInvariant("no automatic match against a pair the seller turned down", w -> {
                     for (List<UUID> pair : w.declined) {
                         assertThat(MatchingFixture.count("SELECT count(*) FROM match WHERE tenant_id = ? AND state = 'AUTO' AND order_id = '" + pair.get(0)
@@ -316,7 +333,7 @@ class MatchingBooksPropertyIT {
                     }
                 })
                 .run(world);
-        MatchInvariants.assertHold(world.tenant);
+        MatchInvariants.assertHoldStrict(world.tenant);
         // What the sequences really did, so that the property cannot pass by doing nothing. Each flow must happen at least once in the run;
         // a higher bar would fail on an unlucky draw, and a failure of this kind is a failure of the generators, not of the matcher.
         Statistics.label("an automatic match was made").collect(had(world, "SELECT count(*) FROM audit_log WHERE tenant_id = ? AND action = 'MATCH_AUTO'"))
@@ -330,6 +347,8 @@ class MatchingBooksPropertyIT {
         Statistics.label("a match was reversed").collect(had(world, "SELECT count(*) FROM audit_log WHERE tenant_id = ? AND action = 'MATCH_REVERSED'"))
                 .coverage(c -> c.check(true).percentage(p -> p > 0.0));
         Statistics.label("a payment was set aside").collect(had(world, "SELECT count(*) FROM audit_log WHERE tenant_id = ? AND action = 'PAYMENT_UNMATCHED'"))
+                .coverage(c -> c.check(true).percentage(p -> p > 0.0));
+        Statistics.label("an order was cancelled").collect(had(world, "SELECT count(*) FROM audit_log WHERE tenant_id = ? AND action = 'ORDER_CANCELLED'"))
                 .coverage(c -> c.check(true).percentage(p -> p > 0.0));
         Statistics.label("a payment was over what the order could take").collect(had(world, "SELECT count(*) FROM match WHERE tenant_id = ? AND excess_minor > 0"))
                 .coverage(c -> c.check(true).percentage(p -> p > 0.0));

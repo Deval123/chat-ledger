@@ -35,11 +35,16 @@ class LedgerReverseWithinIT {
     private final TenantScope scope = new TenantScope(MatchWorld.DB.appDataSource());
     private final JdbcLedgerRepository ledger = new JdbcLedgerRepository(scope);
 
-    /** An accepted order of 5,000 and its posting, committed. */
+    /**
+     * A posting of 5,000 (receivable against sales), committed. Not an ORDER_ACCEPTED: since task 12b the database lets an acceptance be
+     * reversed only for a cancelled order (V021), and these tests are about the reversal mechanics, which do not depend on the kind.
+     */
     private LedgerTransaction posted(UUID forTenant) throws Exception {
         TenantScope s = new TenantScope(MatchWorld.DB.appDataSource());
         ChartOfAccounts.Accounts accounts = s.call(forTenant, c -> ChartOfAccounts.ensure(c, forTenant));
-        LedgerTransaction txn = Postings.orderAccepted(forTenant, UUID.randomUUID(), 5000, accounts, Instant.now());
+        LedgerTransaction txn = new LedgerTransaction(UUID.randomUUID(), forTenant, "TEST_POSTING", "ORDER", UUID.randomUUID(), null,
+                dev.chatledger.tenancy.DbTime.micros(Instant.now()),
+                List.of(dev.chatledger.ledger.LedgerEntry.debit(accounts.receivable(), 5000), dev.chatledger.ledger.LedgerEntry.credit(accounts.revenue(), 5000)));
         new JdbcLedgerRepository(s).append(txn);
         return txn;
     }
@@ -57,7 +62,7 @@ class LedgerReverseWithinIT {
         assertThat(reversal.id()).isEqualTo(reversalId);
         assertThat(reversal.reversesTxnId()).isEqualTo(original.id());
         assertThat(reversal.kind()).isEqualTo("REVERSAL");
-        assertThat(MatchingFixture.ledger(tenant)).containsExactly("ORDER_ACCEPTED 1100 D5000", "ORDER_ACCEPTED 4000 C5000", "REVERSAL 1100 C5000", "REVERSAL 4000 D5000");
+        assertThat(MatchingFixture.ledger(tenant)).containsExactly("REVERSAL 1100 C5000", "REVERSAL 4000 D5000", "TEST_POSTING 1100 D5000", "TEST_POSTING 4000 C5000");
         assertThat(ledger.findTransaction(tenant, original.id()).orElseThrow().entries()).hasSize(2);
         assertThat(ledger.isReversed(tenant, original.id())).isTrue();
         assertThat(MatchingFixture.trialBalance(tenant)).isZero();

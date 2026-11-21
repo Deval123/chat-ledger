@@ -681,6 +681,31 @@ public class MatchRepository {
         }
     }
 
+    /** The seller cancels an order: every open suggestion for it is rejected, by them, so none is proposed again (task 12b). */
+    public int rejectOpenForOrderWithin(Connection c, UUID tenantId, UUID orderId, UUID decidedBy, Instant at) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE match SET state = 'REJECTED', decided_by = ?, decided_at = ? WHERE tenant_id = ? AND order_id = ? AND state = 'SUGGESTED'")) {
+            ps.setObject(1, decidedBy);
+            ps.setObject(2, DbTime.utc(at));
+            ps.setObject(3, tenantId);
+            ps.setObject(4, orderId);
+            return ps.executeUpdate();
+        }
+    }
+
+    /** The order's live (unreversed) acceptance posting, if it has one (task 12b: the one a cancel reverses). */
+    public Optional<UUID> liveAcceptanceWithin(Connection c, UUID tenantId, UUID orderId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT t.id FROM ledger_txn t WHERE t.tenant_id = ? AND t.kind = 'ORDER_ACCEPTED' AND t.ref_id = ? AND t.reverses_txn_id IS NULL "
+                        + "AND NOT EXISTS (SELECT 1 FROM ledger_txn r WHERE r.tenant_id = t.tenant_id AND r.reverses_txn_id = t.id)")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(rs.getObject(1, UUID.class)) : Optional.empty();
+            }
+        }
+    }
+
     /** The seller reverses an active match (the caller has already posted the reversal of its posting). */
     public int reverseMatchWithin(Connection c, UUID tenantId, UUID matchId, UUID decidedBy, Instant at) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(

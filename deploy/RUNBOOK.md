@@ -351,6 +351,43 @@ first.
 
 **After it.** 12b gets its own stop 2 only after this deploy and its smoke run. Nothing of 12b is deployed after 2026-11-27.
 
+### Release note: task 12b, first pull request (cancel and dismiss; prepared 2026-11-21, not deployed, no digest yet)
+**What it is.** Cancel an order nobody paid for, and dismiss a record that never reached the books. **It has a migration, V021**: the
+first deploy with one. The candidate digest is the one `main`'s CI run pushes after the merge; it is not known yet.
+
+**What V021 does.** It replaces three trigger functions on `orders`, adds a commit-time trigger on `orders` and one on `ledger_txn`,
+and creates the table `record_dismissal`. It rewrites no row. Creating the triggers waits for the transactions in flight on `orders`
+and `ledger_txn`, which is why refresh is stopped first. The old web keeps running during `migrate` (as below): V021 only adds a move
+and checks moves that the old code never makes, so it is unaffected.
+
+**Rehearsed in CI.** Every push runs `deploy/test-upgrade.sh` in the image job: the stack from nothing on the deployed release, used,
+then this upgrade as written below. The run prints how long `migrate` took and the time without a 200. Ten demo workspaces on an amd64
+runner, not the VPS's data.
+
+**Steps** (the upgrade above, with its migration lines):
+1. Outside judging hours. Dated `.env` copy, new `CHAT_LEDGER_DIGEST`, the health probe started.
+2. `DC pull web`, then `DC stop refresh`, then `DC run --rm migrate`. Expected: Flyway applies `21 - cancel and dismiss` and exits 0.
+3. `DC up -d web refresh`, then `DC ps` until `web (healthy)`.
+4. The books of every workspace, as the new check reads them. Expected: no row.
+   ```sh
+   DC exec -T db psql -U postgres -d chatledger -At -c "SELECT t.slug FROM tenant t WHERE
+     (SELECT count(*) FROM ledger_txn x WHERE x.tenant_id = t.id AND x.kind = 'ORDER_ACCEPTED' AND NOT EXISTS
+        (SELECT 1 FROM ledger_txn r WHERE r.tenant_id = x.tenant_id AND r.reverses_txn_id = x.id))
+     <> (SELECT count(*) FROM orders o WHERE o.tenant_id = t.id AND o.status IN ('PENDING_PAYMENT', 'PARTIALLY_PAID', 'PAID'))"
+   ```
+   A row means a payable order without its acceptance posting, written before this release. Do not roll back for it: the books page
+   says "does not agree" for that workspace only. Note the slug and tell the owner.
+5. `sh deploy/smoke.sh https://ledger.nkap.dev`, expected `Failures: 0` after 25 checks.
+6. By hand: in a fresh demo, cancel an unpaid order from its page (the check page first). The board drops it, and the books still
+   balance. Dismiss the unreadable message of a scenario if one shows.
+7. Update "Deployed state", the digest in `.github/workflows/ci.yml` (step "Rehearse the upgrade from the deployed release"), and the
+   notes.
+
+**Rolling back.** Section 6, by digest. There is no down migration: the schema stays at V021, which the old release runs on. **After a
+cancel has happened**, the old release's books page reports "does not agree" for that workspace, because it still counts reversed
+acceptance postings. The data is right. Prefer rolling forward with a fix; if you roll back, expect that line until the workspace
+retires.
+
 ## 6. Roll back
 
 Pick the copy to restore (root's shell expands the glob):

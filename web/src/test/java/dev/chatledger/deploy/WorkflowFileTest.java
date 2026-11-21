@@ -141,6 +141,38 @@ class WorkflowFileTest {
         assertThat(run).as("pushed by commit, never latest").contains("chat-ledger:${GITHUB_SHA}").doesNotContain(":latest");
     }
 
+    /**
+     * Task 12b, register 178: the image job rehearses the upgrade a deploy makes, migration included, from the release that runs on the
+     * VPS. That release is the one RUNBOOK's "Deployed state" names, so the rehearsal never starts from an older one unnoticed.
+     */
+    @Test
+    void the_image_job_rehearses_the_upgrade_from_the_release_the_runbook_says_is_deployed() throws IOException {
+        Map<String, Object> build = job("image-build");
+        Map<String, Object> rehearsal = null;
+        for (Object step : list(build.get("steps"))) {
+            if (String.valueOf(map(step).get("run")).contains("deploy/test-upgrade.sh")) {
+                rehearsal = map(step);
+            }
+        }
+        assertThat(rehearsal).as("a step runs deploy/test-upgrade.sh").isNotNull();
+        String run = String.valueOf(rehearsal.get("run"));
+        assertThat(run).contains("docker pull --quiet \"$DEPLOYED\"").contains("sudo sh deploy/test-upgrade.sh \"$DEPLOYED\" chat-ledger:test")
+                .doesNotContain("docker login").doesNotContain("docker push");
+        String deployed = String.valueOf(map(rehearsal.get("env")).get("DEPLOYED"));
+        Matcher digest = Pattern.compile("^ghcr\\.io/deval123/chat-ledger@(sha256:[0-9a-f]{64})$").matcher(deployed);
+        assertThat(digest.matches()).as("pinned by digest: " + deployed).isTrue();
+        String runbook = Files.readString(Path.of("..", "deploy", "RUNBOOK.md"));
+        Matcher release = Pattern.compile("(?m)^\\| Release \\| `ghcr\\.io/deval123/chat-ledger@(sha256:[0-9a-f]{64})`").matcher(runbook);
+        assertThat(release.find()).as("RUNBOOK's Deployed state names the release").isTrue();
+        assertThat(digest.group(1)).as("the rehearsal starts from the deployed release").isEqualTo(release.group(1));
+        List<String> names = new ArrayList<>();
+        for (Object step : list(build.get("steps"))) {
+            names.add(String.valueOf(map(step).get("name")));
+        }
+        assertThat(names.indexOf(String.valueOf(rehearsal.get("name")))).as("after the drill, before the archive is saved")
+                .isGreaterThan(names.indexOf("Run the stack and the smoke script")).isLessThan(names.indexOf("Save the archive"));
+    }
+
     /** Task 12a, D2 and the owner's condition 1: the browser job runs third-party code, so it can read source and nothing else. */
     @Test
     void the_browser_job_verifies_what_it_runs_keeps_the_sandbox_and_can_reach_nothing_else() throws IOException {

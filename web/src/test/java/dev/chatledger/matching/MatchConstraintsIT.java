@@ -476,7 +476,9 @@ class MatchConstraintsIT {
                 Work update = c -> MatchWorld.run(c, "UPDATE orders SET status = ? WHERE id = ?", to, from.getValue());
                 // (V018: the one move out of review is to PENDING_PAYMENT; its posting is required at commit and is tested in ApprovalSchemaIT)
                 boolean leavesReview = from.getKey().equals("NEEDS_REVIEW") && to.equals("PENDING_PAYMENT");
-                if ((open.contains(from.getKey()) && open.contains(to)) || leavesReview) {
+                // (V021, task 12b: a cancel, from PENDING_PAYMENT with no active match; its reversal is required at commit, CancelDismissGuardsIT)
+                boolean cancels = from.getKey().equals("PENDING_PAYMENT") && to.equals("CANCELLED");
+                if ((open.contains(from.getKey()) && open.contains(to)) || leavesReview || cancels) {
                     assertThatCode(() -> tryOnly(w, update)).as(from.getKey() + " to " + to).doesNotThrowAnyException();
                 } else {
                     refuses(() -> tryOnly(w, update), "23514", "is not allowed");

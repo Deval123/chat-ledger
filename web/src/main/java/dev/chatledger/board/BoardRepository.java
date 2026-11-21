@@ -175,6 +175,25 @@ public class BoardRepository {
 
     // ── Counts and columns ─────────────────────────────────────────────────────
 
+    /** When the seller dismissed this order or payment (exactly one non-null), if they did (task 12b). */
+    public Optional<Instant> dismissedAt(UUID tenantId, UUID orderId, UUID paymentId) {
+        try {
+            return scope.call(tenantId, c -> {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT dismissed_at FROM record_dismissal WHERE tenant_id = ? AND (order_id = ? OR payment_id = ?)")) {
+                    ps.setObject(1, tenantId);
+                    ps.setObject(2, orderId);
+                    ps.setObject(3, paymentId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        return rs.next() ? Optional.of(rs.getObject(1, java.time.OffsetDateTime.class).toInstant()) : Optional.<Instant>empty();
+                    }
+                }
+            });
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not read a dismissal", e);
+        }
+    }
+
     /** How many items are in each column. A column with none is present with 0. */
     public Map<Column, Long> counts(UUID tenantId) {
         try {
@@ -182,10 +201,10 @@ public class BoardRepository {
                 try (PreparedStatement ps = c.prepareStatement(
                         "WITH items AS ("
                                 + "SELECT o.status AS status, EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = o.tenant_id AND f.subject_type = 'ORDER' AND f.order_id = o.id "
-                                + "AND f.resolved_at IS NULL) AS flagged FROM orders o WHERE o.tenant_id = ? "
+                                + "AND f.resolved_at IS NULL) AS flagged FROM orders o WHERE o.tenant_id = ? AND o.status <> 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM record_dismissal d WHERE d.tenant_id = o.tenant_id AND d.order_id = o.id) "
                                 + "UNION ALL "
                                 + "SELECT p.status, EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.payment_id = p.id "
-                                + "AND f.resolved_at IS NULL) FROM payment p WHERE p.tenant_id = ?) "
+                                + "AND f.resolved_at IS NULL) FROM payment p WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM record_dismissal d WHERE d.tenant_id = p.tenant_id AND d.payment_id = p.id)) "
                                 + "SELECT CASE WHEN status = 'UNPARSED' THEN 'UNPARSED' "
                                 + "WHEN flagged THEN 'FLAGGED' "
                                 + "WHEN status IN ('NEEDS_REVIEW', 'RECEIVED', 'UNVERIFIED') THEN 'REVIEW' "
@@ -224,11 +243,11 @@ public class BoardRepository {
                                 + "SELECT CAST('ORDER' AS TEXT) AS kind, o.id AS id, o.status AS status, o.total_minor AS amount, o.currency AS currency, "
                                 + "o.created_at AS ts, o.order_ref AS ref, cu.display_name AS who, cu.phone_last4 AS last4, "
                                 + "EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = o.tenant_id AND f.subject_type = 'ORDER' AND f.order_id = o.id AND f.resolved_at IS NULL) AS flagged "
-                                + "FROM orders o LEFT JOIN customer cu ON cu.id = o.customer_id AND cu.tenant_id = o.tenant_id WHERE o.tenant_id = ? "
+                                + "FROM orders o LEFT JOIN customer cu ON cu.id = o.customer_id AND cu.tenant_id = o.tenant_id WHERE o.tenant_id = ? AND o.status <> 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM record_dismissal d WHERE d.tenant_id = o.tenant_id AND d.order_id = o.id) "
                                 + "UNION ALL "
                                 + "SELECT 'PAYMENT', p.id, p.status, p.amount_minor, p.currency, p.created_at, COALESCE(p.tx_id, p.reference), "
                                 + "p.sender_name, p.sender_last4, EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.payment_id = p.id "
-                                + "AND f.resolved_at IS NULL) FROM payment p WHERE p.tenant_id = ?), "
+                                + "AND f.resolved_at IS NULL) FROM payment p WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM record_dismissal d WHERE d.tenant_id = p.tenant_id AND d.payment_id = p.id)), "
                                 + "placed AS (SELECT i.*, CASE WHEN i.status = 'UNPARSED' THEN 'UNPARSED' "
                                 + "WHEN i.flagged THEN 'FLAGGED' "
                                 + "WHEN i.status IN ('NEEDS_REVIEW', 'RECEIVED', 'UNVERIFIED') THEN 'REVIEW' "
@@ -479,8 +498,8 @@ public class BoardRepository {
                 long orders;
                 long paid;
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT count(*) AS orders, count(*) FILTER (WHERE status = 'PAID') AS paid FROM orders "
-                                + "WHERE tenant_id = ? AND status <> 'UNPARSED' AND created_at >= ? AND created_at < ?")) {
+                        "SELECT count(*) AS orders, count(*) FILTER (WHERE status = 'PAID') AS paid FROM orders o "
+                                + "WHERE o.tenant_id = ? AND o.status <> 'UNPARSED' AND o.status <> 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM record_dismissal d WHERE d.tenant_id = o.tenant_id AND d.order_id = o.id) AND o.created_at >= ? AND o.created_at < ?")) {
                     ps.setObject(1, tenantId);
                     ps.setObject(2, DbTime.utc(from));
                     ps.setObject(3, DbTime.utc(to));
@@ -494,7 +513,7 @@ public class BoardRepository {
                 try (PreparedStatement ps = c.prepareStatement(
                         "SELECT (SELECT count(*) FROM payment p WHERE p.tenant_id = ? AND p.status <> 'UNPARSED' "
                                 + "AND EXISTS (SELECT 1 FROM flag f WHERE f.tenant_id = p.tenant_id AND f.payment_id = p.id AND f.resolved_at IS NULL)) "
-                                + "+ (SELECT count(*) FROM orders o WHERE o.tenant_id = ? AND o.status <> 'UNPARSED' AND EXISTS (SELECT 1 FROM flag f "
+                                + "+ (SELECT count(*) FROM orders o WHERE o.tenant_id = ? AND o.status <> 'UNPARSED' AND o.status <> 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM record_dismissal d WHERE d.tenant_id = o.tenant_id AND d.order_id = o.id) AND EXISTS (SELECT 1 FROM flag f "
                                 + "WHERE f.tenant_id = o.tenant_id AND f.subject_type = 'ORDER' AND f.order_id = o.id AND f.resolved_at IS NULL)) AS n")) {
                     ps.setObject(1, tenantId);
                     ps.setObject(2, tenantId);
