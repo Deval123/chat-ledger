@@ -33,6 +33,18 @@ class StoredTimesIT {
     private final UUID seller = MatchingFixture.user(tenant, "SELLER");
     private final UUID helper = MatchingFixture.user(tenant, "HELPER");
 
+    /**
+     * Where the fixture's clock starts: an instant with digits below the microsecond (789 ns), so the rounding this class is about is
+     * always exercised. The fixture's clock starts at the machine's time plus 799 ns, which lands on a whole microsecond whenever the
+     * machine's nanoseconds end in 201; the guard in {@link #expected()} then failed by chance, about once in a thousand runs on Linux.
+     * Every move of the clock in these tests is whole seconds, so the 789 stays.
+     */
+    private static final Instant START = Instant.parse("2026-11-21T10:15:30.123456789Z");
+
+    {
+        f.clock.advance(Duration.between(f.clock.instant(), START));
+    }
+
     private Instant expected() {
         Instant now = f.clock.instant();
         assertThat(now.getNano() % 1000).as("the test clock has sub-microsecond digits").isNotZero();
