@@ -1,5 +1,6 @@
 #!/bin/sh
-# deploy/test-upgrade.sh: the rehearsal of an upgrade WITH a migration (task 12b, V021), on a throwaway Linux Docker host. Never on the VPS.
+# deploy/test-upgrade.sh: the rehearsal of an upgrade, with its migration if the release has one (task 12b), on a throwaway Linux
+# Docker host. Never on the VPS.
 # Run as root, from the repository root, with both images loaded:
 #
 #   sudo sh deploy/test-upgrade.sh <old image> <new image> /tmp/chat-ledger-upgrade
@@ -89,7 +90,13 @@ docker logs "$PROBE" > "$WORK/health.log" 2>/dev/null
 docker rm -f "$PROBE" >/dev/null
 after="$(psql_super "SELECT max(version::int) FROM flyway_schema_history WHERE success")"
 echo "INFO schema after: V$after"
-if [ "$after" -le "$before" ]; then echo "FAIL the migration did not move the schema forward"; exit 1; fi
+# The schema ends at the last migration of this repository, never below where it started. A release without a migration (the
+# deployed release already has the latest one) is a valid upgrade: before and after are then equal.
+latest="$(find web/src/main/resources/db/migration -name 'V*__*.sql' | sed -n 's|^.*/V\([0-9]*\)__.*\.sql$|\1|p' | sort -n | tail -n 1 | sed 's/^0*//')"
+if [ "$after" != "$latest" ] || [ "$after" -lt "$before" ]; then
+    echo "FAIL the schema is V$after after migrate; this repository's last migration is V$latest, and it started at V$before"; exit 1
+fi
+if [ "$after" -eq "$before" ]; then echo "INFO no migration in this release (already at V$after)"; fi
 echo "INFO migrate took $((migrate_end - migrate_start))s; the upgrade took $((upgrade_end - upgrade_start))s end to end (no pull: images are local)"
 # The windows without a 200, as RUNBOOK section 5's probe summary prints them.
 awk '$2 != 200 { if (!s) s = $1; e = $1; n++ } $2 == 200 && s { print "INFO " s " to " e ": " n " samples without 200"; s = ""; n = 0 }
