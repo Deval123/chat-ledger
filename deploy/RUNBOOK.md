@@ -351,9 +351,22 @@ first.
 
 **After it.** 12b gets its own stop 2 only after this deploy and its smoke run. Nothing of 12b is deployed after 2026-11-27.
 
-### Release note: task 12b, first pull request (cancel and dismiss; prepared 2026-11-21, not deployed, no digest yet)
+### Release note: task 12b, first pull request (cancel and dismiss; prepared 2026-11-21, not deployed)
 **What it is.** Cancel an order nobody paid for, and dismiss a record that never reached the books. **It has a migration, V021**: the
-first deploy with one. The candidate digest is the one `main`'s CI run pushes after the merge; it is not known yet.
+first deploy with one.
+- **Candidate image:** PR #33, squashed into `main` as `7cf50ee`. CI run #104 on that commit pushed
+  `ghcr.io/deval123/chat-ledger@sha256:db34ed26d79d5744f663bf4162877d3b096204d1df9ced7780602cd12264e3c8` (the `digest:` line of its
+  "Push by commit" step). Every job of that run passed.
+- **Checked in that run's logs:**
+  - `check-image.sh` passed its 12 checks, among them "no Node, Chrome, puppeteer or axe-core file in the image" and "app.jar holds no
+    jsoup, axe-core, puppeteer, docker-java or Testcontainers";
+  - the drill's smoke run passed its 25 checks;
+  - the upgrade rehearsal passed.
+- **Rolls back to** the release in "Deployed state": `2104ccb9…`, CI run #83.
+- **The second pull request of 12b (correct a total, V022) is not part of this release.** It is deferred until after judging
+  (register 179).
+- **The digest of the step "Rehearse the upgrade from the deployed release" in `.github/workflows/ci.yml` stays `2104ccb9…`** until
+  this release is deployed: it must name what runs on the VPS. It changes in step 7, with "Deployed state".
 
 **What V021 does.** It replaces three trigger functions on `orders`, adds a commit-time trigger on `orders` and one on `ledger_txn`,
 and creates the table `record_dismissal`. It rewrites no row. Creating the triggers waits for the transactions in flight on `orders`
@@ -363,7 +376,9 @@ and checks moves that the old code never makes, so it is unaffected.
 **Rehearsed in CI.** Every push runs `deploy/test-upgrade.sh` in the image job: the stack from nothing on the deployed release, used,
 then this upgrade as written below. The run prints how long `migrate` took and the time without a 200. Ten demo workspaces on an amd64
 runner, not the VPS's data. First run (2026-11-21): `migrate` 3 s, 11 s without a 200 (web's restart only; the old web kept answering
-during `migrate`), 19 s end to end before any pull. On the VPS add the pull, and expect the 25 to 30 s measured on 2026-11-11.
+during `migrate`), 19 s end to end before any pull. Run #104 on the merged commit: `migrate` 4 s, 17 s without a 200, 30 s end to end
+before any pull; smoke 25 of 25 after; 101 payable orders in 11 workspaces, each with its acceptance posting. The two runs differ by
+the runner's speed. On the VPS add the pull, and expect the 25 to 30 s measured on 2026-11-11.
 
 **Steps** (the upgrade above, with its migration lines):
 1. Outside judging hours. Dated `.env` copy, new `CHAT_LEDGER_DIGEST`, the health probe started.
