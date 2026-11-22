@@ -114,7 +114,9 @@ class WorkflowFileTest {
         // key and break the other jobs), passed to the build as its named context.
         assertThat(uses(build)).anyMatch(u -> u.equals("actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830"))
                 .noneMatch(u -> u.startsWith("actions/cache@")).noneMatch(u -> u.startsWith("actions/setup-java@"));
-        assertThat(String.valueOf(build.get("steps"))).contains("key=setup-java-${{ runner.os }}-x64-maven-${{ hashFiles('**/pom.xml') }}");
+        assertThat(String.valueOf(build.get("steps"))).contains("key=setup-java-${{ runner.os }}-x64-maven-${{ hashFiles('**/pom.xml') }}")
+                .as("setup-java's path string exactly: the cache version is a hash of it, and `~/.m2/repository` missed in CI")
+                .contains("path=/home/runner/.m2/repository,");
         assertThat(run).contains("--build-context m2seed=\"$HOME/.m2/repository\"");
         assertThat(runs(job("build-and-test"))).contains("mvn --batch-mode --no-transfer-progress --strict-checksums verify");
         assertThat(runs(job("a11y-browser"))).contains("--strict-checksums -pl web -am verify");
