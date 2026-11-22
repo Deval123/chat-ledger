@@ -264,7 +264,7 @@ jobs:
       # without a 200. A public image of this repository, pulled without a login; nothing is pushed. Update the digest at each deploy.
       - name: Rehearse the upgrade from the deployed release
         env:
-          DEPLOYED: ghcr.io/deval123/chat-ledger@sha256:db34ed26d79d5744f663bf4162877d3b096204d1df9ced7780602cd12264e3c8
+          DEPLOYED: ghcr.io/deval123/chat-ledger@sha256:1d1b70b2e2792ad7adfe7388b19c701b752ecc6d831b321d969f6c3263a48aef
         run: |
           docker pull --quiet "$DEPLOYED"
           sudo sh deploy/test-upgrade.sh "$DEPLOYED" chat-ledger:test "${RUNNER_TEMP}/chat-ledger-upgrade"

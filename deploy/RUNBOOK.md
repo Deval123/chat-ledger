@@ -53,7 +53,7 @@ What runs now, so a change starts from the right place. Update this table with e
 
 | Item | Value | Since |
 |---|---|---|
-| Release | `ghcr.io/deval123/chat-ledger@sha256:db34ed26d79d5744f663bf4162877d3b096204d1df9ced7780602cd12264e3c8` (CI run #104, commit `7cf50ee`: task 12b, PR #33, schema V021) | 2026-11-21 |
+| Release | `ghcr.io/deval123/chat-ledger@sha256:1d1b70b2e2792ad7adfe7388b19c701b752ecc6d831b321d969f6c3263a48aef` (CI run #110, commit `c5ebb4e`: the display fix of register 180, PR #35, schema V021) | 2026-11-22 |
 | `APP_SECURITY_TRUSTED_PROXY_HOPS` | `1`, measured through the tunnel over IPv4 (section 4); the IPv6 repeat is still open | 2026-11-10 |
 | Public hostname | `ledger.nkap.dev` → `http://web:8080`; catch-all `http_status:404` | 2026-11-10 |
 | Zone settings of `nkap.dev` (D19) | Rocket Loader off, Bot Fight Mode off, Email Address Obfuscation off, Always Use HTTPS on, zone HSTS off; **zone-wide**, see section 2, step 3 | 2026-11-10 |
@@ -403,6 +403,16 @@ the runner's speed. On the VPS add the pull, and expect the 25 to 30 s measured 
 cancel has happened**, the old release's books page reports "does not agree" for that workspace, because it still counts reversed
 acceptance postings. The data is right. Prefer rolling forward with a fix; if you roll back, expect that line until the workspace
 retires.
+
+### Release note: the display fix of register 180 (deployed 2026-11-22)
+- **What it was:** the page of a cancelled order no longer showed "Still to pay" (PR #35, commit `c5ebb4e`). Display only: no query,
+  write or amount changed.
+- **Image:** `ghcr.io/deval123/chat-ledger@sha256:1d1b70b2e2792ad7adfe7388b19c701b752ecc6d831b321d969f6c3263a48aef`, from the
+  "Push by commit" step of CI run #110 (its second attempt: the first failed on a flaky test, fixed by PR #37).
+- **How it went:** no migration; the schema stayed at V021. The `.env` copy was `.env.20261122-0023` (VPS time, UTC). The rollback
+  target was `db34ed26…` (CI run #104).
+- **Checks:** `smoke.sh` passed 25 of 25. The interruption was not measured: the probe was not started.
+- **The CI rehearsal** now starts from this release (step "Rehearse the upgrade from the deployed release").
 
 ## 6. Roll back
 
