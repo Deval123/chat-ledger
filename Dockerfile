@@ -25,12 +25,14 @@ COPY suspicion/pom.xml suspicion/
 COPY demo/pom.xml demo/
 COPY web/pom.xml web/
 # What is still downloaded: refused if its checksum does not match (Maven's default only warns), and retried on 429 and 503, honouring
-# Retry-After, 6 times 10 s apart (resolver 1.9.27; its default is 3 times 5 s apart, which four 429s outlasted).
+# Retry-After, 6 times 10 s apart (resolver 1.9.27; its default, 3 times 5 s apart, did not prevent the four failures). The counts below
+# show in the build log how many jars the seed held and how many were downloaded on top of it.
 ENV MAVEN_ARGS="--strict-checksums -Daether.connector.http.retryHandler.count=6 -Daether.connector.http.retryHandler.interval=10000"
 RUN --mount=type=bind,from=m2seed,target=/seed \
     mkdir -p /root/.m2/repository && cp -R /seed/. /root/.m2/repository/ \
  && echo "Maven repository: $(find /root/.m2/repository -name '*.jar' | wc -l) jars seeded" \
- && mvn -B -q -pl web -am dependency:go-offline -DexcludeReactor=true
+ && mvn -B -q -pl web -am dependency:go-offline -DexcludeReactor=true \
+ && echo "Maven repository: $(find /root/.m2/repository -name '*.jar' | wc -l) jars after resolving"
 COPY ledger-core/src ledger-core/src
 COPY extraction/src extraction/src
 COPY ingestion/src ingestion/src
@@ -41,6 +43,7 @@ COPY web/src web/src
 COPY web/third-party web/third-party
 # The tests ran in CI's build-and-test job, which this image job depends on.
 RUN mvn -B -q -pl web -am -DskipTests -Ddependency-check.skip=true package \
+ && echo "Maven repository: $(find /root/.m2/repository -name '*.jar' | wc -l) jars after packaging" \
  && mkdir /out \
  && cp web/target/web-*.jar /out/app.jar \
  && chmod 0444 /out/app.jar
