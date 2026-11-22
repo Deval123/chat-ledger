@@ -2401,3 +2401,23 @@ It is in the documentation pull request of this deploy. The live demo keeps the 
 ### Unverified
 - The French of the new sentences.
 - An upgrade with a migration on real data of a workspace other than the demo's.
+
+## Task 12b - display fix deployment (2026-11-22)
+
+The display fix of register 180 went to the VPS, as RUNBOOK section 5's note for it records. The facts below come from the owner's
+report.
+
+- **Upgrade:** from `sha256:db34ed26…` (CI run #104) to
+  `sha256:1d1b70b2e2792ad7adfe7388b19c701b752ecc6d831b321d969f6c3263a48aef`.
+  - The new image is from CI run #110 on commit `c5ebb4e` (PR #35), second attempt. The first attempt failed on the flaky
+    `StoredTimesIT` that PR #37 fixed.
+- **No migration:** the schema stays at V021.
+- **The `.env` copy:** `/opt/chat-ledger/.env.20261122-0023` (VPS time, UTC). The rollback is to `db34ed26…`.
+- **Interruption: not measured,** because the probe was not started. For comparison, the rehearsal of 2026-11-11 measured about 25 to
+  30 s for an upgrade without a migration, and the upgrade with a migration of 2026-11-21 had about 27 s without a 200.
+- **`smoke.sh`:** 25 checks of 25, `Failures: 0`.
+- **Checked by hand in Chrome, on the deployed release, in a fresh demo:**
+  - an order of 800 XAF awaiting payment showed "Still to pay 800 XAF" before its cancel;
+  - after the cancel, its page showed only "Cancelled" and its total;
+  - the books still balanced.
+- **Unverified:** how long this upgrade interrupted the demo.
