@@ -8,6 +8,11 @@
 # Both are Java 21: the build JDK compiles for 21, the runtime runs 21.
 # No secret is passed to the build: there is no ARG and no secret mount. CI checks the layers (deploy/check-image.sh).
 
+# The Maven repository that CI's build-and-test job already filled (actions/setup-java's cache, keyed on the POMs) seeds the build, so
+# an image build does not ask Maven Central for every file on each push (four 429s in two days, 2026-11-21 and 22). Empty unless CI
+# passes `--build-context m2seed=<dir>`: a local build downloads as before. Only the build stage mounts it; nothing of it is copied
+# into the runtime stage, and the jar the image runs is built from source here either way.
+FROM scratch AS m2seed
 FROM maven:3.9-eclipse-temurin-21@sha256:99e61abcff91a9b1333463bd8451fb18495d6eba9250ac66a338b518f8278320 AS build
 WORKDIR /src
 # The POMs first: dependencies resolve in their own cached layer.
@@ -19,7 +24,15 @@ COPY matching/pom.xml matching/
 COPY suspicion/pom.xml suspicion/
 COPY demo/pom.xml demo/
 COPY web/pom.xml web/
-RUN mvn -B -q -pl web -am dependency:go-offline -DexcludeReactor=true
+# What is still downloaded: refused if its checksum does not match (Maven's default only warns), and retried on 429 and 503, honouring
+# Retry-After, 6 times 10 s apart (resolver 1.9.27; its default, 3 times 5 s apart, did not prevent the four failures). The counts below
+# show in the build log how many jars the seed held and how many were downloaded on top of it.
+ENV MAVEN_ARGS="--strict-checksums -Daether.connector.http.retryHandler.count=6 -Daether.connector.http.retryHandler.interval=10000"
+RUN --mount=type=bind,from=m2seed,target=/seed \
+    mkdir -p /root/.m2/repository && cp -R /seed/. /root/.m2/repository/ \
+ && echo "Maven repository: $(find /root/.m2/repository -name '*.jar' | wc -l) jars seeded" \
+ && mvn -B -q -pl web -am dependency:go-offline -DexcludeReactor=true \
+ && echo "Maven repository: $(find /root/.m2/repository -name '*.jar' | wc -l) jars after resolving"
 COPY ledger-core/src ledger-core/src
 COPY extraction/src extraction/src
 COPY ingestion/src ingestion/src
@@ -30,6 +43,7 @@ COPY web/src web/src
 COPY web/third-party web/third-party
 # The tests ran in CI's build-and-test job, which this image job depends on.
 RUN mvn -B -q -pl web -am -DskipTests -Ddependency-check.skip=true package \
+ && echo "Maven repository: $(find /root/.m2/repository -name '*.jar' | wc -l) jars after packaging" \
  && mkdir /out \
  && cp web/target/web-*.jar /out/app.jar \
  && chmod 0444 /out/app.jar

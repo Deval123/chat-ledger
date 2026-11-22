@@ -29,7 +29,8 @@ class WorkflowFileTest {
     private static final Path WORKFLOWS = Path.of("..", ".github", "workflows");
     /** {@code uses: owner/repo@<40 hex> # vX.Y.Z}: the SHA and the release it was checked against. */
     private static final Pattern USES = Pattern.compile("^\\s*(?:-\\s*)?uses:\\s*(\\S+)(.*)$");
-    private static final Pattern PINNED = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$");
+    /** {@code owner/repo@sha} or {@code owner/repo/path@sha} (an action in a sub-directory of a repository, at the same pinned SHA). */
+    private static final Pattern PINNED = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*@[0-9a-f]{40}$");
     private static final Pattern RELEASE_COMMENT = Pattern.compile("^\\s+#\\s+v[0-9]+\\.[0-9]+\\.[0-9]+$");
 
     private static Map<String, Object> workflow(String file) throws IOException {
@@ -109,6 +110,16 @@ class WorkflowFileTest {
         assertThat(run).doesNotContain("docker login").doesNotContain("docker push").doesNotContain("secrets.");
         assertThat(run).doesNotContain("--build-arg DB_").doesNotContain("--secret");
         assertThat(String.valueOf(build.get("needs"))).contains("build-and-test");
+        // The Maven seed: build-and-test's cache, restored only (a save from here would store an empty repository under setup-java's
+        // key and break the other jobs), passed to the build as its named context.
+        assertThat(uses(build)).anyMatch(u -> u.equals("actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830"))
+                .noneMatch(u -> u.startsWith("actions/cache@")).noneMatch(u -> u.startsWith("actions/setup-java@"));
+        assertThat(String.valueOf(build.get("steps"))).contains("key=setup-java-${{ runner.os }}-x64-maven-${{ hashFiles('**/pom.xml') }}")
+                .as("setup-java's path string exactly: the cache version is a hash of it, and `~/.m2/repository` missed in CI")
+                .contains("path=/home/runner/.m2/repository,");
+        assertThat(run).contains("--build-context m2seed=\"$HOME/.m2/repository\"");
+        assertThat(runs(job("build-and-test"))).contains("mvn --batch-mode --no-transfer-progress --strict-checksums verify");
+        assertThat(runs(job("a11y-browser"))).contains("--strict-checksums -pl web -am verify");
     }
 
     @Test

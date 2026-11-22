@@ -49,7 +49,7 @@ jobs:
       # Surefire runs every *Test.java and *Tests.java class.
       # Secrets are never present in CI; the test profile disables the DB.
       - name: Build and run tests
-        run: mvn --batch-mode --no-transfer-progress verify
+        run: mvn --batch-mode --no-transfer-progress --strict-checksums verify
         env:
           # Non-secret connection details; the password and app secret come from the step above.
           DB_URL: jdbc:postgresql://localhost:5432/chatledger_ci
@@ -150,7 +150,7 @@ jobs:
           DB_USER: ci_user
         run: |
           rm -f /tmp/browser-demo.json /tmp/browser-demo.done
-          mvn --batch-mode --no-transfer-progress -pl web -am verify -Dtest=NoSuchTest -Dsurefire.failIfNoSpecifiedTests=false \
+          mvn --batch-mode --no-transfer-progress --strict-checksums -pl web -am verify -Dtest=NoSuchTest -Dsurefire.failIfNoSpecifiedTests=false \
             -Dit.test=DemoBrowserFixtureIT -Dfailsafe.failIfNoSpecifiedTests=false -Dbrowser.demo=true \
             > "$RUNNER_TEMP/fixture.log" 2>&1 &
           fixture=$!
@@ -249,8 +249,20 @@ jobs:
         with:
           persist-credentials: false
 
+      # The Maven repository build-and-test filled (the same cache, read only here: this job has no `mvn`, so nothing is saved back).
+      - name: Restore the Maven repository build-and-test filled
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          # setup-java's own path, written as it writes it (os.homedir() joined): the cache version hashes the path string, so
+          # `~/.m2/repository` names a different entry and always misses.
+          path: /home/runner/.m2/repository
+          # setup-java's own key: its prefix, the OS, Node's name of the architecture (x64, lower case) and the hash of the POMs.
+          key: setup-java-${{ runner.os }}-x64-maven-${{ hashFiles('**/pom.xml') }}
+
       - name: Build the image (no secret, no push)
-        run: docker build --pull --build-arg "REVISION=${GITHUB_SHA}" -t chat-ledger:test .
+        run: |
+          mkdir -p "$HOME/.m2/repository"
+          docker build --pull --build-arg "REVISION=${GITHUB_SHA}" --build-context m2seed="$HOME/.m2/repository" -t chat-ledger:test .
 
       - name: Check the image
         run: sh deploy/check-image.sh chat-ledger:test

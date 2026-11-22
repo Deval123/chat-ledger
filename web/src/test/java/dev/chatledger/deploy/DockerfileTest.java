@@ -29,9 +29,17 @@ class DockerfileTest {
         return Files.readAllLines(ROOT.resolve("Dockerfile")).stream().filter(l -> !l.isBlank() && !l.startsWith("#")).toList();
     }
 
+    /** The one stage that is not an image: an empty seed for the Maven repository, which CI fills with {@code --build-context}. */
+    static final String SEED = "FROM scratch AS m2seed";
+
+    /** The stages built from an image (the seed stage left out). */
+    private static List<String> bases() throws IOException {
+        return instructions().stream().filter(l -> l.startsWith("FROM ") && !l.equals(SEED)).toList();
+    }
+
     @Test
     void both_bases_are_pinned_by_digest() throws IOException {
-        List<String> froms = instructions().stream().filter(l -> l.startsWith("FROM ")).toList();
+        List<String> froms = bases();
         assertThat(froms).hasSize(2).allMatch(l -> FROM_PINNED.matcher(l).matches());
         assertThat(froms.get(1)).as("the runtime is distroless Debian 13, nonroot (debian12 carried fixable findings; register 152)")
                 .startsWith("FROM gcr.io/distroless/java21-debian13:nonroot@sha256:");
@@ -39,6 +47,27 @@ class DockerfileTest {
         assertThat(froms.get(0)).startsWith("FROM maven:3.9-eclipse-temurin-21@sha256:");
         assertThat(froms.get(1)).contains("/java21-");
         assertThat(Files.readString(ROOT.resolve("Dockerfile"))).as("no debian12 base left").doesNotContain("java21-debian12:nonroot@");
+    }
+
+    /**
+     * The Maven seed (CI's restored repository) is mounted read-only by the build stage's dependency step and copied nowhere else, so no file
+     * of it can reach the runtime stage; it is the only stage that is not a pinned image, and it is empty unless CI passes the context.
+     */
+    @Test
+    void the_maven_seed_reaches_the_build_stage_only() throws IOException {
+        List<String> all = instructions();
+        assertThat(all.stream().filter(l -> l.startsWith("FROM ")).toList()).as("the seed stage comes first").first().isEqualTo(SEED);
+        assertThat(all.stream().filter(l -> l.startsWith("FROM scratch"))).containsExactly(SEED);
+        List<String> uses = all.stream().filter(l -> l.contains("m2seed") && !l.equals(SEED)).toList();
+        assertThat(uses).as("one use: a bind mount in the build stage").hasSize(1)
+                .allMatch(l -> l.startsWith("RUN --mount=type=bind,from=m2seed,target=/seed "));
+        int build = all.indexOf(bases().get(0));
+        int runtime = all.indexOf(bases().get(1));
+        int use = all.indexOf(uses.get(0));
+        assertThat(use).as("inside the build stage").isGreaterThan(build).isLessThan(runtime);
+        assertThat(all.subList(runtime, all.size())).as("the runtime stage copies from the build stage only")
+                .filteredOn(l -> l.contains("--from=")).allMatch(l -> l.contains("--from=build "));
+        assertThat(all).as("what is still downloaded is checked and retried").anyMatch(l -> l.startsWith("ENV MAVEN_ARGS=\"--strict-checksums "));
     }
 
     @Test
@@ -56,7 +85,7 @@ class DockerfileTest {
     @Test
     void the_runtime_runs_as_65532_and_owns_nothing_it_runs() throws IOException {
         List<String> all = instructions();
-        int runtime = all.indexOf(all.stream().filter(l -> l.startsWith("FROM ")).toList().get(1));
+        int runtime = all.indexOf(bases().get(1));
         List<String> stage = all.subList(runtime, all.size());
         assertThat(stage).contains("USER 65532:65532", "ENTRYPOINT [\"java\", \"-jar\", \"/app/app.jar\"]", "COPY --from=build --chown=0:0 /out /app");
         assertThat(stage).as("nothing runs in the runtime stage").noneMatch(l -> l.startsWith("RUN "));
