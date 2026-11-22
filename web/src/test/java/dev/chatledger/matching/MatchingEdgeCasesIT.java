@@ -169,4 +169,66 @@ class MatchingEdgeCasesIT {
         assertThat(matches("CONFIRMED")).isZero();
         assertThat(matches("SUGGESTED")).as("the rollback undid the change too").isEqualTo(1);
     }
+
+    /** A connection's step that fails as PostgreSQL does when the named unique index refuses a row. */
+    private static MatchingService.StepHook uniqueViolationAfterTheMatchIsWritten(String index) {
+        return errorAfterTheMatchIsWritten("unique_violation", index);
+    }
+
+    private static MatchingService.StepHook errorAfterTheMatchIsWritten(String condition, String constraint) {
+        return (step, c) -> {
+            if (step == MatchingService.ApplyStep.MATCH_WRITTEN) {
+                MatchWorld.run(c, "DO $$ BEGIN RAISE " + condition + " USING CONSTRAINT = '" + constraint + "'; END $$");
+            }
+        };
+    }
+
+    /**
+     * The refusal of {@code uq_match_open_pair} (the engine's suggestion of the same pair committed meanwhile; the real race is in
+     * {@code SellerActionsConcurrencyIT}) comes back as {@code PAIR_CHANGED}, and the posting and the match already written in the
+     * transaction are rolled back with it.
+     */
+    @Test
+    void the_open_pair_index_refusing_the_match_is_a_refusal_and_undoes_the_posting() {
+        UUID order = w.order(5000, "PENDING_PAYMENT", "A-1", null);
+        UUID payment = w.payment(5000, "RECEIVED");
+        MatchingFixture hooked = new MatchingFixture(MatchConfig.defaults(), uniqueViolationAfterTheMatchIsWritten("uq_match_open_pair"), false);
+
+        MatchingService.ApplyResult result = hooked.matcher.matchManually(tenant, order, payment, seller);
+
+        assertThat(result.outcome()).isEqualTo(MatchingService.Outcome.NOT_APPLICABLE);
+        assertThat(result.reason()).isEqualTo(MatchingService.Reason.PAIR_CHANGED);
+        assertThat(result.matchId()).isNull();
+        assertThat(MatchingFixture.ledger(tenant)).as("no posting").isEmpty();
+        assertThat(count("SELECT count(*) FROM match WHERE tenant_id = ?", tenant, null)).isZero();
+        assertThat(count("SELECT count(*) FROM audit_log WHERE tenant_id = ? AND action LIKE 'MATCH_%'", tenant, null)).isZero();
+        assertThat(MatchingFixture.status("orders", order)).isEqualTo("PENDING_PAYMENT");
+        assertThat(MatchingFixture.status("payment", payment)).isEqualTo("RECEIVED");
+    }
+
+    /** Only that index is a refusal: any other unique violation, here the one-active-match-per-payment index, still fails the call. */
+    @Test
+    void any_other_unique_index_refusing_the_match_still_fails() {
+        UUID order = w.order(5000, "PENDING_PAYMENT", "A-1", null);
+        UUID payment = w.payment(5000, "RECEIVED");
+        MatchingFixture hooked = new MatchingFixture(MatchConfig.defaults(), uniqueViolationAfterTheMatchIsWritten("uq_match_active_payment"), false);
+
+        assertThatThrownBy(() -> hooked.matcher.matchManually(tenant, order, payment, seller))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Could not apply a match");
+        assertThat(MatchingFixture.ledger(tenant)).isEmpty();
+        assertThat(count("SELECT count(*) FROM match WHERE tenant_id = ?", tenant, null)).isZero();
+    }
+
+    /** And only a unique violation of it: another error that names the same index (here a check violation) still fails the call. */
+    @Test
+    void another_kind_of_error_naming_the_open_pair_index_still_fails() {
+        UUID order = w.order(5000, "PENDING_PAYMENT", "A-1", null);
+        UUID payment = w.payment(5000, "RECEIVED");
+        MatchingFixture hooked = new MatchingFixture(MatchConfig.defaults(), errorAfterTheMatchIsWritten("check_violation", "uq_match_open_pair"), false);
+
+        assertThatThrownBy(() -> hooked.matcher.matchManually(tenant, order, payment, seller))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Could not apply a match");
+        assertThat(MatchingFixture.ledger(tenant)).isEmpty();
+        assertThat(count("SELECT count(*) FROM match WHERE tenant_id = ?", tenant, null)).isZero();
+    }
 }

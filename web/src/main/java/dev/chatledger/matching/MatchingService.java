@@ -7,6 +7,7 @@ import dev.chatledger.ledger.LedgerTransaction;
 import dev.chatledger.ledger.jdbc.JdbcLedgerRepository;
 import dev.chatledger.security.AuditLogRepository;
 import dev.chatledger.tenancy.TenantScope;
+import org.postgresql.util.PSQLException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -70,7 +71,12 @@ public class MatchingService implements MatchTrigger {
         NOT_FOUND, PAYMENT_NOT_FREE, ORDER_NOT_OPEN, CURRENCY_MISMATCH, NOTHING_LEFT_TO_PAY, AUTO_NOT_ELIGIBLE,
         NOT_A_SELLER, NOT_SUGGESTED, NOT_ACTIVE, SELLER_DECLINED, PAYMENT_STATUS_NOT_ALLOWED,
         /** Task 7: the payment, the order or the pair has a flag (open or resolved), so the engine suggests instead of matching. */
-        FLAGGED
+        FLAGGED,
+        /**
+         * The engine stored a suggestion for the same pair while this match was being made, and the unique index
+         * {@code uq_match_open_pair} refused the match at that moment. Nothing was written; looking again shows the suggestion.
+         */
+        PAIR_CHANGED
     }
 
     /** The steps of {@link #apply}, in order. A test can fail the transaction after any of them. */
@@ -355,9 +361,24 @@ public class MatchingService implements MatchTrigger {
     private ApplyResult inTransaction(UUID tenantId, TenantScope.SqlWork<ApplyResult> work) {
         try {
             return scope.call(tenantId, work);
-        } catch (SQLException | LedgerException e) {
+        } catch (SQLException e) {
+            // The engine stores suggestions without the payment's and the order's locks, so a suggestion of this pair can commit while the
+            // match is being made, unseen by the read under the lock; the index then refuses the match. The transaction is already rolled
+            // back (TenantScope), so nothing was written: a refusal, not a failure. Every other error still fails.
+            if (UNIQUE_VIOLATION.equals(e.getSQLState()) && OPEN_PAIR_INDEX.equals(constraintOf(e))) {
+                return ApplyResult.notApplicable(Reason.PAIR_CHANGED);
+            }
+            throw new IllegalStateException("Could not apply a match", e);
+        } catch (LedgerException e) {
             throw new IllegalStateException("Could not apply a match", e);
         }
+    }
+
+    private static final String UNIQUE_VIOLATION = "23505";
+    private static final String OPEN_PAIR_INDEX = "uq_match_open_pair";
+
+    private static String constraintOf(SQLException e) {
+        return e instanceof PSQLException p && p.getServerErrorMessage() != null ? p.getServerErrorMessage().getConstraint() : null;
     }
 
     private ApplyResult applyWithin(Connection c, UUID tenantId, UUID orderId, UUID paymentId, Mode mode, UUID actor, UUID requiredSuggestion)

@@ -2,6 +2,9 @@ package dev.chatledger.matching;
 
 import org.junit.jupiter.api.Test;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -216,6 +219,67 @@ class SellerActionsConcurrencyIT {
 
         assertThat(results.stream().mapToInt(Integer::intValue).sum()).as("some decisions were actually made").isGreaterThan(THREADS);
         MatchInvariants.assertHold(tenant);
+    }
+
+    /**
+     * The storm's failure of 2026-11-22, with two threads and a fixed order of events. The engine stores a suggestion for a pair without the
+     * payment's and the order's locks; a seller matching the same pair by hand holds both locks, does not see that suggestion (not yet
+     * committed), and its insert waits on {@code uq_match_open_pair}. When the engine commits, the index refuses the seller's insert.
+     * That must come back as a refusal with nothing written, not as an exception.
+     */
+    @Test
+    void a_manual_match_racing_the_engine_storing_the_same_pair_is_refused_with_nothing_written() throws Exception {
+        UUID order = w.order(5000, "PENDING_PAYMENT", "M-1", null);
+        UUID payment = w.payment(5000, "RECEIVED");
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try (Connection engine = MatchWorld.DB.migrateDataSource().getConnection()) {
+            engine.setAutoCommit(false);
+            UUID suggestion = UUID.randomUUID();
+            try (PreparedStatement ps = engine.prepareStatement("INSERT INTO match(id, tenant_id, order_id, payment_id, score, reasons_json, state) "
+                    + "VALUES (?, ?, ?, ?, 70, '[]', 'SUGGESTED') ON CONFLICT DO NOTHING")) {
+                ps.setObject(1, suggestion);
+                ps.setObject(2, tenant);
+                ps.setObject(3, order);
+                ps.setObject(4, payment);
+                assertThat(ps.executeUpdate()).isEqualTo(1);
+            }
+            Future<MatchingService.ApplyResult> manual = pool.submit(() -> f.matcher.matchManually(tenant, order, payment, seller));
+            awaitInsertOfAnActiveMatchWaiting();
+            engine.commit();
+
+            MatchingService.ApplyResult result = manual.get(30, TimeUnit.SECONDS);
+
+            assertThat(result.outcome()).isEqualTo(MatchingService.Outcome.NOT_APPLICABLE);
+            assertThat(result.reason()).isEqualTo(MatchingService.Reason.PAIR_CHANGED);
+            assertThat(f.repository.find(tenant, suggestion).orElseThrow().state()).as("the engine's suggestion is kept").isEqualTo("SUGGESTED");
+            assertThat(count("SELECT count(*) FROM match WHERE tenant_id = ? AND state IN ('AUTO', 'CONFIRMED')", tenant, null)).isZero();
+            assertThat(count("SELECT count(*) FROM ledger_txn WHERE tenant_id = ?", tenant, null)).as("no posting committed").isZero();
+            assertThat(count("SELECT count(*) FROM audit_log WHERE tenant_id = ? AND action = 'MATCH_MANUAL'", tenant, null)).isZero();
+            assertThat(MatchingFixture.status("orders", order)).isEqualTo("PENDING_PAYMENT");
+            assertThat(MatchingFixture.status("payment", payment)).isEqualTo("RECEIVED");
+            MatchInvariants.assertHold(tenant);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /** Waits until a session inserts an active match and waits for a lock (the unique index's wait on an uncommitted row). */
+    private static void awaitInsertOfAnActiveMatchWaiting() throws Exception {
+        long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        try (Connection c = MatchWorld.DB.superDataSource().getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+                     + "AND wait_event_type = 'Lock' AND query LIKE 'INSERT INTO match(id, tenant_id, order_id, payment_id, amount_minor%'")) {
+            while (System.nanoTime() < end) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    if (rs.getLong(1) > 0) {
+                        return;
+                    }
+                }
+                Thread.sleep(20);
+            }
+        }
+        throw new AssertionError("the manual match never waited on the engine's uncommitted suggestion");
     }
 
     @Test
