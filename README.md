@@ -35,8 +35,8 @@ mvn -pl web spring-boot:run
 | Module | Responsibility |
 |---|---|
 | `ledger-core` | Double-entry accounts, immutable entries, balance invariant |
-| `extraction` | Order parser, payment templates, optional AI extractor |
-| `ingestion` | HTTP endpoints, HMAC verification, idempotency, rate limits |
+| `extraction` | Deterministic order parser and payment templates (no AI extractor: see "Future work") |
+| `ingestion` | Input checks and the decisions for pasted orders and payments (the pages and rate limits are in `web`; no machine endpoint: see "Future work") |
 | `matching` | Scoring engine, match thresholds, overrides, ledger postings |
 | `suspicion` | Advisory rule set: duplicate TX, name mismatch, time anomaly … |
 | `web` | Board UI (Thymeleaf + HTMX), simulators, CSV export, auth |
@@ -95,6 +95,19 @@ GRANT EXECUTE ON FUNCTION provision_tenant(text, text, text, text), provision_us
     TO chatledger_provisioner;
 -- and a login role that is a member of it, with a password you generate
 ```
+
+## Future work (not in the contest build)
+
+Two tasks of the plan are not built, on purpose. Both requirements are conditional, so the build as it stands meets them by having
+neither part:
+
+- **Optional AI extractor (task 10, requirement 8).** There is none. Orders and payments are read only by deterministic parsers, and no
+  message text leaves the server. If it is added, it is to be off by default, called only when the parsers fail, with a timeout and a
+  schema-validated answer, and any amount it returns is cross-checked against the message text and never trusted alone.
+- **Signed machine API (task 11, requirement 9.3).** There is no machine endpoint: orders and payments arrive only through the
+  signed-in pages, pasted by a person. A payment recorded with no person behind it counts as a helper's, so it can only be suggested,
+  never matched automatically (design register item 67). If the API is added, every request needs an HMAC signature and an
+  idempotency key, the feed gets an explicit machine identity in the audit trail, and it gets an OpenAPI description.
 
 ## Security in short
 
