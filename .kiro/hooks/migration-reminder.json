@@ -1,0 +1,25 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Migration reminder on create",
+      "trigger": "PostFileCreate",
+      "description": "When a Flyway migration V*.sql is created under web/src/main/resources/db/migration/, remind what a release with a migration needs.",
+      "matcher": "/web/src/main/resources/db/migration/V[^/]+\\.sql$",
+      "action": {
+        "type": "agent",
+        "prompt": "A Flyway migration (web/src/main/resources/db/migration/V*.sql) was just created or changed. A release with a migration needs two things before it is deployed. (1) A release note in deploy/RUNBOOK.md, section 5: say that the release has a migration, use the upgrade's migration lines (stop refresh, run migrate, up web and refresh), and say how to roll back (there is no down migration). (2) The upgrade rehearsal, deploy/test-upgrade.sh, run by CI's image job: it requires the schema to end at this repository's last migration, so check that it passes and record the migration time it prints. Say in your answer which of the two is done."
+      }
+    },
+    {
+      "name": "Migration reminder on save",
+      "trigger": "PostFileSave",
+      "description": "When a Flyway migration V*.sql under web/src/main/resources/db/migration/ is saved, remind what a release with a migration needs.",
+      "matcher": "/web/src/main/resources/db/migration/V[^/]+\\.sql$",
+      "action": {
+        "type": "agent",
+        "prompt": "A Flyway migration (web/src/main/resources/db/migration/V*.sql) was just created or changed. A release with a migration needs two things before it is deployed. (1) A release note in deploy/RUNBOOK.md, section 5: say that the release has a migration, use the upgrade's migration lines (stop refresh, run migrate, up web and refresh), and say how to roll back (there is no down migration). (2) The upgrade rehearsal, deploy/test-upgrade.sh, run by CI's image job: it requires the schema to end at this repository's last migration, so check that it passes and record the migration time it prints. Say in your answer which of the two is done."
+      }
+    }
+  ]
+}

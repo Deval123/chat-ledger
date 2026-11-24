@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Template lint on save",
+      "trigger": "PostFileSave",
+      "description": "When a Thymeleaf template under web/src/main/resources/templates/ is saved, run TemplateLintTest (no inline script, style or event handler, no unescaped output). Exit 1 and the failures on stderr when it fails.",
+      "matcher": "/web/src/main/resources/templates/.+\\.html$",
+      "action": {
+        "type": "command",
+        "command": "sh tools/kiro-hooks/template-lint.sh",
+        "timeout": 300
+      }
+    }
+  ]
+}
