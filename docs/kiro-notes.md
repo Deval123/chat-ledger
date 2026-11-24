@@ -2421,3 +2421,27 @@ report.
   - after the cancel, its page showed only "Cancelled" and its total;
   - the books still balanced.
 - **Unverified:** how long this upgrade interrupted the demo.
+
+## Task 13 - deployment of #40, #44 and #45 (2026-11-24)
+
+The release that RUNBOOK section 5's note "the next release, no migration" describes went to the VPS. The facts below come from the
+owner's report.
+
+- **Upgrade:** from `sha256:1d1b70b2…` (CI run #110) to
+  `sha256:a0376662809095ffddadd193262d8ec0a9f595629cb59081e3b6f082cb370d00`.
+  - The new image is from CI run #153 on commit `67e3408` (PR #46, which contains #40, #44 and #45). Its 6 jobs were green; the OWASP
+    check is skipped on a push.
+- **When:** 2026-11-24 at 11:32 Paris time (10:32 UTC).
+- **No migration:** the schema stays at V021.
+- **The `.env` copy:** `/opt/chat-ledger/.env.20261124-1029` (VPS time, UTC). The rollback is to `1d1b70b2…` (CI run #110).
+- **Interruption, measured from the owner's laptop** with one request a second to `/health`:
+  - 24 samples answered 502, from 11:32:35 to 11:33:00;
+  - the answer was 200 again at 11:33:01, so about 25 s;
+  - no other sample differed from 200.
+
+  The rehearsal of 2026-11-11 had measured about 25 to 30 s for an upgrade without a migration.
+- **`smoke.sh`:** 25 checks of 25, `Failures: 0`.
+- **Checked by hand on the live demo:**
+  - after Confirm on an order's page, the header showed "Paid" and "Still to pay" 0 XAF, and the notice said "Order status: Paid.";
+  - after Confirm on a payment's page, the status showed "Matched", and the notice said "Payment status: Matched.";
+  - both changed without a reload.
