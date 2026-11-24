@@ -53,7 +53,7 @@ What runs now, so a change starts from the right place. Update this table with e
 
 | Item | Value | Since |
 |---|---|---|
-| Release | `ghcr.io/deval123/chat-ledger@sha256:1d1b70b2e2792ad7adfe7388b19c701b752ecc6d831b321d969f6c3263a48aef` (CI run #110, commit `c5ebb4e`: the display fix of register 180, PR #35, schema V021) | 2026-11-22 |
+| Release | `ghcr.io/deval123/chat-ledger@sha256:a0376662809095ffddadd193262d8ec0a9f595629cb59081e3b6f082cb370d00` (CI run #153, commit `67e3408`: PRs #40, #44 and #45, merged up to #46, schema V021) | 2026-11-24 |
 | `APP_SECURITY_TRUSTED_PROXY_HOPS` | `1`, measured through the tunnel over IPv4 (section 4); the IPv6 repeat is still open | 2026-11-10 |
 | Public hostname | `ledger.nkap.dev` → `http://web:8080`; catch-all `http_status:404` | 2026-11-10 |
 | Zone settings of `nkap.dev` (D19) | Rocket Loader off, Bot Fight Mode off, Email Address Obfuscation off, Always Use HTTPS on, zone HSTS off; **zone-wide**, see section 2, step 3 | 2026-11-10 |
