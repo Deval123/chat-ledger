@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Commit guard",
+      "trigger": "PreToolUse",
+      "description": "Before a shell command: a git commit is refused (exit 2) if its message holds a co-author trailer or a session line, if it sets another author or committer address, or if the repository's user.email is not the owner's noreply address. Other commands pass.",
+      "matcher": "shell",
+      "action": {
+        "type": "command",
+        "command": "python3 tools/kiro-hooks/commit-guard.py",
+        "timeout": 10
+      }
+    }
+  ]
+}
