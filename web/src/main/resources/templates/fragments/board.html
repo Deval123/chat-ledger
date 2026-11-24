@@ -78,13 +78,14 @@
 
 <!--/* The answer to a card action for htmx: the card is replaced by a one-line result, the notice and the counts are updated. */-->
 <th:block th:fragment="done">
-  <!--/* autofocus: htmx focuses it after the swap, so the keyboard does not fall back to the top of the page. */-->
-  <article class="card done" tabindex="-1" autofocus>
-    <p th:text="#{${notice.key()}}">Done.</p>
-  </article>
+  <th:block th:replace="~{fragments/board :: doneCard}"></th:block>
   <p id="notice" hx-swap-oob="innerHTML"><span th:text="#{${notice.key()}}">Done.</span></p>
   <th:block th:replace="~{fragments/board :: chipsOob}"></th:block>
 </th:block>
+<!--/* autofocus: htmx focuses it after the swap, so the keyboard does not fall back to the top of the page. */-->
+<article th:fragment="doneCard" class="card done" tabindex="-1" autofocus>
+  <p th:text="#{${notice.key()}}">Done.</p>
+</article>
 
 <!--/* One card on the board or in a column page. Text from messages is printed only through th:text, cleaned by the display bean. */-->
 <!--/* Every button and link of a card ends with a visually hidden "for whom" (who, amount, when), so a screen reader's list of buttons

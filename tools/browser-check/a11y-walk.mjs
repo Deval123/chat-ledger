@@ -185,6 +185,53 @@ try {
     check('board: the focused result card is visible', (await focusVisible(page)).ok);
   }
 
+  // A decision on an order's page, by keyboard: Confirm a suggestion. The page's header (status and "Still to pay") follows the answer,
+  // without a reload, and agrees with a reload; the notice region keeps its node and says the result and the new status; the focus is on
+  // the result card; axe-core before and after.
+  let orderPage = null;
+  for (const listing of ['/app', '/app/columns/review', '/app/columns/awaiting']) {
+    await page.goto(`${base}${listing}`, { waitUntil: 'networkidle0' });
+    const links = await page.evaluate(() => [...new Set([...document.querySelectorAll('a[href^="/app/orders/"]')]
+      .map((a) => a.getAttribute('href')).filter((h) => /^\/app\/orders\/[0-9a-f-]{36}$/.test(h)))]);
+    for (const href of links.slice(0, 20)) {
+      await page.goto(`${base}${href}`, { waitUntil: 'networkidle0' });
+      if (await page.evaluate(() => document.querySelector('article.match form[action$="/confirm"] input[name="from"]') !== null)) {
+        orderPage = href;
+        break;
+      }
+    }
+    if (orderPage) break;
+  }
+  check('order page: one with a suggestion to confirm was found', orderPage !== null);
+  if (orderPage) {
+    await axe(page, 'order page');
+    const before = await page.evaluate(() => [document.getElementById('order-status').textContent.trim(),
+      (document.getElementById('order-balance') || { textContent: '' }).textContent.trim()]);
+    const notice = await page.evaluateHandle(() => document.getElementById('notice'));
+    if (await tabTo(page, "(el) => el.matches('article.match form[action$=\"/confirm\"] button')", 80, 'order page: Confirm')) {
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('.card.done', { timeout: 10000 }).catch(() => null);
+      await sleep(300);
+      const after = await page.evaluate(() => [document.getElementById('order-status').textContent.trim(),
+        (document.getElementById('order-balance') || { textContent: '' }).textContent.trim(),
+        document.getElementById('notice').textContent.trim()]);
+      check('order page: the status line changed without a reload', after[0] !== before[0], `${before[0]} -> ${after[0]}`);
+      check('order page: "Still to pay" changed without a reload', after[1] !== before[1], `${before[1]} -> ${after[1]}`);
+      check('order page: the notice region keeps its node after the action',
+        await page.evaluate((n) => n === document.getElementById('notice') && n.isConnected, notice));
+      check('order page: the notice region says the new status', after[2].includes(after[0]), after[2]);
+      check('order page: one live region, the notice', await page.evaluate(() => document.querySelectorAll('[role="status"]').length === 1
+        && document.querySelector('[role="status"]').id === 'notice'));
+      check('order page: the focus is on the result card', await page.evaluate(() => document.activeElement.matches('.card.done')));
+      await axe(page, 'order page after Confirm');
+      await page.goto(`${base}${orderPage}`, { waitUntil: 'networkidle0' });
+      const reloaded = await page.evaluate(() => [document.getElementById('order-status').textContent.trim(),
+        (document.getElementById('order-balance') || { textContent: '' }).textContent.trim()]);
+      check('order page: a reload shows the same status and "Still to pay"', reloaded[0] === after[0] && reloaded[1] === after[1],
+        `${after[0]} / ${after[1]} vs ${reloaded[0]} / ${reloaded[1]}`);
+    }
+  }
+
   // A scenario, by keyboard only: Tab to "Run both" of the first scenario, press Enter, land on the board with the notice.
   await page.goto(`${base}/app/demo`, { waitUntil: 'networkidle0' });
   await noSidewaysScroll(page, 'scenarios at 360 px');
