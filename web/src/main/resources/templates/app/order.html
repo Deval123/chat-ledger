@@ -7,13 +7,13 @@
 <th:block th:replace="~{fragments/layout :: top}"></th:block>
 <main id="main" tabindex="-1" th:with="title=${order.who != null ? @display.text(order.who, 100) : ''}">
   <h1 th:text="${#strings.isEmpty(title)} ? #{card.unknown.order} : ${title}">Customer</h1>
-  <p class="status" th:text="#{${'status.ORDER.' + order.status}(${@money.format(order.appliedMinor, tenant.scale, order.currency)}, ${order.totalMinor != null ? @money.format(order.totalMinor, tenant.scale, order.currency) : ''})}">Waiting</p>
+  <th:block th:replace="~{fragments/order :: status}"></th:block>
   <dl>
     <dt th:text="#{fact.total}">Total</dt>
     <dd th:text="${order.totalMinor != null} ? ${@money.format(order.totalMinor, tenant.scale, order.currency)} : #{fact.unknown}">5,000 XAF</dd>
     <!--/* A cancelled order owes nothing: its receivable was reversed (task 12b). The status line says Cancelled; no balance is shown. */-->
     <dt th:unless="${order.status == 'CANCELLED'}" th:text="#{fact.balance}">Still to pay</dt>
-    <dd th:unless="${order.status == 'CANCELLED'}" th:text="${@money.format(balance, tenant.scale, order.currency)}">0</dd>
+    <dd th:unless="${order.status == 'CANCELLED'}"><th:block th:replace="~{fragments/order :: balance}"></th:block></dd>
     <dt th:if="${order.ref != null}" th:text="#{fact.ref}">Order code</dt>
     <dd th:if="${order.ref != null}" th:text="${@display.text(order.ref, 64)}">A-1</dd>
     <dt th:if="${order.last4 != null}" th:text="#{fact.phone}">Phone</dt>

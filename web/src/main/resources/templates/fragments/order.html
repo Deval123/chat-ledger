@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<body>
+<!--/* The order's status line and what is still to pay. The order's page renders them once; the answer to a decision taken on that page
+     (Confirm, Reject) renders them again, read from the database, as out-of-band swaps of their inner text. They are not live regions:
+     a page has one, #notice (WCAG 4.1.3, A11yRules), and the answer says the new status there. Each text is written once, below. */-->
+<p th:fragment="status" class="status" id="order-status"><th:block th:replace="~{fragments/order :: statusText}"></th:block></p>
+<p th:fragment="statusOob" class="status" id="order-status" hx-swap-oob="innerHTML"><th:block th:replace="~{fragments/order :: statusText}"></th:block></p>
+<th:block th:fragment="statusText" th:text="#{${'status.ORDER.' + order.status}(${@money.format(order.appliedMinor, tenant.scale, order.currency)}, ${order.totalMinor != null ? @money.format(order.totalMinor, tenant.scale, order.currency) : ''})}">Waiting</th:block>
+
+<span th:fragment="balance" id="order-balance"><th:block th:replace="~{fragments/order :: balanceText}"></th:block></span>
+<span th:fragment="balanceOob" id="order-balance" hx-swap-oob="innerHTML"><th:block th:replace="~{fragments/order :: balanceText}"></th:block></span>
+<th:block th:fragment="balanceText" th:text="${@money.format(balance, tenant.scale, order.currency)}">0</th:block>
+
+<!--/* The htmx answer to a decision taken on the order's page: the board's one-line result; the notice (the page's one live region)
+     with the result and the order's new status; the chips; then the order's header, fresh. */-->
+<th:block th:fragment="decided">
+  <th:block th:replace="~{fragments/board :: doneCard}"></th:block>
+  <p id="notice" hx-swap-oob="innerHTML"
+     th:with="now=#{${'status.ORDER.' + order.status}(${@money.format(order.appliedMinor, tenant.scale, order.currency)}, ${order.totalMinor != null ? @money.format(order.totalMinor, tenant.scale, order.currency) : ''})}"><span th:text="#{${notice.key()}}">Done.</span> <span th:text="#{order.status.now(${now})}">Order status: Paid.</span></p>
+  <th:block th:replace="~{fragments/board :: chipsOob}"></th:block>
+  <th:block th:replace="~{fragments/order :: statusOob}"></th:block>
+  <th:block th:unless="${order.status == 'CANCELLED'}" th:replace="~{fragments/order :: balanceOob}"></th:block>
+</th:block>
+</body>
+</html>

@@ -141,7 +141,7 @@ public class BoardController {
         shell.fill(model, user);
         boolean seller = user.role() == Role.SELLER;
         OrderDetail order = board.order(user.tenantId(), id, seller).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-        long balance = order.totalMinor() == null ? 0 : Math.max(0, order.totalMinor() - order.appliedMinor());
+        long balance = balance(order);
         List<Explainer.Shown> shown = order.matches().stream().map(m -> explainer.explain(user.tenantId(), user.userId(), m, order.id(), m.otherId(),
                 m.otherAmountMinor() == null ? 0 : m.otherAmountMinor(), balance,
                 order.flags().stream().anyMatch(f -> f.pair() && m.otherId().equals(f.paymentId())))).toList();
@@ -156,6 +156,11 @@ public class BoardController {
         model.addAttribute("canDismiss", seller && dismissed.isEmpty() && ("UNPARSED".equals(order.status()) || "NEEDS_REVIEW".equals(order.status())));
         notice(model, n, null);
         return "app/order";
+    }
+
+    /** What the order's page shows as "Still to pay": the total less what active matches applied, never below zero. */
+    static long balance(BoardRepository.OrderDetail order) {
+        return order.totalMinor() == null ? 0 : Math.max(0, order.totalMinor() - order.appliedMinor());
     }
 
     @GetMapping("/app/payments/{id}")

@@ -47,10 +47,13 @@ public class ActionController {
     private final BooksCheck books;
     private final dev.chatledger.flags.FlagService flags;
     private final RecordActionsService records;
+    private final dev.chatledger.matching.MatchRepository matches;
 
     public ActionController(OrderIngestionService orders, PaymentIngestionService payments, MatchingService matching, OrderApprovalService approval,
                             BoardRepository board, RateLimits limits, Shell shell, BooksCheck books,
-                            dev.chatledger.flags.FlagService flags, RecordActionsService records) {
+                            dev.chatledger.flags.FlagService flags, RecordActionsService records,
+                            dev.chatledger.matching.MatchRepository matches) {
+        this.matches = matches;
         this.records = records;
         this.flags = flags;
         this.books = books;
@@ -106,18 +109,55 @@ public class ActionController {
 
     @PostMapping("/app/matches/{id}/confirm")
     @PreAuthorize("hasAuthority('CONFIRM_OR_OVERRIDE_MATCH')")
-    public String confirm(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id, HttpServletRequest request,
+    public String confirm(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id,
+                          @RequestParam(name = "from", required = false) String from, HttpServletRequest request,
                           HttpServletResponse response, Model model) {
+        boolean onOrderPage = fromOrderPage(from);
         throttle(response, limits.action(user.userId()));
-        return answer(request, model, user, applied(matching.confirm(user.tenantId(), id, user.userId()), Notice.MATCH_CONFIRMED), null, "fragments/board :: done");
+        Notice notice = applied(matching.confirm(user.tenantId(), id, user.userId()), Notice.MATCH_CONFIRMED);
+        return onOrderPage ? answerOnOrderPage(request, model, user, notice, id) : answer(request, model, user, notice, null, "fragments/board :: done");
     }
 
     @PostMapping("/app/matches/{id}/reject")
     @PreAuthorize("hasAuthority('CONFIRM_OR_OVERRIDE_MATCH')")
-    public String reject(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id, HttpServletRequest request,
+    public String reject(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id,
+                         @RequestParam(name = "from", required = false) String from, HttpServletRequest request,
                          HttpServletResponse response, Model model) {
+        boolean onOrderPage = fromOrderPage(from);
         throttle(response, limits.action(user.userId()));
-        return answer(request, model, user, decided(matching.reject(user.tenantId(), id, user.userId()), Notice.MATCH_REJECTED), null, "fragments/board :: done");
+        Notice notice = decided(matching.reject(user.tenantId(), id, user.userId()), Notice.MATCH_REJECTED);
+        return onOrderPage ? answerOnOrderPage(request, model, user, notice, id) : answer(request, model, user, notice, null, "fragments/board :: done");
+    }
+
+    /** {@code from} is absent (the board) or exactly {@code order} (an order's page); anything else is refused before any decision. */
+    private static boolean fromOrderPage(String from) {
+        if (from == null) {
+            return false;
+        }
+        if (!"order".equals(from)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
+        }
+        return true;
+    }
+
+    /**
+     * The answer to a decision taken on an order's page. The order is the match's own, read from the database for the tenant (never from
+     * the request). Without htmx, back to that page with the notice; with htmx, the one-line result and the page's header, fresh. A match
+     * that cannot be found is answered as on the board.
+     */
+    private String answerOnOrderPage(HttpServletRequest request, Model model, TenantUserDetails user, Notice notice, UUID matchId) {
+        java.util.Optional<BoardRepository.OrderDetail> order = matches.find(user.tenantId(), matchId)
+                .flatMap(m -> board.order(user.tenantId(), m.orderId(), false));
+        if (order.isEmpty()) {
+            return answer(request, model, user, notice, null, "fragments/board :: done");
+        }
+        if (!"true".equals(request.getHeader("HX-Request"))) {
+            return "redirect:/app/orders/" + order.get().id() + "?n=" + notice.name();
+        }
+        model.addAttribute("order", order.get());
+        model.addAttribute("balance", BoardController.balance(order.get()));
+        answer(request, model, user, notice, null, "fragments/board :: done");
+        return "fragments/order :: decided";
     }
 
     @PostMapping("/app/matches/manual")
