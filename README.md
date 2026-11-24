@@ -96,6 +96,22 @@ GRANT EXECUTE ON FUNCTION provision_tenant(text, text, text, text), provision_us
 -- and a login role that is a member of it, with a password you generate
 ```
 
+## Polish, cancel and dismiss (task 12)
+
+- **12a** (PRs #29 and #30, deployed 2026-11-15): accessibility fixes on the demo flow, checked in CI by a browser job; clearer money
+  labels; French scaffolding, with the demo path translated for review.
+- **12b, first pull request** (PR #33, migration V021, deployed 2026-11-21). Both actions are the seller's only, each with a check
+  page, and neither can be undone.
+  - **Cancel an order.** An order waiting for payment, with no active match, becomes `CANCELLED`. Its `ORDER_ACCEPTED` posting is
+    reversed by a new reversal entry (the original entry is never changed), and its open suggestions are rejected.
+  - **Dismiss a record.** An unparsed order or payment, or an order waiting for review, is set aside: an append-only dismissal row,
+    and the record leaves the board. A dismissed order can no longer be approved.
+  - **The "books balance" check** (`web/src/main/java/dev/chatledger/board/BooksCheck.java`) has two more lines: exactly one live
+    acceptance posting per payable order (`ACCEPTANCE_POSTINGS`), and nothing left in the books for a cancelled order
+    (`CANCELLED_CLEAR`).
+- Deferred until after judging: correcting an order's total (the second pull request of 12b, migration V022; design register 179),
+  and tasks 10 and 11, described below.
+
 ## Future work (not in the contest build)
 
 Two tasks of the plan are not built, on purpose. Both requirements are conditional, so the build as it stands meets them by having
