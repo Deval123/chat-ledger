@@ -414,7 +414,7 @@ retires.
 - **Checks:** `smoke.sh` passed 25 of 25. The interruption was not measured: the probe was not started.
 - **The CI rehearsal** now starts from this release (step "Rehearse the upgrade from the deployed release").
 
-### Release note: the next release, no migration (#40, #44, #45; not deployed yet)
+### Release note: the next release, no migration (#40, #44, #45; deployed 2026-11-24 as `a0376662…`)
 **What it is.** Three changes merged into `main` since the deployed release (`c5ebb4e`, CI run #110):
 - **#40** (`94f4b7d`): when the engine stores a suggestion for a pair at the moment the seller matches the same pair by hand, the seller
   gets a refusal sentence ("Not matched: a suggestion for this pair arrived at the same moment. Nothing changed. Look again and
