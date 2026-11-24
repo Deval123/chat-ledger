@@ -232,6 +232,47 @@ try {
     }
   }
 
+  // The same on a payment's page: Confirm a suggestion; the status line follows the answer and agrees with a reload; the notice keeps its
+  // node and says the new status; one live region; the focus on the result card; axe-core before and after.
+  let paymentPage = null;
+  for (const listing of ['/app', '/app/columns/review', '/app/columns/awaiting']) {
+    await page.goto(`${base}${listing}`, { waitUntil: 'networkidle0' });
+    const links = await page.evaluate(() => [...new Set([...document.querySelectorAll('a[href^="/app/payments/"]')]
+      .map((a) => a.getAttribute('href')).filter((h) => /^\/app\/payments\/[0-9a-f-]{36}$/.test(h)))]);
+    for (const href of links.slice(0, 20)) {
+      await page.goto(`${base}${href}`, { waitUntil: 'networkidle0' });
+      if (await page.evaluate(() => document.querySelector('article.match form[action$="/confirm"] input[name="from"][value="payment"]') !== null)) {
+        paymentPage = href;
+        break;
+      }
+    }
+    if (paymentPage) break;
+  }
+  check('payment page: one with a suggestion to confirm was found', paymentPage !== null);
+  if (paymentPage) {
+    await axe(page, 'payment page');
+    const before = await page.evaluate(() => document.getElementById('payment-status').textContent.trim());
+    const notice = await page.evaluateHandle(() => document.getElementById('notice'));
+    if (await tabTo(page, "(el) => el.matches('article.match form[action$=\"/confirm\"] button')", 80, 'payment page: Confirm')) {
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('.card.done', { timeout: 10000 }).catch(() => null);
+      await sleep(300);
+      const [status, said] = await page.evaluate(() => [document.getElementById('payment-status').textContent.trim(),
+        document.getElementById('notice').textContent.trim()]);
+      check('payment page: the status line changed without a reload', status !== before, `${before} -> ${status}`);
+      check('payment page: the notice region keeps its node after the action',
+        await page.evaluate((n) => n === document.getElementById('notice') && n.isConnected, notice));
+      check('payment page: the notice region says the new status', said.includes(status), said);
+      check('payment page: one live region, the notice', await page.evaluate(() => document.querySelectorAll('[role="status"]').length === 1
+        && document.querySelector('[role="status"]').id === 'notice'));
+      check('payment page: the focus is on the result card', await page.evaluate(() => document.activeElement.matches('.card.done')));
+      await axe(page, 'payment page after Confirm');
+      await page.goto(`${base}${paymentPage}`, { waitUntil: 'networkidle0' });
+      const reloaded = await page.evaluate(() => document.getElementById('payment-status').textContent.trim());
+      check('payment page: a reload shows the same status', reloaded === status, `${status} vs ${reloaded}`);
+    }
+  }
+
   // A scenario, by keyboard only: Tab to "Run both" of the first scenario, press Enter, land on the board with the notice.
   await page.goto(`${base}/app/demo`, { waitUntil: 'networkidle0' });
   await noSidewaysScroll(page, 'scenarios at 360 px');

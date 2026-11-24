@@ -7,7 +7,7 @@
 <th:block th:replace="~{fragments/layout :: top}"></th:block>
 <main id="main" tabindex="-1" th:with="title=${payment.who != null ? @display.text(payment.who, 100) : ''}">
   <h1 th:text="${#strings.isEmpty(title)} ? #{card.unknown.payment} : ${title}">Sender</h1>
-  <p class="status" th:text="#{${'status.PAYMENT.' + payment.status}('', '')}">Received</p>
+  <th:block th:replace="~{fragments/payment :: status}"></th:block>
   <dl>
     <dt th:if="${payment.hasAmount}" th:text="#{fact.amount}">Amount</dt>
     <dd th:if="${payment.hasAmount}" th:text="${@money.format(payment.amountMinor, tenant.scale, payment.currency)}">5,000 XAF</dd>
