@@ -85,10 +85,25 @@ test must fail, and the file is restored from a copy (several headings in `docs/
 182**, numbered in order with no gap. Each row gives the defense weakened or not provided, why, and the compensation. The design's
 sections for tasks 5 to 9 and 13 name the items that belong to them.
 
+## Hooks
+
+**The hooks were added after task 13, during task 14** (2026-11-24). None of them ran while tasks 1 to 13 were built. There are 3 hook files in `.kiro/hooks/`, with 4 hooks between them, and their scripts are in
+`tools/kiro-hooks/`:
+
+| File | Trigger | What it does |
+|---|---|---|
+| `.kiro/hooks/template-lint.json` | `PostFileSave` on a `.html` under `web/src/main/resources/templates/` | runs `TemplateLintTest` offline (`tools/kiro-hooks/template-lint.sh`); exit 1 with the failures when it fails |
+| `.kiro/hooks/migration-reminder.json` (2 hooks) | `PostFileCreate` and `PostFileSave` on a `V*.sql` under `web/src/main/resources/db/migration/` | adds a reminder to the agent's context: a release with a migration needs its release note in `deploy/RUNBOOK.md` section 5, and the upgrade rehearsal `deploy/test-upgrade.sh` |
+| `.kiro/hooks/commit-guard.json` | `PreToolUse` on the shell tool | refuses a `git commit` (exit 2) whose message holds a co-author trailer or a session line, that sets another author or committer address, or whose repository's `user.email` is not the owner's noreply address (`tools/kiro-hooks/commit-guard.py`) |
+
+They are not the set suggested in `tasks.md` ("Kiro workflow to document as you go"). The owner chose three rules the project already
+had. Limits:
+- The commit guard sees only commands run through the agent's shell tool; a commit typed in a terminal does not pass through it.
+- It lets a command through if its input is not valid JSON (fail open), so a broken payload never blocks every shell command.
+- The template check runs Maven offline, so it needs the dependencies already in the local Maven repository.
+
 ## Not in the repository
 
-- **No Kiro hooks.** There is no `.kiro/hooks/` directory. `tasks.md` ("Kiro workflow to document as you go") lists a suggested set
-  of hooks; none of them was created.
 - **No MCP configuration.** There is no `.kiro/settings/` directory and no `mcp.json` anywhere in the repository.
 
 ## How it was counted
@@ -100,4 +115,5 @@ sections for tasks 5 to 9 and 13 name the items that belong to them.
 - **Mutation sections:** headings of `docs/kiro-notes.md` that contain "Mutation checks" or "Mutation pass"; headings of the design
   stops that contain "mutation"; `pom.xml` files searched for "pitest" or "mutation".
 - **Register:** rows of `design.md` that start with `| <number> |`. There are 182 rows, numbered 1 to 182 in file order.
-- **Hooks and MCP:** tracked files searched for `.kiro/hooks`, `.kiro/settings` and `mcp.json`, and the working tree for `mcp.json`.
+- **Hooks:** the `.json` files in `.kiro/hooks/` (files), and the entries of their `hooks` arrays (hooks).
+- **MCP:** tracked files searched for `.kiro/settings` and `mcp.json`, and the working tree for `mcp.json`.
