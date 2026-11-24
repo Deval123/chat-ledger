@@ -194,6 +194,27 @@ class MatchingBooksPropertyIT {
         }
     }
 
+    /**
+     * The rejection every sequence starts with, so that the coverage of "a suggestion was rejected" is certain and not left to the draw
+     * (a run of 30 sequences had none about once in 25 runs; seed -5166784021751400649). An order with a reference of its own, a payment
+     * that mirrors it recorded by a helper (so it is only ever suggested, never matched automatically), then the generator's own
+     * {@link Reject} on that suggestion. The random steps then run with the pair declined.
+     */
+    record RejectionFirst() implements Action<World> {
+        @Override
+        public World run(World world) {
+            String reference = "RF-" + (world.counter++);
+            UUID order = world.live.orders.ingest(world.tenant, world.seller, id(), MatchingFixture.orderText(reference, NAMES[0], PHONES[0], 5000)).orderId();
+            world.placed.add(new Placed(reference, 0, 5000));
+            UUID payment = world.live.payments.ingest(world.tenant, world.helper, id(), world.live.sms(5000, NAMES[0], PHONES[0], reference)).paymentId();
+            List<UUID> suggestions = world.ids("SELECT id FROM match WHERE tenant_id = ? AND state = 'SUGGESTED' ORDER BY id");
+            List<UUID> ofThePair = world.ids("SELECT id FROM match WHERE tenant_id = ? AND state = 'SUGGESTED' AND order_id = '" + order
+                    + "' AND payment_id = '" + payment + "'");
+            assertThat(ofThePair).as("the helper's mirror payment is stored as a suggestion of its order").hasSize(1);
+            return new Reject(suggestions.indexOf(ofThePair.get(0))).run(world);
+        }
+    }
+
     record Manual(int order, int payment) implements Action<World> {
         @Override
         public World run(World world) {
@@ -324,14 +345,13 @@ class MatchingBooksPropertyIT {
     @Property(tries = 30)
     void whatever_the_sequence_the_books_stay_right_and_a_repeated_decision_changes_nothing(@ForAll("sequences") ActionSequence<World> sequence) {
         World world = new World();
+        // A rejection first, checked like every step, so the rejection flow is covered in every try (RejectionFirst).
+        new RejectionFirst().run(world);
+        MatchInvariants.assertHoldStrict(world.tenant);
+        noAutomaticMatchForADeclinedPair(world);
         // Strict: every order is recorded by ingestion, which posts it, so every payable order has its acceptance posting (task 12b).
         sequence.withInvariant("the books", w -> MatchInvariants.assertHoldStrict(w.tenant))
-                .withInvariant("no automatic match against a pair the seller turned down", w -> {
-                    for (List<UUID> pair : w.declined) {
-                        assertThat(MatchingFixture.count("SELECT count(*) FROM match WHERE tenant_id = ? AND state = 'AUTO' AND order_id = '" + pair.get(0)
-                                + "' AND payment_id = '" + pair.get(1) + "'", w.tenant, null)).as("an automatic match for a declined pair").isZero();
-                    }
-                })
+                .withInvariant("no automatic match against a pair the seller turned down", MatchingBooksPropertyIT::noAutomaticMatchForADeclinedPair)
                 .run(world);
         MatchInvariants.assertHoldStrict(world.tenant);
         // What the sequences really did, so that the property cannot pass by doing nothing. Each flow must happen at least once in the run;
@@ -355,6 +375,13 @@ class MatchingBooksPropertyIT {
         Statistics.label("a match paid less than the order total").collect(had(world, "SELECT count(*) FROM match m JOIN orders o ON o.id = m.order_id "
                         + "WHERE m.tenant_id = ? AND m.amount_minor < o.total_minor"))
                 .coverage(c -> c.check(true).percentage(p -> p > 0.0));
+    }
+
+    private static void noAutomaticMatchForADeclinedPair(World w) {
+        for (List<UUID> pair : w.declined) {
+            assertThat(MatchingFixture.count("SELECT count(*) FROM match WHERE tenant_id = ? AND state = 'AUTO' AND order_id = '" + pair.get(0)
+                    + "' AND payment_id = '" + pair.get(1) + "'", w.tenant, null)).as("an automatic match for a declined pair").isZero();
+        }
     }
 
     private static boolean had(World world, String sql) {
