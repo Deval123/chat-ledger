@@ -585,24 +585,6 @@ Full proposal and the owner's answers: `task-4-design-stop.md`. What was built, 
 - **Logging.** `IngestionEvents` takes ids, enums and counts only. `ParsedOrder`, `Phone`, `OrderRepository.Stored` and the others
   print no text, name or number. `ExtractionResult.Failure` carries an enum (`FailureReason`), never text.
 
-### Trade-offs and weakened defenses
-
-| # | Defense weakened or not provided | Why | Compensation |
-|---|---|---|---|
-| 1 | The RLS tenant setting can be set by any SQL the application role runs | A plain session variable is the only practical per-transaction channel | Parameterised statements only, a test against string-built SQL, least privilege; application scoping stays the primary control |
-| 2 | Owner and superuser bypass RLS (`ENABLE`, not `FORCE`) | `FORCE` would put Flyway and the definer functions under the policies | Application role is not owner, superuser or `BYPASSRLS`; migration role used by Flyway only; catalog test |
-| 3 | Three `SECURITY DEFINER` functions (`resolve_tenant_for_login`, `provision_tenant`, `provision_user`) | Login lookup and provisioning need access the application role must not have | Fixed `search_path`, minimal return values, `EXECUTE` limited to named roles, an allowlist test |
-| 4 | Workspace code is public | Needed to pick the tenant at login | Identical responses, equalised work, no listing endpoint |
-| 5 | In-memory rate limiter | No shared store on the target host | Bounded cache, `RateLimiter` interface, limits named above, revisit at deployment |
-| 6 | In-memory sessions, no concurrent-session cap | Single node | Idle and absolute timeouts, status re-check every 60 s, restart signs out (safe direction) |
-| 7 | No MFA, no password reset, no remember-me | Out of scope for task 3 | Argon2id, throttling, password policy; reset is an operator action until a later task |
-| 8 | No breached-password check | It would send data off the server | Length rule and common-password list |
-| 9 | Argon2 memory per login is a denial-of-service lever | Memory-hardness is the point | Four at once, IP and account throttles |
-| 10 | `Secure` cookie off in the dev profile | Plain-HTTP localhost | Startup refuses it under `prod` |
-| 11 | CSP has no report endpoint; HSTS has no preload | Nothing to receive reports yet; preload is hard to undo | Revisit at deployment |
-| 12 | Existing tests hard-code throwaway passwords for ephemeral containers, against the steering (paid down in task 3: all test and CI credentials are now random per run) | Written before this task | Generate random credentials per run in task 3 |
-| 13 | Task 2.3 triggers can still be dropped by the owner | Inherent to PostgreSQL | Same compensation as 2 |
-
 ### Open conflicts in the spec
 
 - **Requirement 9.6 versus 4.2: resolved.** "Delete its data" now means deleting the tenant's
@@ -821,12 +803,29 @@ tunnel. The operator's steps are in `deploy/RUNBOOK.md`. What was built:
 - Real operator SMS formats vary: mitigated by data-driven templates.
 - Free hosting may sleep: mention it in the testing notes and keep a short warm-up.
 - Scope: the board, simulators, and ledger must work end to end before any extra feature.
+
+### Trade-offs and weakened defenses
+
+| # | Defense weakened or not provided | Why | Compensation |
+|---|---|---|---|
+| 1 | The RLS tenant setting can be set by any SQL the application role runs | A plain session variable is the only practical per-transaction channel | Parameterised statements only, a test against string-built SQL, least privilege; application scoping stays the primary control |
+| 2 | Owner and superuser bypass RLS (`ENABLE`, not `FORCE`) | `FORCE` would put Flyway and the definer functions under the policies | Application role is not owner, superuser or `BYPASSRLS`; migration role used by Flyway only; catalog test |
+| 3 | Three `SECURITY DEFINER` functions (`resolve_tenant_for_login`, `provision_tenant`, `provision_user`) | Login lookup and provisioning need access the application role must not have | Fixed `search_path`, minimal return values, `EXECUTE` limited to named roles, an allowlist test |
+| 4 | Workspace code is public | Needed to pick the tenant at login | Identical responses, equalised work, no listing endpoint |
+| 5 | In-memory rate limiter | No shared store on the target host | Bounded cache, `RateLimiter` interface, limits named above, revisit at deployment |
+| 6 | In-memory sessions, no concurrent-session cap | Single node | Idle and absolute timeouts, status re-check every 60 s, restart signs out (safe direction) |
+| 7 | No MFA, no password reset, no remember-me | Out of scope for task 3 | Argon2id, throttling, password policy; reset is an operator action until a later task |
+| 8 | No breached-password check | It would send data off the server | Length rule and common-password list |
+| 9 | Argon2 memory per login is a denial-of-service lever | Memory-hardness is the point | Four at once, IP and account throttles |
+| 10 | `Secure` cookie off in the dev profile | Plain-HTTP localhost | Startup refuses it under `prod` |
+| 11 | CSP has no report endpoint; HSTS has no preload | Nothing to receive reports yet; preload is hard to undo | Revisit at deployment |
+| 12 | Existing tests hard-code throwaway passwords for ephemeral containers, against the steering (paid down in task 3: all test and CI credentials are now random per run) | Written before this task | Generate random credentials per run in task 3 |
+| 13 | Task 2.3 triggers can still be dropped by the owner | Inherent to PostgreSQL | Same compensation as 2 |
 | 14 | The per-account sign-in limit can be used to lock a real user out for up to 15 minutes (anyone who knows a workspace code and email can spend the five attempts) | The alternative is no throttle on guessing; a hard lockout would be worse for the same reason | Tokens return over time (one per 3 minutes), the limit is per account and does not touch others, a successful sign-in resets it, and the operator can see the pattern in the security log (`rate limit hit`); no permanent lockout |
 | 15 | The sign-in limits count the socket address, not `X-Forwarded-For` | Trusting the header blindly would let anyone choose their own key | Test proves a forged header does not change the key; behind a proxy all users share one address until deployment names the proxy (task 13) and the per-IP numbers are revisited |
 | 16 | Chunked and form bodies up to the limit are held in memory (at most 64 KiB, 16 KiB for JSON, 4 KiB for login) | A check on `Content-Length` alone is bypassed by a body with no length | Hard caps, 413 before the application sees anything, concurrent requests bounded by the container's thread pool |
 | 17 | Cache-Control is the framework's `no-store` for every response, static files included | There are no static files yet (task 8) | Task 8 must serve versioned static files with their own cache headers and add a test |
 | 18 | Raw non-ASCII bytes and control characters in forms, queries and JSON are refused outright | "Reject, do not guess": servers otherwise repair them silently and two parts of the system then disagree | A client that sends them gets 400; ordinary browsers never do |
-
 | 19 | Raw message text is stored verbatim in `orders.raw_text` and holds names and phone numbers | Needed for audit and requirement 1.5 | Tenant isolation, never logged, never printed by any value type, escaped on output (tested end to end), deletion by requirement 9.6 in a later task (the column is NOT NULL, so deletion will blank it) |
 | 20 | Phone hash is HMAC under a key derived from `app.secret`, not Argon2 and not a salt in the database. If the secret and the database both leak, numbers can be recovered by brute force; rotating the secret changes every hash and needs a rehash job (not built) | A phone number has about 10^9 possibilities, so any hash of it is brute-forceable by someone who holds everything needed to recompute it; the key is the only thing kept out | Key never in the database, per-tenant keys, the number itself never stored, last 4 digits only on display. V003's comment is corrected by `COMMENT ON COLUMN` in V014 |
 | 21 | Same number with and without a country code is two customers; customers without a phone are not merged | No country logic, and no safe key without a phone | Named in the code and tests; tasks 5 and 6 reuse the same function |

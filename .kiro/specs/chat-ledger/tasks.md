@@ -140,6 +140,9 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
     bounds, V016, `MatchRepository`, `ChartOfAccounts`, `appendWithin`. Design: `task-6-design-stop.md`.)
   - [x] 6.2 Auto, suggested, partial, over-payment flows with ledger postings. (Stop 2b: `MatchingService`, `Postings`, `MatchTrigger`, V017, the `ORDER_ACCEPTED` posting at ingestion.)
   - [x] 6.3 Overrides: confirm, reject, manual match, unmatch with audit log. (Stop 3: `confirm`, `reject`, `matchManually`, `unmatch` with `reverseWithin`, `markUnmatched`, `reopen`, `rematch`; seller only, who and when audited.)
+    - Concurrency fix (PR #40, register 182; merged 2026-11-22): a manual match that races the engine storing a suggestion for the
+      same pair is refused with `PAIR_CHANGED`, nothing written, instead of failing with an error. Not deployed yet: the release in
+      RUNBOOK "Deployed state" (CI run #110, commit `c5ebb4e`) predates it.
   - [x] 6.4 Property-based tests: idempotency, never over-assign amounts. (`MatchingBooksPropertyIT` with `MatchInvariants`.)
   - _Requirements: 3, 4_
 
@@ -216,9 +219,12 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
 
 - [x] 12. Polish and accessibility
   - **Done, except "correct a total", which is deferred until after judging with its own stop 2 (register 179).**
-    - 12a: accessibility and labels (PR #29), French scaffolding (PR #30); deployed 2026-11-15.
-    - 12b, first pull request: cancel an order and dismiss a record, migration V021 (PR #33); deployed 2026-11-21.
-    - The display fix for a cancelled order's page (register 180, PR #35) is to be deployed before 2026-11-27, without a migration.
+    - 12a: accessibility and labels (PR #29), French scaffolding (PR #30); merged and deployed 2026-11-15 (PR #32 records it).
+    - 12b, first pull request: cancel an order and dismiss a record, migration V021 (PR #33); merged and deployed 2026-11-21 (PR #35
+      records it).
+    - The display fix for a cancelled order's page (register 180, PR #35) was deployed on 2026-11-22, without a migration: CI run #110,
+      commit `c5ebb4e` (RUNBOOK "Deployed state"; PR #38 records it).
+    - 12b, second pull request (correct a total, migration V022): deferred until after judging (register 179); not started.
   - Visual design pass, keyboard use, contrast, French string scaffolding.
   - **Cancel, dismiss and correct a total** (task 8, D7): cancel an open order (a `CANCELLED` transition with the reversal of its
     `ORDER_ACCEPTED` through `reverseWithin`, refused while a match is active), dismiss an unread record, and correct a total stated by
@@ -250,8 +256,10 @@ Work top to bottom. Each task ends with passing tests. Reference the requirement
 
 - [ ] 14. Submission material
   - Under-3-minute video, write-up of how Kiro was used, README, blog post, social post.
-  - **State (2026-11-21): not started.** The owner writes the outline of the write-up and the video script; their facts are then
-    checked against the repository. Material to draw on: `docs/kiro-notes.md` and the section below. The README has the current
+  - **State (2026-11-22): in progress.** Done: the first documentation pull request (README state of TLS and the proxy, what task 12
+    delivers, this file's states, and `docs/kiro-usage.md`, the inventory of what the repository holds). To do: the video and the
+    write-up for the contest. The owner writes the outline of the write-up and the video script; their facts are then checked against
+    the repository. Material to draw on: `docs/kiro-notes.md` and the section below. The README has the current
     future-work list (tasks 10 and 11). Deadline: 2026-12-04, 14:00 PT.
 
 ## Kiro workflow to document as you go
