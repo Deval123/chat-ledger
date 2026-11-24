@@ -112,10 +112,10 @@ public class ActionController {
     public String confirm(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id,
                           @RequestParam(name = "from", required = false) String from, HttpServletRequest request,
                           HttpServletResponse response, Model model) {
-        boolean onOrderPage = fromOrderPage(from);
+        Origin origin = origin(from);
         throttle(response, limits.action(user.userId()));
         Notice notice = applied(matching.confirm(user.tenantId(), id, user.userId()), Notice.MATCH_CONFIRMED);
-        return onOrderPage ? answerOnOrderPage(request, model, user, notice, id) : answer(request, model, user, notice, null, "fragments/board :: done");
+        return answerFrom(origin, request, model, user, notice, id);
     }
 
     @PostMapping("/app/matches/{id}/reject")
@@ -123,21 +123,36 @@ public class ActionController {
     public String reject(@AuthenticationPrincipal TenantUserDetails user, @PathVariable UUID id,
                          @RequestParam(name = "from", required = false) String from, HttpServletRequest request,
                          HttpServletResponse response, Model model) {
-        boolean onOrderPage = fromOrderPage(from);
+        Origin origin = origin(from);
         throttle(response, limits.action(user.userId()));
         Notice notice = decided(matching.reject(user.tenantId(), id, user.userId()), Notice.MATCH_REJECTED);
-        return onOrderPage ? answerOnOrderPage(request, model, user, notice, id) : answer(request, model, user, notice, null, "fragments/board :: done");
+        return answerFrom(origin, request, model, user, notice, id);
     }
 
-    /** {@code from} is absent (the board) or exactly {@code order} (an order's page); anything else is refused before any decision. */
-    private static boolean fromOrderPage(String from) {
+    /** Where a decision on a match was taken: the board, an order's page or a payment's page. */
+    private enum Origin { BOARD, ORDER, PAYMENT }
+
+    /**
+     * {@code from} is absent (the board), or exactly {@code order} (an order's page) or {@code payment} (a payment's page); anything else
+     * is refused before any decision.
+     */
+    private static Origin origin(String from) {
         if (from == null) {
-            return false;
+            return Origin.BOARD;
         }
-        if (!"order".equals(from)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
-        }
-        return true;
+        return switch (from) {
+            case "order" -> Origin.ORDER;
+            case "payment" -> Origin.PAYMENT;
+            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
+        };
+    }
+
+    private String answerFrom(Origin origin, HttpServletRequest request, Model model, TenantUserDetails user, Notice notice, UUID matchId) {
+        return switch (origin) {
+            case BOARD -> answer(request, model, user, notice, null, "fragments/board :: done");
+            case ORDER -> answerOnOrderPage(request, model, user, notice, matchId);
+            case PAYMENT -> answerOnPaymentPage(request, model, user, notice, matchId);
+        };
     }
 
     /**
@@ -158,6 +173,21 @@ public class ActionController {
         model.addAttribute("balance", BoardController.balance(order.get()));
         answer(request, model, user, notice, null, "fragments/board :: done");
         return "fragments/order :: decided";
+    }
+
+    /** The same for a payment's page: the payment is the match's own, read for the tenant; the answer carries its status line, fresh. */
+    private String answerOnPaymentPage(HttpServletRequest request, Model model, TenantUserDetails user, Notice notice, UUID matchId) {
+        java.util.Optional<BoardRepository.PaymentDetail> payment = matches.find(user.tenantId(), matchId)
+                .flatMap(m -> board.payment(user.tenantId(), m.paymentId(), false));
+        if (payment.isEmpty()) {
+            return answer(request, model, user, notice, null, "fragments/board :: done");
+        }
+        if (!"true".equals(request.getHeader("HX-Request"))) {
+            return "redirect:/app/payments/" + payment.get().id() + "?n=" + notice.name();
+        }
+        model.addAttribute("payment", payment.get());
+        answer(request, model, user, notice, null, "fragments/board :: done");
+        return "fragments/payment :: decided";
     }
 
     @PostMapping("/app/matches/manual")
