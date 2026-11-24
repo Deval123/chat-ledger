@@ -120,8 +120,16 @@ neither part:
   or unescaped output; a test reads every template.
 - Request bodies are limited (4 KiB login, 16 KiB JSON, 64 KiB otherwise) and must be clean UTF-8 without control characters.
 - Secrets come from environment variables only. `mvn -Psecurity-check verify` checks dependencies for known vulnerabilities.
-- Not yet in place: TLS and trusted-proxy settings (deployment, task 13), so HSTS and per-address limits behind a proxy need
-  that step.
+- The public demo (`deploy/RUNBOOK.md`, "Deployed state" and sections 2 and 4) is reached over HTTPS through Cloudflare and the
+  project's own tunnel (`cloudflared` in `deploy/compose.yaml`). No container publishes a port (`deploy/check-host.sh` checks it), and
+  plain HTTP is redirected to HTTPS with a 301 (Cloudflare's "Always Use HTTPS"). The application sends HSTS for its own hostname
+  (one year, `includeSubDomains`, no preload), and `deploy/smoke.sh` checks the header; the zone's own HSTS setting stays off,
+  because the zone is shared with another project. The trusted proxy setting `APP_SECURITY_TRUSTED_PROXY_HOPS` is `1`, measured
+  through the real tunnel on 2026-11-10, so the per-address limits use the entry the tunnel appends to `X-Forwarded-For`, not one a
+  client wrote.
+- Not in place: TLS between the tunnel and the application (`cloudflared` reaches `http://web:8080` on an internal Docker network
+  with no route out); the hops measurement over IPv6 (done over IPv4 only, still open); a Cloudflare rule scoped to `ledger.nkap.dev`
+  (the zone settings were changed zone-wide, RUNBOOK section 2, step 3). A local run (Quick start) is plain HTTP.
 - Order text from chat messages is untrusted data: it is re-validated, parsed by a strict deterministic parser (no pattern is built
   from it), stored with bound parameters only, never logged, and escaped on output. Phone numbers are stored only as a keyed hash plus
   the last four digits.
