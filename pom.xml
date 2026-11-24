@@ -223,7 +223,7 @@
           <artifactId>maven-surefire-plugin</artifactId>
           <version>${maven-surefire-plugin.version}</version>
           <configuration>
-            <!-- Required so jqwik engine and JUnit 5 both run -->
+            <!-- Required so jqwik engine and JUnit Jupiter 6 both run -->
             <useModulePath>false</useModulePath>
           </configuration>
         </plugin>
