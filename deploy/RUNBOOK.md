@@ -414,6 +414,73 @@ retires.
 - **Checks:** `smoke.sh` passed 25 of 25. The interruption was not measured: the probe was not started.
 - **The CI rehearsal** now starts from this release (step "Rehearse the upgrade from the deployed release").
 
+### Release note: the next release, no migration (#40, #44, #45; not deployed yet)
+**What it is.** Three changes merged into `main` since the deployed release (`c5ebb4e`, CI run #110):
+- **#40** (`94f4b7d`): when the engine stores a suggestion for a pair at the moment the seller matches the same pair by hand, the seller
+  gets a refusal sentence ("Not matched: a suggestion for this pair arrived at the same moment. Nothing changed. Look again and
+  decide."), not an error page. `MatchingService` maps that one unique violation of `uq_match_open_pair` to `PAIR_CHANGED`. Nothing is
+  written, and the index is unchanged (register 182).
+- **#44** (`ede9c45`): on an order's page, Confirm and Reject update the status line and "Still to pay" without a reload.
+- **#45**: the same for the status line of a payment's page.
+
+Also in the image since `c5ebb4e`: the `Dockerfile`'s build stage seeds Maven from CI's cache (#39). The runtime stage and its base
+digest are unchanged.
+
+**The candidate image is not built yet.** It is the image that CI pushes for a commit on `main` that contains #45; see "Find the
+digest" below. The image carries its commit in a label, so every commit on `main` has its own digest.
+- **Rolls back to** the release in "Deployed state": `1d1b70b2…`, CI run #110.
+
+**What it changes, and what it does not.**
+- **No migration.** The schema stays at V021. Skip the `stop refresh` / `migrate` lines. CI's step "Rehearse the upgrade from the
+  deployed release" starts from `1d1b70b2…` and accepts a release without a migration (register 178).
+- **`compose.yaml`, `env.example`, `smoke.sh` and `check-image.sh` are unchanged** since `c5ebb4e`. `.env` changes only in
+  `CHAT_LEDGER_DIGEST`.
+- **`smoke.sh` is unchanged** (25 checks). The four texts it reads ("Nothing here is real.", "Demo, made-up data", "The payment was
+  sent.", "The books balance.") are the same in this release.
+- **New texts:**
+  - the refusal above;
+  - after a decision on an order's or a payment's page, the notice adds "Order status: …" or "Payment status: …".
+
+  Their French keys are in the image and not served: the locale stays fixed to `en`, and the locale guard (12a note) is unchanged.
+- **The money path:** only #40's mapping of that one error to a refusal changes. No posting, amount or query changes.
+
+**Find the digest** in the CI of `main`, in this order:
+1. After #45 is merged, take the newest commit on `main`. `git log --oneline origin/main` must show #45, #44 and #40.
+2. `gh run list --workflow ci.yml --branch main --event push --limit 5`: the run of workflow "CI" whose head commit is that commit.
+3. In that run, every job passed: "Build and test", "Accessibility in a browser", "Image, build and drill", "Image, scan" and
+   "Image, push". "OWASP dependency vulnerability check" is skipped on a push; it runs on pull requests and every day.
+4. In "Image, build and drill":
+   - "Check the image" passed;
+   - "Run the stack and the smoke script" ends with `Failures: 0`;
+   - "Rehearse the upgrade from the deployed release" passed.
+5. In "Image, push", step "Push by commit", the line `<commit>: digest: sha256:<64 hex> size: …`. The `<commit>` must be the run's head
+   commit:
+   ```sh
+   gh run view <run id> --json jobs --jq '.jobs[] | select(.name=="Image, push") | .databaseId'
+   gh run view <run id> --log --job <that id> | grep -m1 'digest: sha256:'
+   ```
+   The run's page in the browser shows the same value in the job summary, as `CHAT_LEDGER_DIGEST=sha256:…`.
+
+**Steps.**
+1. Outside judging hours. The interruption is about 25 to 30 s and signs every visitor out.
+2. Optionally, start the health probe above.
+3. Run "The upgrade" above, with the dated `.env` copy and the new `CHAT_LEDGER_DIGEST`, and no migration.
+4. Run `DC ps` and wait for `web (healthy)`. If web keeps restarting, read `DC logs --tail 50 web`, then fix or roll back with
+   section 6.
+5. After `web (healthy)` and the probe is back to 200, run `sh deploy/smoke.sh https://ledger.nkap.dev`. Expected: `Failures: 0`
+   after 25 checks.
+6. By hand, in a demo workspace:
+   - on an order's page with a suggestion, Confirm. The status line and "Still to pay" change at once, and the notice says
+     "Order status: …";
+   - on a payment's page with a suggestion, Confirm. The status line changes at once, and the notice says "Payment status: …".
+7. Afterwards, in one pull request:
+   - update "Deployed state" (release, digest, run, date);
+   - give the step "Rehearse the upgrade from the deployed release" in `.github/workflows/ci.yml` the same digest
+     (`WorkflowFileTest` holds them equal);
+   - record the times in `docs/kiro-notes.md`.
+
+   A failing smoke run, or a step that does not hold, means rolling back with section 6.
+
 ## 6. Roll back
 
 Pick the copy to restore (root's shell expands the glob):
