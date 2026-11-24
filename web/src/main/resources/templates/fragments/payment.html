@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<body>
+<!--/* The payment's status line. The payment's page renders it once; the answer to a decision taken on that page (Confirm, Reject)
+     renders it again, read from the database, as an out-of-band swap of its inner text. It is not a live region: a page has one, #notice
+     (WCAG 4.1.3, A11yRules), and the answer says the new status there. The text is written once, below. */-->
+<p th:fragment="status" class="status" id="payment-status"><th:block th:replace="~{fragments/payment :: statusText}"></th:block></p>
+<p th:fragment="statusOob" class="status" id="payment-status" hx-swap-oob="innerHTML"><th:block th:replace="~{fragments/payment :: statusText}"></th:block></p>
+<th:block th:fragment="statusText" th:text="#{${'status.PAYMENT.' + payment.status}('', '')}">Received</th:block>
+
+<!--/* The htmx answer to a decision taken on the payment's page: the board's one-line result; the notice (the page's one live region)
+     with the result and the payment's new status; the chips; then the payment's status line, fresh. */-->
+<th:block th:fragment="decided">
+  <th:block th:replace="~{fragments/board :: doneCard}"></th:block>
+  <p id="notice" hx-swap-oob="innerHTML" th:with="now=#{${'status.PAYMENT.' + payment.status}('', '')}"><span th:text="#{${notice.key()}}">Done.</span> <span th:text="#{payment.status.now(${now})}">Payment status: Matched.</span></p>
+  <th:block th:replace="~{fragments/board :: chipsOob}"></th:block>
+  <th:block th:replace="~{fragments/payment :: statusOob}"></th:block>
+</th:block>
+</body>
+</html>

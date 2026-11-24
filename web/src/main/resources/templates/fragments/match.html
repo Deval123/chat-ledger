@@ -24,13 +24,16 @@
     <ul class="reasons"><li th:each="floor : ${s.missingNow}" th:text="#{${'floor.' + floor.name()}}">Missing</li></ul>
   </div>
   <div class="actions" th:if="${m.state == 'SUGGESTED' and canDecide}">
-    <!--/* On an order's page (kind 'payment'), the forms say so: the answer then carries the order's header too (fragments/order). */-->
+    <!--/* On an order's page (kind 'payment') or a payment's page (kind 'order'), the forms say so: the answer then carries that page's
+         header too (fragments/order, fragments/payment). */-->
     <form th:action="@{/app/matches/{id}/confirm(id=${m.id})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
       <input type="hidden" name="from" value="order" th:if="${kind == 'payment'}">
+      <input type="hidden" name="from" value="payment" th:if="${kind == 'order'}">
       <button type="submit"><span th:text="#{action.confirm}">Confirm</span><span class="sr" th:text="${ctx}">: Ana</span></button>
     </form>
     <form th:action="@{/app/matches/{id}/reject(id=${m.id})}" method="post" hx-boost="true" hx-target="closest article" hx-swap="outerHTML" hx-push-url="false">
       <input type="hidden" name="from" value="order" th:if="${kind == 'payment'}">
+      <input type="hidden" name="from" value="payment" th:if="${kind == 'order'}">
       <button type="submit" class="secondary"><span th:text="#{action.reject}">Reject</span><span class="sr" th:text="${ctx}">: Ana</span></button>
     </form>
   </div>
