@@ -30,7 +30,7 @@ class NoBackDoorTest {
     private static final Pattern SIGNUP_ROUTE = Pattern.compile(
             "(?i)[\"'/](register|signup|sign-up|sign_up|join|create-account|forgot|reset-password)\\b");
     /** name containing password/secret/key/token, then = or :, then a value that is not a reference or placeholder. */
-    private static final Pattern LITERAL_SECRET = Pattern.compile(
+    static final Pattern LITERAL_SECRET = Pattern.compile(
             "(?i)\\b[\\w.\\-]*(password|passwd|secret|api[_-]?key|token)[\\w.\\-]*\\s*[=:](?![?+\\-])\\s*(?![\\s$<\"']*[$<])(?=\\S)(?!\\$\\{)(?!<)(?!\\s*$)[^\\s]+");
 
     // ── Only the provisioning functions create tenants and users ─────────────
