@@ -133,8 +133,8 @@ class NoBackDoorTest {
     @Test
     void the_secret_scanner_catches_an_invented_password() {
         assertThat(LITERAL_SECRET.matcher("spring.datasource.password=hunter2hunter2").find()).isTrue();
-        assertThat(LITERAL_SECRET.matcher("APP_SECRET: ci-secret-not-for-production").find()).isTrue();
-        assertThat(LITERAL_SECRET.matcher("  DB_PASSWORD: ci_password").find()).isTrue();
+        assertThat(LITERAL_SECRET.matcher("APP_SECRET: example-not-a-real-secret").find()).isTrue();
+        assertThat(LITERAL_SECRET.matcher("  DB_PASSWORD: example-not-a-real-password").find()).isTrue();
         assertThat(LITERAL_SECRET.matcher("CREATE ROLE x PASSWORD='abc'").find()).isTrue();
         assertThat(LITERAL_SECRET.matcher(": \"${MIGRATE_PASSWORD:?MIGRATE_PASSWORD must be set}\"").find()).isFalse();
         assertThat(LITERAL_SECRET.matcher("spring.datasource.password=${DB_PASSWORD}").find()).isFalse();
