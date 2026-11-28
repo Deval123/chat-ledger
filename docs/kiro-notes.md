@@ -521,8 +521,8 @@ and size limits (rest of 3.8, 3.9, 3.10) are not built.
 - **JDK 22 and later break piped passwords.** `System.console()` is non-null even when stdin is piped,
   so `echo ... | provision-user` would have prompted into the void. Maven here runs on JDK 23, which is
   how a test that was meant to read stdin came back "skipped". Fixed with `Console.isTerminal()`.
-- **CI held fixed passwords.** The new secret scan flagged `ci_password` and `ci-secret-...` in
-  `ci.yml` (the init script's `${VAR:?}` guards were false positives and the scanner was tightened).
+- **CI held fixed passwords.** The new secret scan flagged fixed, throwaway CI values in `ci.yml` (the init script's
+  `${VAR:?}` guards were false positives and the scanner was tightened). The old throwaway CI value was removed on 2026-11-07:
   CI now generates masked random values per run.
 - **Requirement 9.1 needed more than the URL rules.** The handler coverage test fails the build for any
   request handler with neither `@PreAuthorize` nor a place on a four-name public list.

@@ -82,7 +82,7 @@ test must fail, and the file is restored from a copy (several headings in `docs/
 ## Register of decisions
 
 `.kiro/specs/chat-ledger/design.md`, section "Trade-offs and weakened defenses", at the end of the file: one table, items **1 to
-182**, numbered in order with no gap. Each row gives the defense weakened or not provided, why, and the compensation. The design's
+183**, numbered in order with no gap. Each row gives the defense weakened or not provided, why, and the compensation. The design's
 sections for tasks 5 to 9 and 13 name the items that belong to them.
 
 ## Hooks
@@ -114,6 +114,6 @@ had. Limits:
   (methods).
 - **Mutation sections:** headings of `docs/kiro-notes.md` that contain "Mutation checks" or "Mutation pass"; headings of the design
   stops that contain "mutation"; `pom.xml` files searched for "pitest" or "mutation".
-- **Register:** rows of `design.md` that start with `| <number> |`. There are 182 rows, numbered 1 to 182 in file order.
+- **Register:** rows of `design.md` that start with `| <number> |`. There are 183 rows, numbered 1 to 183 in file order.
 - **Hooks:** the `.json` files in `.kiro/hooks/` (files), and the entries of their `hooks` arrays (hooks).
 - **MCP:** tracked files searched for `.kiro/settings` and `mcp.json`, and the working tree for `mcp.json`.
